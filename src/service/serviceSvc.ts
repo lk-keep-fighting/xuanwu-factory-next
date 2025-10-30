@@ -136,5 +136,102 @@ export const serviceSvc = {
       const error = await response.json()
       throw new Error(error.error || 'Failed to deploy service')
     }
+  },
+
+  /**
+   * 停止服务
+   */
+  async stopService(id: string): Promise<{ success: boolean; message: string }> {
+    const response = await fetch(`${API_BASE}/${id}/stop`, {
+      method: 'POST'
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to stop service')
+    }
+    
+    return response.json()
+  },
+
+  /**
+   * 启动服务
+   */
+  async startService(id: string): Promise<{ success: boolean; message: string }> {
+    const response = await fetch(`${API_BASE}/${id}/start`, {
+      method: 'POST'
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to start service')
+    }
+    
+    return response.json()
+  },
+
+  /**
+   * 重启服务
+   */
+  async restartService(id: string): Promise<{ success: boolean; message: string }> {
+    const response = await fetch(`${API_BASE}/${id}/restart`, {
+      method: 'POST'
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to restart service')
+    }
+    
+    return response.json()
+  },
+
+  /**
+   * 扩缩容服务
+   */
+  async scaleService(id: string, replicas: number): Promise<{ success: boolean; message: string }> {
+    const response = await fetch(`${API_BASE}/${id}/scale`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ replicas })
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to scale service')
+    }
+    
+    return response.json()
+  },
+
+  /**
+   * 获取服务日志
+   */
+  async getServiceLogs(id: string, lines: number = 100): Promise<{ logs?: string; error?: string }> {
+    const response = await fetch(`${API_BASE}/${id}/logs?lines=${lines}`)
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to get service logs')
+    }
+    
+    return response.json()
+  },
+
+  /**
+   * 获取服务实时状态（从 K8s）
+   */
+  async getK8sServiceStatus(id: string): Promise<any> {
+    const service = await this.getServiceById(id)
+    if (!service) throw new Error('服务不存在')
+    
+    const response = await fetch(`${API_BASE}/${id}/status`)
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to get service status')
+    }
+    
+    return response.json()
   }
 }

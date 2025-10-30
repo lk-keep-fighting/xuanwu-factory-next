@@ -8,11 +8,35 @@ class K8sService {
 
   constructor() {
     this.kc = new k8s.KubeConfig()
-    this.kc.loadFromDefault()
+    
+    // 支持多种配置方式
+    if (process.env.KUBECONFIG_DATA) {
+      // 方式1：从环境变量中的 JSON 配置加载（适合生产环境）
+      console.log('[K8s] 使用 KUBECONFIG_DATA 环境变量加载配置')
+      this.kc.loadFromString(process.env.KUBECONFIG_DATA)
+    } else if (process.env.KUBECONFIG) {
+      // 方式2：从指定路径的文件加载
+      console.log('[K8s] 使用 KUBECONFIG 路径加载配置:', process.env.KUBECONFIG)
+      this.kc.loadFromFile(process.env.KUBECONFIG)
+    } else {
+      // 方式3：从默认位置加载 (~/.kube/config)
+      console.log('[K8s] 使用默认配置加载 (~/.kube/config)')
+      try {
+        this.kc.loadFromDefault()
+        console.log('[K8s] 配置加载成功，集群:', this.kc.getCurrentCluster()?.name || '未知')
+      } catch (error: any) {
+        console.error('[K8s] ⚠️  配置加载失败:', error.message)
+        console.error('[K8s] ⚠️  所有 K8s 操作将会失败！请配置 kubeconfig')
+      }
+    }
+    
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api)
   }
 
+  /**
+   * 部署服务到 Kubernetes
+   */
   async deployService(service: Service) {
     const namespace = 'default'
     
@@ -76,6 +100,267 @@ class K8sService {
     return { success: true }
   }
 
+  /**
+   * 停止服务（将副本数设为 0）
+   */
+  async stopService(serviceName: string) {
+    const namespace = 'default'
+    
+    try {
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      const originalReplicas = deployment.spec?.replicas || 1
+      
+      const updatedDeployment = {
+        ...deployment,
+        metadata: {
+          ...deployment.metadata,
+          annotations: {
+            ...deployment.metadata?.annotations,
+            'xuanwu.io/original-replicas': String(originalReplicas)
+          }
+        },
+        spec: {
+          ...deployment.spec,
+          replicas: 0
+        }
+      }
+      
+      await this.appsApi.replaceNamespacedDeployment({
+        name: serviceName,
+        namespace,
+        body: updatedDeployment as k8s.V1Deployment
+      })
+      
+      return { success: true, message: '服务已停止' }
+    } catch (error: any) {
+      console.error('Failed to stop service:', error)
+      throw new Error(`停止服务失败: ${error.message}`)
+    }
+  }
+
+  /**
+   * 启动服务（恢复副本数）
+   */
+  async startService(serviceName: string) {
+    const namespace = 'default'
+    
+    try {
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      const originalReplicas = parseInt(
+        deployment.metadata?.annotations?.['xuanwu.io/original-replicas'] || '1'
+      )
+      
+      const updatedDeployment = {
+        ...deployment,
+        spec: {
+          ...deployment.spec,
+          replicas: originalReplicas
+        }
+      }
+      
+      await this.appsApi.replaceNamespacedDeployment({
+        name: serviceName,
+        namespace,
+        body: updatedDeployment as k8s.V1Deployment
+      })
+      
+      return { success: true, message: '服务已启动' }
+    } catch (error: any) {
+      console.error('Failed to start service:', error)
+      throw new Error(`启动服务失败: ${error.message}`)
+    }
+  }
+
+  /**
+   * 重启服务（重建所有 Pod）
+   */
+  async restartService(serviceName: string) {
+    const namespace = 'default'
+    
+    try {
+      console.log(`[K8s] 尝试重启服务: ${serviceName}`)
+      
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      
+      console.log(`[K8s] 读取到 Deployment: ${serviceName}, 当前副本数: ${deployment.spec?.replicas}`)
+      
+      const updatedDeployment = {
+        ...deployment,
+        spec: {
+          ...deployment.spec,
+          template: {
+            ...deployment.spec?.template,
+            metadata: {
+              ...deployment.spec?.template?.metadata,
+              annotations: {
+                ...deployment.spec?.template?.metadata?.annotations,
+                'xuanwu.io/restartedAt': new Date().toISOString()
+              }
+            }
+          }
+        }
+      }
+      
+      await this.appsApi.replaceNamespacedDeployment({
+        name: serviceName,
+        namespace,
+        body: updatedDeployment as k8s.V1Deployment
+      })
+      
+      console.log(`[K8s] ✅ 服务 ${serviceName} 重启成功`)
+      return { success: true, message: '服务正在重启' }
+    } catch (error: any) {
+      console.error(`[K8s] ❌ 重启服务失败: ${serviceName}`, error)
+      throw new Error(`重启服务失败: ${error.message}`)
+    }
+  }
+
+  /**
+   * 扩缩容服务
+   */
+  async scaleService(serviceName: string, replicas: number) {
+    const namespace = 'default'
+    
+    try {
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      
+      const updatedDeployment = {
+        ...deployment,
+        spec: {
+          ...deployment.spec,
+          replicas
+        }
+      }
+      
+      await this.appsApi.replaceNamespacedDeployment({
+        name: serviceName,
+        namespace,
+        body: updatedDeployment as k8s.V1Deployment
+      })
+      
+      return { success: true, message: `服务已扩缩至 ${replicas} 个副本` }
+    } catch (error: any) {
+      console.error('Failed to scale service:', error)
+      throw new Error(`扩缩容失败: ${error.message}`)
+    }
+  }
+
+  /**
+   * 删除服务
+   */
+  async deleteService(serviceName: string) {
+    const namespace = 'default'
+    
+    try {
+      await this.appsApi.deleteNamespacedDeployment({ name: serviceName, namespace })
+      await this.coreApi.deleteNamespacedService({ name: serviceName, namespace })
+      return { success: true, message: '服务已删除' }
+    } catch (error: any) {
+      console.error('Failed to delete K8s resources:', error)
+      throw new Error(`删除服务失败: ${error.message}`)
+    }
+  }
+
+  /**
+   * 获取服务状态
+   */
+  async getServiceStatus(serviceName: string) {
+    const namespace = 'default'
+    
+    try {
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      const replicas = deployment.spec?.replicas || 0
+      const availableReplicas = deployment.status?.availableReplicas || 0
+      const readyReplicas = deployment.status?.readyReplicas || 0
+      const updatedReplicas = deployment.status?.updatedReplicas || 0
+      
+      let status: 'running' | 'pending' | 'stopped' | 'error' = 'pending'
+      
+      if (replicas === 0) {
+        status = 'stopped'
+      } else if (availableReplicas === replicas && readyReplicas === replicas) {
+        status = 'running'
+      } else if (availableReplicas === 0) {
+        status = 'error'
+      }
+      
+      return {
+        status,
+        replicas,
+        availableReplicas,
+        readyReplicas,
+        updatedReplicas,
+        conditions: deployment.status?.conditions || []
+      }
+    } catch (error: any) {
+      if (error.response?.statusCode === 404) {
+        return { status: 'error' as const, error: '服务不存在' }
+      }
+      return { status: 'error' as const, error: error.message }
+    }
+  }
+
+  /**
+   * 获取服务日志
+   */
+  async getServiceLogs(serviceName: string, lines: number = 100) {
+    const namespace = 'default'
+    
+    try {
+      const pods = await this.coreApi.listNamespacedPod({
+        namespace,
+        labelSelector: `app=${serviceName}`
+      })
+      
+      if (pods.items.length === 0) {
+        return { logs: '', error: '未找到运行的 Pod' }
+      }
+      
+      const podName = pods.items[0].metadata?.name
+      if (!podName) {
+        return { logs: '', error: 'Pod 名称无效' }
+      }
+      
+      const logs = await this.coreApi.readNamespacedPodLog({
+        name: podName,
+        namespace,
+        tailLines: lines
+      })
+      
+      return { logs }
+    } catch (error: any) {
+      console.error('Failed to get service logs:', error)
+      return { logs: '', error: error.message }
+    }
+  }
+
+  /**
+   * 获取服务事件
+   */
+  async getServiceEvents(serviceName: string) {
+    const namespace = 'default'
+    
+    try {
+      const events = await this.coreApi.listNamespacedEvent({
+        namespace,
+        fieldSelector: `involvedObject.name=${serviceName}`
+      })
+      
+      return {
+        events: events.items.map(event => ({
+          type: event.type || 'Normal',
+          reason: event.reason || '',
+          message: event.message || '',
+          timestamp: event.lastTimestamp || event.firstTimestamp,
+          count: event.count || 1
+        }))
+      }
+    } catch (error: any) {
+      console.error('Failed to get service events:', error)
+      return { events: [], error: error.message }
+    }
+  }
+  
   private getImage(service: Service): string {
     if (service.type === 'application') {
       return (service as ApplicationService).built_image || 'nginx:latest'
@@ -159,64 +444,6 @@ class K8sService {
           body: k8sService 
         })
       }
-    }
-  }
-
-  private async createService(service: Service, namespace: string, port: number) {
-    const k8sService: k8s.V1Service = {
-      metadata: {
-        name: service.name,
-        labels: { app: service.name }
-      },
-      spec: {
-        selector: { app: service.name },
-        ports: [{
-          port,
-          targetPort: port as any
-        }],
-        type: 'ClusterIP'
-      }
-    }
-
-    try {
-      await this.coreApi.createNamespacedService({ namespace, body: k8sService })
-    } catch (error: any) {
-      if (error.response?.statusCode === 409) {
-        await this.coreApi.replaceNamespacedService({ 
-          name: service.name, 
-          namespace, 
-          body: k8sService 
-        })
-      }
-    }
-  }
-
-  async deleteService(serviceName: string) {
-    const namespace = 'default'
-    
-    try {
-      await this.appsApi.deleteNamespacedDeployment({ name: serviceName, namespace })
-      await this.coreApi.deleteNamespacedService({ name: serviceName, namespace })
-    } catch (error) {
-      console.error('Failed to delete K8s resources:', error)
-    }
-  }
-
-  async getServiceStatus(serviceName: string) {
-    const namespace = 'default'
-    
-    try {
-      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
-      const availableReplicas = deployment.status?.availableReplicas || 0
-      const replicas = deployment.spec?.replicas || 0
-      
-      return {
-        status: availableReplicas === replicas ? 'running' : 'pending',
-        replicas,
-        availableReplicas
-      }
-    } catch (error: any) {
-      return { status: 'error', error: error.message }
     }
   }
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { k8sService } from '@/lib/k8s'
+import type { Service } from '@/types/project'
 
 export async function POST(
   request: NextRequest,
@@ -7,36 +9,57 @@ export async function POST(
 ) {
   const { id } = await params
   
-  // 获取服务信息
-  const { data: service, error: serviceError } = await supabase
-    .from('services')
-    .select('*')
-    .eq('id', id)
-    .single()
+  try {
+    // 获取服务信息
+    const { data: service, error: serviceError } = await supabase
+      .from('services')
+      .select('*')
+      .eq('id', id)
+      .single()
 
-  if (serviceError || !service) {
+    if (serviceError || !service) {
+      return NextResponse.json(
+        { error: '服务不存在' },
+        { status: 404 }
+      )
+    }
+
+    // 更新服务状态为 building
+    await supabase
+      .from('services')
+      .update({ status: 'building' })
+      .eq('id', id)
+
+    // 部署到 Kubernetes
+    try {
+      await k8sService.deployService(service as Service)
+      
+      // 更新状态为 running
+      await supabase
+        .from('services')
+        .update({ status: 'running' })
+        .eq('id', id)
+
+      return NextResponse.json({
+        success: true,
+        message: '部署成功'
+      })
+    } catch (k8sError: any) {
+      // 部署失败，更新状态为 error
+      await supabase
+        .from('services')
+        .update({ status: 'error' })
+        .eq('id', id)
+
+      return NextResponse.json(
+        { error: `部署失败: ${k8sError.message}` },
+        { status: 500 }
+      )
+    }
+  } catch (error: any) {
     return NextResponse.json(
-      { error: 'Service not found' },
-      { status: 404 }
+      { error: error.message },
+      { status: 500 }
     )
   }
-
-  // 更新服务状态为 building
-  const { error: updateError } = await supabase
-    .from('services')
-    .update({ status: 'building' })
-    .eq('id', id)
-
-  if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 })
-  }
-
-  // TODO: 实际的部署逻辑
-  // 这里应该触发 CI/CD 流程，构建 Docker 镜像并部署到 Kubernetes
-  // 目前只是返回成功响应
-
-  return NextResponse.json({
-    success: true,
-    message: 'Deployment started'
-  })
 }
