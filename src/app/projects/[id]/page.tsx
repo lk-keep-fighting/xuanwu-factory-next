@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2, Tag, Pencil } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -28,16 +30,16 @@ import { ServiceType } from '@/types/project'
 import type { Project, Service } from '@/types/project'
 import ServiceCreateForm from '../components/ServiceCreateForm'
 
-const SERVICE_TYPE_ICONS: Record<string, any> = {
-  application: Package,
-  database: Database,
-  compose: Box
+const SERVICE_TYPE_ICONS: Record<ServiceType, LucideIcon> = {
+  [ServiceType.APPLICATION]: Package,
+  [ServiceType.DATABASE]: Database,
+  [ServiceType.COMPOSE]: Box
 }
 
-const SERVICE_TYPE_LABELS: Record<string, string> = {
-  application: 'Application',
-  database: 'Database',
-  compose: 'Compose'
+const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
+  [ServiceType.APPLICATION]: 'Application',
+  [ServiceType.DATABASE]: 'Database',
+  [ServiceType.COMPOSE]: 'Compose'
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -107,36 +109,38 @@ export default function ProjectDetailPage() {
   const [deletingProject, setDeletingProject] = useState(false)
 
   // 加载项目信息
-  const loadProject = async () => {
+  const loadProject = useCallback(async () => {
     if (!id) return
-    
+
     try {
       const data = await projectSvc.getProjectById(id)
       setProject(data)
-    } catch (error: any) {
-      toast.error('加载项目失败：' + error.message)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`加载项目失败：${message}`)
     }
-  }
+  }, [id])
 
   // 加载服务列表
-  const loadServices = async () => {
+  const loadServices = useCallback(async () => {
     if (!id) return
-    
+
     try {
       setLoading(true)
       const data = await serviceSvc.getServicesByProject(id)
       setServices(data)
-    } catch (error: any) {
-      toast.error('加载服务失败：' + error.message)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`加载服务失败：${message}`)
     } finally {
       setLoading(false)
     }
-  }
+  }, [id])
 
   useEffect(() => {
     loadProject()
     loadServices()
-  }, [id])
+  }, [loadProject, loadServices])
 
   // 打开创建服务对话框
   const handleOpenCreateDialog = (type: ServiceType) => {
@@ -175,8 +179,9 @@ export default function ProjectDetailPage() {
       }
       toast.success('项目信息已更新')
       setIsProjectDialogOpen(false)
-    } catch (error: any) {
-      toast.error('更新项目失败：' + (error.message || '未知错误'))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`更新项目失败：${message}`)
     } finally {
       setUpdatingProject(false)
     }
@@ -191,8 +196,9 @@ export default function ProjectDetailPage() {
       await projectSvc.deleteProject(project.id)
       toast.success('项目已删除')
       router.push('/projects')
-    } catch (error: any) {
-      toast.error('删除项目失败：' + (error.message || '未知错误'))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`删除项目失败：${message}`)
     } finally {
       setDeletingProject(false)
     }
@@ -206,8 +212,9 @@ export default function ProjectDetailPage() {
       await serviceSvc.deleteService(serviceId)
       toast.success('服务删除成功')
       loadServices()
-    } catch (error: any) {
-      toast.error('删除服务失败：' + error.message)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`删除服务失败：${message}`)
     }
   }
 
@@ -427,11 +434,13 @@ export default function ProjectDetailPage() {
                             <Square className="w-4 h-4 mr-2" />
                             停止
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             className="text-red-600"
                             onClick={(e) => {
                               e.stopPropagation()
-                              service.id && handleDeleteService(service.id)
+                              if (service.id) {
+                                void handleDeleteService(service.id)
+                              }
                             }}
                           >
                             <Trash2 className="w-4 h-4 mr-2" />
@@ -562,14 +571,12 @@ export default function ProjectDetailPage() {
 
       {/* 创建服务对话框 */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>创建 {createServiceType && SERVICE_TYPE_LABELS[createServiceType]}</DialogTitle>
-            <DialogDescription>
-              配置新服务的参数
-            </DialogDescription>
+            <DialogDescription>配置新服务的参数</DialogDescription>
           </DialogHeader>
-          
+
           {createServiceType && id && (
             <ServiceCreateForm
               projectId={id}
