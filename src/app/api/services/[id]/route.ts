@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { k8sService } from '@/lib/k8s'
 import { supabase } from '@/lib/supabase'
+import type { Service } from '@/types/project'
 
 export async function GET(
   request: NextRequest,
@@ -46,14 +48,52 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  
-  const { error } = await supabase
+
+  const { data: service, error: fetchError } = await supabase
+    .from('services')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (fetchError) {
+    const status = fetchError.code === 'PGRST116' ? 404 : 500
+    const message = status === 404 ? '服务不存在' : (fetchError.message || '获取服务失败')
+    return NextResponse.json({ error: message }, { status })
+  }
+
+  if (!service) {
+    return NextResponse.json({ error: '服务不存在' }, { status: 404 })
+  }
+
+  const serviceData = service as Service
+
+  if (!serviceData.name) {
+    return NextResponse.json({ error: '服务名称缺失，无法删除' }, { status: 400 })
+  }
+
+  try {
+    await k8sService.deleteService(serviceData.name)
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : ''
+
+    return NextResponse.json(
+      { error: errorMessage || '删除 Kubernetes 资源失败' },
+      { status: 500 }
+    )
+  }
+
+  const { error: deleteError } = await supabase
     .from('services')
     .delete()
     .eq('id', id)
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  if (deleteError) {
+    return NextResponse.json({ error: deleteError.message }, { status: 500 })
   }
 
   return NextResponse.json({ success: true })
