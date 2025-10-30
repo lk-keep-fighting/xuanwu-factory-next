@@ -41,8 +41,14 @@ export default function ServiceCreateForm({
   // 环境变量管理
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
   
-  // 端口映射管理（Compose）
-  const [ports, setPorts] = useState<Array<{ container_port: string; host_port: string; protocol: 'TCP' | 'UDP' }>>([{ container_port: '', host_port: '', protocol: 'TCP' }])
+  // 网络配置
+  const [networkConfig, setNetworkConfig] = useState({
+    container_port: '',
+    service_port: '',
+    service_type: 'ClusterIP' as 'ClusterIP' | 'NodePort' | 'LoadBalancer',
+    node_port: '',
+    protocol: 'TCP' as 'TCP' | 'UDP'
+  })
   
   // 卷挂载管理
   const [volumes, setVolumes] = useState<Array<{ container_path: string; host_path: string; read_only: boolean }>>([{ container_path: '', host_path: '', read_only: false }])
@@ -149,22 +155,6 @@ export default function ServiceCreateForm({
         serviceData.tag = data.tag || 'latest'
         serviceData.command = data.command
         serviceData.replicas = data.replicas ? parseInt(data.replicas) : 1
-        
-        // 端口映射
-        const validPorts = ports.filter(p => p.container_port.trim())
-        if (validPorts.length > 0) {
-          serviceData.ports = validPorts.map(p => ({
-            container_port: parseInt(p.container_port),
-            host_port: p.host_port ? parseInt(p.host_port) : undefined,
-            protocol: p.protocol
-          }))
-        }
-        
-        // 卷挂载
-        const validVolumes = volumes.filter(v => v.container_path.trim())
-        if (validVolumes.length > 0) {
-          serviceData.volumes = validVolumes
-        }
       }
 
       // 通用环境变量
@@ -174,6 +164,23 @@ export default function ServiceCreateForm({
       })
       if (Object.keys(envVarsObj).length > 0) {
         serviceData.env_vars = envVarsObj
+      }
+
+      // 网络配置
+      if (networkConfig.container_port) {
+        serviceData.network_config = {
+          container_port: parseInt(networkConfig.container_port),
+          service_port: networkConfig.service_port ? parseInt(networkConfig.service_port) : undefined,
+          service_type: networkConfig.service_type,
+          node_port: networkConfig.node_port ? parseInt(networkConfig.node_port) : undefined,
+          protocol: networkConfig.protocol
+        }
+      }
+
+      // 卷挂载
+      const validVolumes = volumes.filter(v => v.container_path.trim())
+      if (validVolumes.length > 0) {
+        serviceData.volumes = validVolumes
       }
 
       // 资源限制
@@ -570,89 +577,91 @@ export default function ServiceCreateForm({
           </TabsContent>
 
           <TabsContent value="network" className="space-y-4 mt-4">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>端口映射</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPorts([...ports, { container_port: '', host_port: '', protocol: 'TCP' }])}
-                  className="gap-1"
-                >
-                  <Plus className="w-3 h-3" />
-                  添加端口
-                </Button>
-              </div>
-              <div className="space-y-3">
-                {ports.map((port, index) => (
-                  <Card key={index}>
-                    <CardContent className="pt-4">
-                      <div className="grid grid-cols-4 gap-2">
-                        <div className="space-y-1">
-                          <Label className="text-xs">容器端口 *</Label>
-                          <Input
-                            type="number"
-                            placeholder="80"
-                            value={port.container_port}
-                            onChange={(e) => {
-                              const newPorts = [...ports]
-                              newPorts[index].container_port = e.target.value
-                              setPorts(newPorts)
-                            }}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">主机端口</Label>
-                          <Input
-                            type="number"
-                            placeholder="8080"
-                            value={port.host_port}
-                            onChange={(e) => {
-                              const newPorts = [...ports]
-                              newPorts[index].host_port = e.target.value
-                              setPorts(newPorts)
-                            }}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">协议</Label>
-                          <Select
-                            value={port.protocol}
-                            onValueChange={(value: 'TCP' | 'UDP') => {
-                              const newPorts = [...ports]
-                              newPorts[index].protocol = value
-                              setPorts(newPorts)
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="TCP">TCP</SelectItem>
-                              <SelectItem value="UDP">UDP</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="flex items-end">
-                          {ports.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setPorts(ports.filter((_, i) => i !== index))}
-                              className="text-red-600 hover:text-red-700 w-full"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="space-y-4">
+                  <div className="text-sm text-gray-600 mb-4">
+                    配置服务的网络访问，将创建 Kubernetes Service 资源。
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>容器监听端口 *</Label>
+                      <Input
+                        type="number"
+                        placeholder="8080"
+                        value={networkConfig.container_port}
+                        onChange={(e) => setNetworkConfig({...networkConfig, container_port: e.target.value})}
+                      />
+                      <p className="text-xs text-gray-500">应用实际监听的端口</p>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label>Service 端口</Label>
+                      <Input
+                        type="number"
+                        placeholder="默认同容器端口"
+                        value={networkConfig.service_port}
+                        onChange={(e) => setNetworkConfig({...networkConfig, service_port: e.target.value})}
+                      />
+                      <p className="text-xs text-gray-500">K8s Service 暴露的端口</p>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Service 类型</Label>
+                      <Select
+                        value={networkConfig.service_type}
+                        onValueChange={(value: 'ClusterIP' | 'NodePort' | 'LoadBalancer') => 
+                          setNetworkConfig({...networkConfig, service_type: value})
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ClusterIP">ClusterIP（集群内部）</SelectItem>
+                          <SelectItem value="NodePort">NodePort（节点端口）</SelectItem>
+                          <SelectItem value="LoadBalancer">LoadBalancer（负载均衡）</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label>协议</Label>
+                      <Select
+                        value={networkConfig.protocol}
+                        onValueChange={(value: 'TCP' | 'UDP') => 
+                          setNetworkConfig({...networkConfig, protocol: value})
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="TCP">TCP</SelectItem>
+                          <SelectItem value="UDP">UDP</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  
+                  {networkConfig.service_type === 'NodePort' && (
+                    <div className="space-y-2">
+                      <Label>NodePort 端口</Label>
+                      <Input
+                        type="number"
+                        placeholder="30000-32767"
+                        value={networkConfig.node_port}
+                        onChange={(e) => setNetworkConfig({...networkConfig, node_port: e.target.value})}
+                      />
+                      <p className="text-xs text-gray-500">可选，范围 30000-32767，不填写自动分配</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="storage" className="space-y-4 mt-4">

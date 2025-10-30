@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS services (
   -- 通用配置
   env_vars JSONB,
   resource_limits JSONB,
+  volumes JSONB,
+  
+  -- 网络配置（Kubernetes Service）
+  network_config JSONB,
   
   -- Application 特定字段（基于源码构建）
   git_provider TEXT CHECK (git_provider IN ('github', 'gitlab', 'bitbucket', 'gitea') OR git_provider IS NULL),
@@ -50,8 +54,6 @@ CREATE TABLE IF NOT EXISTS services (
   -- Compose 特定字段（基于现有镜像）
   image TEXT,
   tag TEXT,
-  volumes JSONB,
-  ports JSONB,
   health_check JSONB,
   
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

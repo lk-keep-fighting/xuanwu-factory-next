@@ -59,6 +59,14 @@ export interface BaseService {
     container_path: string   // 容器路径
     read_only?: boolean
   }>
+  // 网络配置（Kubernetes Service）
+  network_config?: {
+    container_port: number        // 容器监听端口（必需）
+    service_port?: number         // K8s Service 暴露端口（默认同 container_port）
+    service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer'  // Service 类型
+    node_port?: number            // NodePort 端口（仅 NodePort 类型）
+    protocol?: 'TCP' | 'UDP'      // 协议类型
+  }
 }
 
 // Application 服务 - 基于源码构建
@@ -125,20 +133,6 @@ export interface ComposeService extends BaseService {
   // 部署配置
   command?: string           // 启动命令
   replicas?: number          // 副本数
-  
-  // 网络配置
-  ports?: Array<{
-    container_port: number   // 容器端口
-    host_port?: number       // 主机端口（可选）
-    protocol?: 'TCP' | 'UDP'
-  }>
-  
-  // 存储配置
-  volumes?: Array<{
-    host_path?: string       // 主机路径
-    container_path: string   // 容器路径
-    read_only?: boolean
-  }>
   
   // 健康检查
   health_check?: {

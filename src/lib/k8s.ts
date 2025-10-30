@@ -22,17 +22,8 @@ class K8sService {
       replicas = (service as ApplicationService | ComposeService).replicas || 1
     }
     
-    // 获取port值
-    let containerPort: number | undefined
-    if (service.type === 'application' || service.type === 'database') {
-      containerPort = (service as ApplicationService | DatabaseService).port
-    } else if (service.type === 'compose') {
-      // Compose 服务可能有多个端口
-      const ports = (service as ComposeService).ports
-      if (ports && ports.length > 0) {
-        containerPort = ports[0].container_port
-      }
-    }
+    // 使用 network_config 获取端口
+    const containerPort = service.network_config?.container_port
     
     const deployment: k8s.V1Deployment = {
       metadata: {
@@ -77,8 +68,9 @@ class K8sService {
       }
     }
 
-    if (containerPort) {
-      await this.createService(service, namespace, containerPort)
+    // 使用 network_config 创建 K8s Service
+    if (service.network_config) {
+      await this.createServiceFromConfig(service, namespace)
     }
 
     return { success: true }
@@ -134,6 +126,40 @@ class K8sService {
         }
       })
     }))
+  }
+
+  private async createServiceFromConfig(service: Service, namespace: string) {
+    const config = service.network_config!
+    
+    const k8sService: k8s.V1Service = {
+      metadata: {
+        name: service.name,
+        labels: { app: service.name }
+      },
+      spec: {
+        selector: { app: service.name },
+        ports: [{
+          name: 'main',
+          port: config.service_port || config.container_port,
+          targetPort: config.container_port as any,
+          protocol: config.protocol || 'TCP',
+          ...(config.service_type === 'NodePort' && config.node_port && { nodePort: config.node_port })
+        }],
+        type: config.service_type || 'ClusterIP'
+      }
+    }
+
+    try {
+      await this.coreApi.createNamespacedService({ namespace, body: k8sService })
+    } catch (error: any) {
+      if (error.response?.statusCode === 409) {
+        await this.coreApi.replaceNamespacedService({ 
+          name: service.name, 
+          namespace, 
+          body: k8sService 
+        })
+      }
+    }
   }
 
   private async createService(service: Service, namespace: string, port: number) {
