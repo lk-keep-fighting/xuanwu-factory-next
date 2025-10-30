@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS projects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
+  identifier TEXT NOT NULL UNIQUE,
   description TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -60,19 +61,32 @@ CREATE TABLE IF NOT EXISTS services (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 3. 创建索引以提高查询性能
+-- 3. 创建 deployments 表
+CREATE TABLE IF NOT EXISTS deployments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  service_id UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'building', 'success', 'failed')),
+  build_logs TEXT,
+  image_tag TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- 4. 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_services_project_id ON services(project_id);
 CREATE INDEX IF NOT EXISTS idx_services_type ON services(type);
 CREATE INDEX IF NOT EXISTS idx_services_status ON services(status);
+CREATE INDEX IF NOT EXISTS idx_deployments_service_id ON deployments(service_id);
+CREATE INDEX IF NOT EXISTS idx_deployments_status ON deployments(status);
 
--- 4. 创建触发器自动更新 updated_at
+-- 5. 创建触发器自动更新 updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
 BEGIN
    NEW.updated_at = NOW();
    RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$ LANGUAGE plpgsql;
 
 -- 为 projects 表创建触发器
 DROP TRIGGER IF EXISTS update_projects_updated_at ON projects;
@@ -88,11 +102,12 @@ CREATE TRIGGER update_services_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
--- 5. 插入示例数据（可选）
+-- 6. 插入示例数据（可选）
 -- INSERT INTO projects (name, description) VALUES 
 --   ('示例项目', '这是一个示例项目'),
 --   ('玄武工厂', '生产环境项目');
 
--- 6. 授予权限（根据实际情况调整）
+-- 7. 授予权限（根据实际情况调整）
 -- GRANT ALL ON projects TO anon, authenticated;
 -- GRANT ALL ON services TO anon, authenticated;
+-- GRANT ALL ON deployments TO anon, authenticated;

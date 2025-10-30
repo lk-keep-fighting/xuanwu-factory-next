@@ -1,4 +1,4 @@
-import type { Service, CreateServiceRequest, UpdateServiceRequest } from '@/types/project'
+import type { Service, CreateServiceRequest, UpdateServiceRequest, Deployment } from '@/types/project'
 
 const API_BASE = '/api/services'
 
@@ -127,15 +127,18 @@ export const serviceSvc = {
   /**
    * 部署服务
    */
-  async deployService(id: string): Promise<void> {
+  async deployService(id: string): Promise<{ success: boolean; message?: string }> {
     const response = await fetch(`${API_BASE}/${id}/deploy`, {
       method: 'POST'
     })
-    
+
+    const result = await response.json().catch(() => ({}))
+
     if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Failed to deploy service')
+      throw new Error((result as { error?: string }).error || 'Failed to deploy service')
     }
+
+    return result as { success: boolean; message?: string }
   },
 
   /**
@@ -202,6 +205,20 @@ export const serviceSvc = {
     }
     
     return response.json()
+  },
+
+  /**
+   * 获取服务部署历史
+   */
+  async getServiceDeployments(id: string): Promise<Deployment[]> {
+    const response = await fetch(`${API_BASE}/${id}/deployments`)
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error((result as { error?: string }).error || 'Failed to fetch deployment history')
+    }
+
+    return result as Deployment[]
   },
 
   /**

@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType } from '@/types/project'
-import type { Service } from '@/types/project'
+import type { Service, Deployment } from '@/types/project'
 
 const STATUS_COLORS: Record<string, string> = {
   running: 'bg-green-500',
@@ -31,6 +31,61 @@ const STATUS_LABELS: Record<string, string> = {
   building: '构建中'
 }
 
+const DEPLOYMENT_STATUS_META: Record<Deployment['status'], { label: string; className: string }> = {
+  pending: { label: '待开始', className: 'bg-gray-100 text-gray-600' },
+  building: { label: '构建中', className: 'bg-blue-100 text-blue-700' },
+  success: { label: '部署成功', className: 'bg-green-100 text-green-700' },
+  failed: { label: '部署失败', className: 'bg-red-100 text-red-700' }
+}
+
+const LOGS_LINE_COUNT = 200
+
+const formatDateTime = (value?: string) => {
+  if (!value) return '-'
+  try {
+    return new Date(value).toLocaleString('zh-CN', { hour12: false })
+  } catch {
+    return value
+  }
+}
+
+const formatDuration = (start?: string, end?: string) => {
+  if (!start || !end) return '-'
+  const startDate = new Date(start)
+  const endDate = new Date(end)
+  const diff = endDate.getTime() - startDate.getTime()
+
+  if (!Number.isFinite(diff) || diff <= 0) {
+    return '小于 1 秒'
+  }
+
+  const totalSeconds = Math.floor(diff / 1000)
+  if (totalSeconds < 60) {
+    return `${totalSeconds} 秒`
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (totalMinutes < 60) {
+    return seconds ? `${totalMinutes} 分 ${seconds} 秒` : `${totalMinutes} 分`
+  }
+
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  const parts = [`${hours} 小时`]
+
+  if (minutes) {
+    parts.push(`${minutes} 分`)
+  }
+
+  if (seconds) {
+    parts.push(`${seconds} 秒`)
+  }
+
+  return parts.join(' ')
+}
+
 export default function ServiceDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -45,31 +100,38 @@ export default function ServiceDetailPage() {
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([])
   const [volumes, setVolumes] = useState<Array<{ host_path: string; container_path: string; read_only: boolean }>>([])
   const [deploying, setDeploying] = useState(false)
+  const [deployments, setDeployments] = useState<Deployment[]>([])
+  const [deploymentsLoading, setDeploymentsLoading] = useState(true)
+  const [deploymentsError, setDeploymentsError] = useState<string | null>(null)
+  const [logs, setLogs] = useState('')
+  const [logsLoading, setLogsLoading] = useState(false)
+  const [logsError, setLogsError] = useState<string | null>(null)
+  const [hasLoadedLogs, setHasLoadedLogs] = useState(false)
 
   // 加载服务详情
   const loadService = async () => {
     if (!serviceId) return
-    
+
     try {
       setLoading(true)
       const data = await serviceSvc.getServiceById(serviceId)
-      
+
       if (!data) {
         toast.error('服务不存在')
         router.push(`/projects/${projectId}`)
         return
       }
-      
+
       setService(data)
       setEditedService(data)
-      
+
       // 初始化环境变量
       if (data.env_vars) {
         setEnvVars(Object.entries(data.env_vars).map(([key, value]) => ({ key, value: value as string })))
       } else {
         setEnvVars([])
       }
-      
+
       // 初始化卷挂载
       if (data.volumes) {
         setVolumes(data.volumes as any)
@@ -84,9 +146,80 @@ export default function ServiceDetailPage() {
     }
   }
 
+  const loadDeployments = async (showToast = false) => {
+    if (!serviceId) return
+
+    try {
+      setDeploymentsLoading(true)
+      setDeploymentsError(null)
+      const data = await serviceSvc.getServiceDeployments(serviceId)
+      setDeployments(data)
+    } catch (error: any) {
+      const message = error?.message || '加载部署历史失败'
+      setDeploymentsError(message)
+      if (showToast) {
+        toast.error('加载部署历史失败：' + message)
+      }
+    } finally {
+      setDeploymentsLoading(false)
+    }
+  }
+
+  const loadLogs = async (showToast = false) => {
+    if (!serviceId) return
+
+    try {
+      setLogsLoading(true)
+      setLogsError(null)
+      const result = await serviceSvc.getServiceLogs(serviceId, LOGS_LINE_COUNT)
+
+      if (result.error) {
+        setLogs('')
+        setLogsError(result.error)
+        if (showToast) {
+          toast.error('加载日志失败：' + result.error)
+        }
+      } else {
+        setLogs(result.logs || '')
+        setLogsError(null)
+      }
+    } catch (error: any) {
+      const message = error?.message || '加载日志失败'
+      setLogs('')
+      setLogsError(message)
+      if (showToast) {
+        toast.error('加载日志失败：' + message)
+      }
+    } finally {
+      setLogsLoading(false)
+      setHasLoadedLogs(true)
+    }
+  }
+
   useEffect(() => {
     loadService()
   }, [serviceId])
+
+  useEffect(() => {
+    if (!serviceId) return
+    setDeployments([])
+    setDeploymentsError(null)
+    setHasLoadedLogs(false)
+    setLogs('')
+    setLogsError(null)
+    setDeploymentsLoading(true)
+    loadDeployments()
+  }, [serviceId])
+
+  useEffect(() => {
+    if (activeTab === 'deployments') {
+      loadDeployments()
+    }
+
+    if (activeTab === 'logs' && !hasLoadedLogs) {
+      loadLogs()
+    }
+  }, [activeTab])
 
   // 启动服务
   const handleStart = async () => {
@@ -153,13 +286,20 @@ export default function ServiceDetailPage() {
     try {
       setDeploying(true)
       
-      // 调用真正的部署 API
-      await serviceSvc.deployService(serviceId)
+      const result = await serviceSvc.deployService(serviceId)
       
-      toast.success('部署成功，服务正在启动')
-      loadService()
+      toast.success(result?.message || '部署成功，服务正在启动')
+      await loadService()
+      await loadDeployments()
+      if (activeTab === 'logs') {
+        await loadLogs()
+      } else {
+        setHasLoadedLogs(false)
+        setLogs('')
+        setLogsError(null)
+      }
     } catch (error: any) {
-      toast.error('部署失败：' + error.message)
+      toast.error('部署失败：' + (error.message || '未知错误'))
     } finally {
       setDeploying(false)
     }
@@ -764,23 +904,82 @@ export default function ServiceDetailPage() {
           {/* 部署历史 */}
           <TabsContent value="deployments" className="space-y-6">
             <Card>
-              <CardHeader>
-                <CardTitle>部署历史</CardTitle>
-                <CardDescription>
-                  {service.type === ServiceType.APPLICATION 
-                    ? '查看应用的构建和部署记录'
-                    : '查看服务的部署记录'
-                  }
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-12 text-gray-500">
-                  <Activity className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p>暂无部署记录</p>
-                  {service.type === ServiceType.APPLICATION && (
-                    <p className="text-sm mt-2">点击顶部"部署"按钮触发构建</p>
-                  )}
+              <CardHeader className="flex flex-row items-start justify-between gap-4">
+                <div>
+                  <CardTitle>部署历史</CardTitle>
+                  <CardDescription>
+                    {service.type === ServiceType.APPLICATION
+                      ? '查看应用的构建和部署记录'
+                      : '查看服务的部署记录'}
+                  </CardDescription>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => loadDeployments(true)}
+                  disabled={deploymentsLoading}
+                >
+                  <RefreshCw className={`w-4 h-4 ${deploymentsLoading ? 'animate-spin' : ''}`} />
+                  刷新
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {deploymentsLoading ? (
+                  <div className="text-center py-10 text-gray-500">加载中...</div>
+                ) : deploymentsError ? (
+                  <div className="text-center py-10 text-red-500 space-y-3">
+                    <p>加载部署历史失败：{deploymentsError}</p>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => loadDeployments(true)}>
+                      <RefreshCw className="w-4 h-4" />
+                      重试
+                    </Button>
+                  </div>
+                ) : deployments.length === 0 ? (
+                  <div className="text-center py-12 text-gray-500">
+                    <Activity className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <p>暂无部署记录</p>
+                    {service.type === ServiceType.APPLICATION && (
+                      <p className="text-sm mt-2 text-gray-400">点击顶部“部署”按钮触发构建</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {deployments.map((deployment) => {
+                      const meta = DEPLOYMENT_STATUS_META[deployment.status] || DEPLOYMENT_STATUS_META.pending
+                      const key = deployment.id || `${deployment.service_id}-${deployment.created_at}`
+                      return (
+                        <div key={key} className="rounded-lg border border-gray-200 p-4 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${meta.className}`}>
+                              {meta.label}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                              <span>开始：{formatDateTime(deployment.created_at)}</span>
+                              {deployment.completed_at && (
+                                <span>完成：{formatDateTime(deployment.completed_at)}</span>
+                              )}
+                              {deployment.completed_at && (
+                                <span>耗时：{formatDuration(deployment.created_at, deployment.completed_at)}</span>
+                              )}
+                            </div>
+                          </div>
+                          {deployment.image_tag && (
+                            <div className="text-sm text-gray-600">
+                              镜像/版本：
+                              <span className="font-mono text-gray-800">{deployment.image_tag}</span>
+                            </div>
+                          )}
+                          {deployment.build_logs && (
+                            <pre className="bg-gray-900 text-gray-100 text-xs font-mono p-3 rounded-md whitespace-pre-wrap overflow-x-auto">
+                              {deployment.build_logs}
+                            </pre>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -788,14 +987,33 @@ export default function ServiceDetailPage() {
           {/* 日志 */}
           <TabsContent value="logs" className="space-y-6">
             <Card>
-              <CardHeader>
-                <CardTitle>服务日志</CardTitle>
-                <CardDescription>实时查看服务运行日志</CardDescription>
+              <CardHeader className="flex flex-row items-start justify-between gap-4">
+                <div>
+                  <CardTitle>服务日志</CardTitle>
+                  <CardDescription>查看服务最近的运行日志</CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => loadLogs(true)}
+                  disabled={logsLoading}
+                >
+                  <RefreshCw className={`w-4 h-4 ${logsLoading ? 'animate-spin' : ''}`} />
+                  刷新
+                </Button>
               </CardHeader>
               <CardContent>
-                <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm min-h-[400px]">
-                  <p className="text-gray-500">日志功能开发中...</p>
-                  <p className="text-gray-600 mt-2">// TODO: 集成 WebSocket 实时日志流</p>
+                <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm min-h-[400px] max-h-[500px] overflow-y-auto">
+                  {logsLoading ? (
+                    <p className="text-gray-400">日志加载中...</p>
+                  ) : logsError ? (
+                    <p className="text-red-400 whitespace-pre-wrap">加载日志失败：{logsError}</p>
+                  ) : logs ? (
+                    <pre className="whitespace-pre-wrap">{logs}</pre>
+                  ) : (
+                    <p className="text-gray-400">暂无日志</p>
+                  )}
                 </div>
               </CardContent>
             </Card>
