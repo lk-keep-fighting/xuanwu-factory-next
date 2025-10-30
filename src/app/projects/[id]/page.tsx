@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2, Tag, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -53,6 +54,37 @@ const STATUS_LABELS: Record<string, string> = {
   error: '错误'
 }
 
+type ProjectFormState = {
+  name: string
+  identifier: string
+  description: string
+}
+
+const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+
+const sanitizeIdentifierInput = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/^-+/, '')
+    .slice(0, 63)
+
+const validateProjectForm = (form: ProjectFormState): string | null => {
+  if (!form.name.trim()) {
+    return '请输入项目名称'
+  }
+
+  if (!form.identifier.trim()) {
+    return '请输入项目编号'
+  }
+
+  if (!IDENTIFIER_PATTERN.test(form.identifier.trim())) {
+    return '项目编号需由小写字母、数字或中划线组成，且不能以中划线开头或结尾'
+  }
+
+  return null
+}
+
 export default function ProjectDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -65,6 +97,14 @@ export default function ProjectDetailPage() {
   const [selectedType, setSelectedType] = useState<ServiceType | 'all'>('all')
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [createServiceType, setCreateServiceType] = useState<ServiceType | null>(null)
+  const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false)
+  const [projectForm, setProjectForm] = useState<ProjectFormState>({
+    name: '',
+    identifier: '',
+    description: ''
+  })
+  const [updatingProject, setUpdatingProject] = useState(false)
+  const [deletingProject, setDeletingProject] = useState(false)
 
   // 加载项目信息
   const loadProject = async () => {
@@ -102,6 +142,60 @@ export default function ProjectDetailPage() {
   const handleOpenCreateDialog = (type: ServiceType) => {
     setCreateServiceType(type)
     setIsCreateDialogOpen(true)
+  }
+
+  const openProjectEditDialog = () => {
+    if (!project) return
+    setProjectForm({
+      name: project.name,
+      identifier: project.identifier,
+      description: project.description || ''
+    })
+    setIsProjectDialogOpen(true)
+  }
+
+  const handleProjectUpdate = async () => {
+    if (!project?.id) return
+
+    const validationError = validateProjectForm(projectForm)
+    if (validationError) {
+      toast.error(validationError)
+      return
+    }
+
+    try {
+      setUpdatingProject(true)
+      const updated = await projectSvc.updateProject(project.id, {
+        name: projectForm.name.trim(),
+        identifier: projectForm.identifier.trim(),
+        description: projectForm.description.trim()
+      })
+      if (updated) {
+        setProject(updated)
+      }
+      toast.success('项目信息已更新')
+      setIsProjectDialogOpen(false)
+    } catch (error: any) {
+      toast.error('更新项目失败：' + (error.message || '未知错误'))
+    } finally {
+      setUpdatingProject(false)
+    }
+  }
+
+  const handleProjectDelete = async () => {
+    if (!project?.id) return
+    if (!confirm(`确定要删除项目「${project.name}」吗？此操作将删除其下的所有服务。`)) return
+
+    try {
+      setDeletingProject(true)
+      await projectSvc.deleteProject(project.id)
+      toast.success('项目已删除')
+      router.push('/projects')
+    } catch (error: any) {
+      toast.error('删除项目失败：' + (error.message || '未知错误'))
+    } finally {
+      setDeletingProject(false)
+    }
   }
 
   // 删除服务
@@ -147,36 +241,73 @@ export default function ProjectDetailPage() {
           </Button>
           
           <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">{project?.name}</h1>
-                {project?.description && (
-                  <p className="text-gray-500 mt-2">{project.description}</p>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex-1 min-w-[240px]">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-3xl font-bold text-gray-900">{project?.name}</h1>
+                  {project?.identifier && (
+                    <Badge variant="secondary" className="flex items-center gap-1 text-xs font-medium">
+                      <Tag className="w-3 h-3" />
+                      {project.identifier}
+                    </Badge>
+                  )}
+                </div>
+                {project && (
+                  project.description ? (
+                    <p className="text-gray-500 mt-2">{project.description}</p>
+                  ) : (
+                    <p className="text-gray-400 mt-2">暂无项目描述</p>
+                  )
                 )}
               </div>
               
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button className="gap-2">
-                    <Plus className="w-4 h-4" />
-                    创建服务
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.APPLICATION)}>
-                    <Package className="w-4 h-4 mr-2" />
-                    Application
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.DATABASE)}>
-                    <Database className="w-4 h-4 mr-2" />
-                    Database
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.COMPOSE)}>
-                    <Box className="w-4 h-4 mr-2" />
-                    Compose
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <div className="flex items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button className="gap-2">
+                      <Plus className="w-4 h-4" />
+                      创建服务
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.APPLICATION)}>
+                      <Package className="w-4 h-4 mr-2" />
+                      Application
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.DATABASE)}>
+                      <Database className="w-4 h-4 mr-2" />
+                      Database
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.COMPOSE)}>
+                      <Box className="w-4 h-4 mr-2" />
+                      Compose
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2" disabled={!project}>
+                      <MoreVertical className="w-4 h-4" />
+                      项目操作
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={openProjectEditDialog} disabled={!project}>
+                      <Pencil className="w-4 h-4 mr-2" />
+                      编辑项目
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-red-600 focus:text-red-600"
+                      onClick={handleProjectDelete}
+                      disabled={!project || deletingProject}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      删除项目
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
 
             {/* 服务统计 */}
@@ -368,9 +499,70 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
+      {/* 编辑项目对话框 */}
+      <Dialog
+        open={isProjectDialogOpen}
+        onOpenChange={(open) => {
+          setIsProjectDialogOpen(open)
+          if (!open && project) {
+            setProjectForm({
+              name: project.name,
+              identifier: project.identifier,
+              description: project.description || ''
+            })
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>编辑项目信息</DialogTitle>
+            <DialogDescription>更新项目的基础信息</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>项目名称 *</Label>
+              <Input
+                value={projectForm.name}
+                onChange={(e) => setProjectForm((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="输入项目名称"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>项目编号 *</Label>
+              <Input
+                value={projectForm.identifier}
+                onChange={(e) => setProjectForm((prev) => ({
+                  ...prev,
+                  identifier: sanitizeIdentifierInput(e.target.value)
+                }))}
+                placeholder="用于访问的唯一二级域名"
+              />
+              <p className="text-xs text-gray-500">仅支持小写字母、数字和中划线，长度 1-63 位</p>
+            </div>
+            <div className="space-y-2">
+              <Label>项目描述</Label>
+              <Textarea
+                value={projectForm.description}
+                onChange={(e) => setProjectForm((prev) => ({ ...prev, description: e.target.value }))}
+                placeholder="输入项目描述"
+                rows={3}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsProjectDialogOpen(false)}>
+                取消
+              </Button>
+              <Button onClick={handleProjectUpdate} disabled={updatingProject}>
+                {updatingProject ? '保存中...' : '保存'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* 创建服务对话框 */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+
           <DialogHeader>
             <DialogTitle>创建 {createServiceType && SERVICE_TYPE_LABELS[createServiceType]}</DialogTitle>
             <DialogDescription>
