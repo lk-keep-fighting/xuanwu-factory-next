@@ -37,13 +37,15 @@ class K8sService {
       } else {
         console.warn('[K8s] ⚠️  配置加载但未找到当前集群')
       }
-    } catch (error: any) {
-      console.error('[K8s] ❌ 配置加载失败:', error.message)
+    } catch (error: unknown) {
+      const message = this.getErrorMessage(error)
+      console.error('[K8s] ❌ 配置加载失败:', message)
       console.error('[K8s] ⚠️  所有 K8s 操作将会失败！')
       console.error('[K8s] 💡 解决方案:')
       console.error('[K8s]    1. 本地开发：确保 ~/.kube/config 存在且有效')
       console.error('[K8s]    2. 测试连接：运行 kubectl cluster-info')
       console.error('[K8s]    3. 生产环境：设置 KUBECONFIG_DATA 环境变量')
+      console.error('[K8s] 原始错误对象:', error)
     }
     
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
@@ -84,7 +86,7 @@ class K8sService {
               name: service.name,
               image: this.getImage(service),
               ports: containerPort ? [{ containerPort }] : undefined,
-              env: this.buildEnvVars(service.env_vars),
+              env: this.buildEnvVars(service),
               resources: this.buildResources(service.resource_limits),
               volumeMounts: this.buildVolumeMounts(service.volumes)
             }],
@@ -96,8 +98,8 @@ class K8sService {
 
     try {
       await this.appsApi.createNamespacedDeployment({ namespace, body: deployment })
-    } catch (error: any) {
-      if (error.response?.statusCode === 409) {
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) === 409) {
         await this.appsApi.replaceNamespacedDeployment({ 
           name: service.name, 
           namespace, 
@@ -148,9 +150,9 @@ class K8sService {
       })
       
       return { success: true, message: '服务已停止' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to stop service:', error)
-      throw new Error(`停止服务失败: ${error.message}`)
+      throw new Error(`停止服务失败: ${this.getErrorMessage(error)}`)
     }
   }
 
@@ -181,9 +183,9 @@ class K8sService {
       })
       
       return { success: true, message: '服务已启动' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to start service:', error)
-      throw new Error(`启动服务失败: ${error.message}`)
+      throw new Error(`启动服务失败: ${this.getErrorMessage(error)}`)
     }
   }
 
@@ -225,17 +227,17 @@ class K8sService {
       
       console.log(`[K8s] ✅ 服务 ${serviceName} 重启成功`)
       return { success: true, message: '服务正在重启' }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(`[K8s] ❌ 重启服务失败: ${serviceName}`, error)
       
-      // 提供更友好的错误信息
-      let errorMessage = error.message
+      const rawMessage = this.getErrorMessage(error)
+      let errorMessage = rawMessage
       
-      if (error.message?.includes('HTTP protocol is not allowed')) {
+      if (rawMessage.includes('HTTP protocol is not allowed')) {
         errorMessage = 'Kubernetes 配置错误：API Server 地址不可访问。请检查 kubeconfig 中的 server 地址是否正确。'
-      } else if (error.message?.includes('ENOTFOUND') || error.message?.includes('ECONNREFUSED')) {
+      } else if (rawMessage.includes('ENOTFOUND') || rawMessage.includes('ECONNREFUSED')) {
         errorMessage = '无法连接到 Kubernetes 集群。请确保集群运行中且网络可访问。'
-      } else if (error.message?.includes('404') || error.message?.includes('not found')) {
+      } else if (rawMessage.includes('404') || rawMessage.includes('not found')) {
         errorMessage = `服务 "${serviceName}" 在 Kubernetes 集群中不存在。请先部署服务。`
       }
       
@@ -267,9 +269,9 @@ class K8sService {
       })
       
       return { success: true, message: `服务已扩缩至 ${replicas} 个副本` }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to scale service:', error)
-      throw new Error(`扩缩容失败: ${error.message}`)
+      throw new Error(`扩缩容失败: ${this.getErrorMessage(error)}`)
     }
   }
 
@@ -281,12 +283,23 @@ class K8sService {
     
     try {
       await this.appsApi.deleteNamespacedDeployment({ name: serviceName, namespace })
-      await this.coreApi.deleteNamespacedService({ name: serviceName, namespace })
-      return { success: true, message: '服务已删除' }
-    } catch (error: any) {
-      console.error('Failed to delete K8s resources:', error)
-      throw new Error(`删除服务失败: ${error.message}`)
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        console.error('Failed to delete deployment:', error)
+        throw new Error(`删除服务失败: ${this.getErrorMessage(error)}`)
+      }
     }
+
+    try {
+      await this.coreApi.deleteNamespacedService({ name: serviceName, namespace })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        console.error('Failed to delete service resource:', error)
+        throw new Error(`删除服务失败: ${this.getErrorMessage(error)}`)
+      }
+    }
+
+    return { success: true, message: '服务已删除' }
   }
 
   /**
@@ -320,11 +333,11 @@ class K8sService {
         updatedReplicas,
         conditions: deployment.status?.conditions || []
       }
-    } catch (error: any) {
-      if (error.response?.statusCode === 404) {
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) === 404) {
         return { status: 'error' as const, error: '服务不存在' }
       }
-      return { status: 'error' as const, error: error.message }
+      return { status: 'error' as const, error: this.getErrorMessage(error) }
     }
   }
 
@@ -356,9 +369,9 @@ class K8sService {
       })
       
       return { logs }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to get service logs:', error)
-      return { logs: '', error: error.message }
+      return { logs: '', error: this.getErrorMessage(error) }
     }
   }
 
@@ -383,10 +396,47 @@ class K8sService {
           count: event.count || 1
         }))
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to get service events:', error)
-      return { events: [], error: error.message }
+      return { events: [], error: this.getErrorMessage(error) }
     }
+  }
+  
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) {
+      return error.message
+    }
+
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof (error as { message?: unknown }).message === 'string'
+    ) {
+      return (error as { message: string }).message
+    }
+
+    return String(error)
+  }
+
+  private getStatusCode(error: unknown): number | undefined {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'response' in error
+    ) {
+      const response = (error as { response?: unknown }).response
+      if (
+        typeof response === 'object' &&
+        response !== null &&
+        'statusCode' in response &&
+        typeof (response as { statusCode?: unknown }).statusCode === 'number'
+      ) {
+        return (response as { statusCode: number }).statusCode
+      }
+    }
+
+    return undefined
   }
   
   private getImage(service: Service): string {
@@ -402,12 +452,86 @@ class K8sService {
     }
   }
 
-  private buildEnvVars(envVars?: Record<string, string>): k8s.V1EnvVar[] {
-    if (!envVars) return []
-    return Object.entries(envVars).map(([name, value]) => ({
+  private buildEnvVars(service: Service): k8s.V1EnvVar[] {
+    const envVars: Record<string, string> = {
+      ...this.buildDefaultEnvVars(service)
+    }
+
+    if (service.env_vars) {
+      for (const [name, value] of Object.entries(service.env_vars)) {
+        if (value !== undefined && value !== null) {
+          envVars[name] = String(value)
+        }
+      }
+    }
+
+    const entries = Object.entries(envVars)
+    if (entries.length === 0) {
+      return []
+    }
+
+    return entries.map(([name, value]) => ({
       name,
-      value: String(value)
+      value
     }))
+  }
+
+  private buildDefaultEnvVars(service: Service): Record<string, string> {
+    if (service.type !== 'database') {
+      return {}
+    }
+
+    const dbService = service as DatabaseService
+    const env: Record<string, string> = {}
+
+    switch (dbService.database_type) {
+      case 'mysql':
+      case 'mariadb':
+        if (dbService.root_password) {
+          env.MYSQL_ROOT_PASSWORD = dbService.root_password
+        }
+        if (dbService.database_name) {
+          env.MYSQL_DATABASE = dbService.database_name
+        }
+        if (dbService.username) {
+          env.MYSQL_USER = dbService.username
+        }
+        if (dbService.password) {
+          env.MYSQL_PASSWORD = dbService.password
+        }
+        break
+      case 'postgresql':
+        if (dbService.database_name) {
+          env.POSTGRES_DB = dbService.database_name
+        }
+        if (dbService.username) {
+          env.POSTGRES_USER = dbService.username
+        }
+        if (dbService.password) {
+          env.POSTGRES_PASSWORD = dbService.password
+        }
+        break
+      case 'mongodb':
+        if (dbService.username) {
+          env.MONGO_INITDB_ROOT_USERNAME = dbService.username
+        }
+        if (dbService.password) {
+          env.MONGO_INITDB_ROOT_PASSWORD = dbService.password
+        }
+        if (dbService.database_name) {
+          env.MONGO_INITDB_DATABASE = dbService.database_name
+        }
+        break
+      case 'redis':
+        if (dbService.password) {
+          env.REDIS_PASSWORD = dbService.password
+        }
+        break
+      default:
+        break
+    }
+
+    return env
   }
 
   private buildResources(limits?: { cpu?: string; memory?: string }): k8s.V1ResourceRequirements | undefined {
@@ -454,7 +578,7 @@ class K8sService {
         ports: [{
           name: 'main',
           port: config.service_port || config.container_port,
-          targetPort: config.container_port as any,
+          targetPort: config.container_port,
           protocol: config.protocol || 'TCP',
           ...(config.service_type === 'NodePort' && config.node_port && { nodePort: config.node_port })
         }],
@@ -464,8 +588,8 @@ class K8sService {
 
     try {
       await this.coreApi.createNamespacedService({ namespace, body: k8sService })
-    } catch (error: any) {
-      if (error.response?.statusCode === 409) {
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) === 409) {
         await this.coreApi.replaceNamespacedService({ 
           name: service.name, 
           namespace, 
