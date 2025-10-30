@@ -9,25 +9,41 @@ class K8sService {
   constructor() {
     this.kc = new k8s.KubeConfig()
     
-    // 支持多种配置方式
-    if (process.env.KUBECONFIG_DATA) {
-      // 方式1：从环境变量中的 JSON 配置加载（适合生产环境）
-      console.log('[K8s] 使用 KUBECONFIG_DATA 环境变量加载配置')
-      this.kc.loadFromString(process.env.KUBECONFIG_DATA)
-    } else if (process.env.KUBECONFIG) {
-      // 方式2：从指定路径的文件加载
-      console.log('[K8s] 使用 KUBECONFIG 路径加载配置:', process.env.KUBECONFIG)
-      this.kc.loadFromFile(process.env.KUBECONFIG)
-    } else {
-      // 方式3：从默认位置加载 (~/.kube/config)
-      console.log('[K8s] 使用默认配置加载 (~/.kube/config)')
-      try {
+    try {
+      // 支持多种配置方式
+      if (process.env.KUBECONFIG_DATA) {
+        // 方式1：从环境变量中的 JSON 配置加载（适合生产环境）
+        console.log('[K8s] 使用 KUBECONFIG_DATA 环境变量加载配置')
+        this.kc.loadFromString(process.env.KUBECONFIG_DATA)
+      } else if (process.env.KUBECONFIG) {
+        // 方式2：从指定路径的文件加载
+        console.log('[K8s] 使用 KUBECONFIG 路径加载配置:', process.env.KUBECONFIG)
+        this.kc.loadFromFile(process.env.KUBECONFIG)
+      } else {
+        // 方式3：从默认位置加载 (~/.kube/config)
+        console.log('[K8s] 使用默认配置加载 (~/.kube/config)')
         this.kc.loadFromDefault()
-        console.log('[K8s] 配置加载成功，集群:', this.kc.getCurrentCluster()?.name || '未知')
-      } catch (error: any) {
-        console.error('[K8s] ⚠️  配置加载失败:', error.message)
-        console.error('[K8s] ⚠️  所有 K8s 操作将会失败！请配置 kubeconfig')
       }
+      
+      // 验证配置
+      const currentCluster = this.kc.getCurrentCluster()
+      const currentContext = this.kc.getCurrentContext()
+      
+      if (currentCluster) {
+        console.log('[K8s] ✅ 配置加载成功')
+        console.log('[K8s]    集群:', currentCluster.name)
+        console.log('[K8s]    API Server:', currentCluster.server)
+        console.log('[K8s]    上下文:', currentContext)
+      } else {
+        console.warn('[K8s] ⚠️  配置加载但未找到当前集群')
+      }
+    } catch (error: any) {
+      console.error('[K8s] ❌ 配置加载失败:', error.message)
+      console.error('[K8s] ⚠️  所有 K8s 操作将会失败！')
+      console.error('[K8s] 💡 解决方案:')
+      console.error('[K8s]    1. 本地开发：确保 ~/.kube/config 存在且有效')
+      console.error('[K8s]    2. 测试连接：运行 kubectl cluster-info')
+      console.error('[K8s]    3. 生产环境：设置 KUBECONFIG_DATA 环境变量')
     }
     
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
@@ -211,7 +227,19 @@ class K8sService {
       return { success: true, message: '服务正在重启' }
     } catch (error: any) {
       console.error(`[K8s] ❌ 重启服务失败: ${serviceName}`, error)
-      throw new Error(`重启服务失败: ${error.message}`)
+      
+      // 提供更友好的错误信息
+      let errorMessage = error.message
+      
+      if (error.message?.includes('HTTP protocol is not allowed')) {
+        errorMessage = 'Kubernetes 配置错误：API Server 地址不可访问。请检查 kubeconfig 中的 server 地址是否正确。'
+      } else if (error.message?.includes('ENOTFOUND') || error.message?.includes('ECONNREFUSED')) {
+        errorMessage = '无法连接到 Kubernetes 集群。请确保集群运行中且网络可访问。'
+      } else if (error.message?.includes('404') || error.message?.includes('not found')) {
+        errorMessage = `服务 "${serviceName}" 在 Kubernetes 集群中不存在。请先部署服务。`
+      }
+      
+      throw new Error(errorMessage)
     }
   }
 

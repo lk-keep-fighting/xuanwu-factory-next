@@ -92,7 +92,8 @@ export default function ServiceDetailPage() {
   const handleStart = async () => {
     if (!serviceId) return
     try {
-      await serviceSvc.updateServiceStatus(serviceId, 'running')
+      // 调用真正的 K8s 启动API
+      await serviceSvc.startService(serviceId)
       toast.success('服务启动成功')
       loadService()
     } catch (error: any) {
@@ -104,7 +105,8 @@ export default function ServiceDetailPage() {
   const handleStop = async () => {
     if (!serviceId) return
     try {
-      await serviceSvc.updateServiceStatus(serviceId, 'stopped')
+      // 调用真正的 K8s 停止API
+      await serviceSvc.stopService(serviceId)
       toast.success('服务已停止')
       loadService()
     } catch (error: any) {
@@ -116,12 +118,10 @@ export default function ServiceDetailPage() {
   const handleRestart = async () => {
     if (!serviceId) return
     try {
-      await serviceSvc.updateServiceStatus(serviceId, 'stopped')
-      setTimeout(async () => {
-        await serviceSvc.updateServiceStatus(serviceId, 'running')
-        toast.success('服务重启成功')
-        loadService()
-      }, 1000)
+      // 调用真正的 K8s 重启 API
+      await serviceSvc.restartService(serviceId)
+      toast.success('服务重启成功')
+      loadService()
     } catch (error: any) {
       toast.error('重启失败：' + error.message)
     }
@@ -140,21 +140,24 @@ export default function ServiceDetailPage() {
     }
   }
 
-  // 手动部署（Application 专用）
+  // 部署服务（所有类型）
   const handleDeploy = async () => {
-    if (!serviceId || !service || service.type !== ServiceType.APPLICATION) return
+    if (!serviceId || !service) return
     
-    if (!confirm('确定要构建并部署此应用吗？')) return
+    const confirmMessage = service.type === ServiceType.APPLICATION 
+      ? '确定要构建并部署此应用吗？'
+      : `确定要部署此${service.type === ServiceType.DATABASE ? '数据库' : 'Compose'}服务吗？`
+    
+    if (!confirm(confirmMessage)) return
     
     try {
       setDeploying(true)
-      await serviceSvc.updateServiceStatus(serviceId, 'building')
-      toast.success('开始构建部署，请查看部署历史')
+      
+      // 调用真正的部署 API
+      await serviceSvc.deployService(serviceId)
+      
+      toast.success('部署成功，服务正在启动')
       loadService()
-      
-      // TODO: 集成实际的构建和部署流程
-      // 这里应该调用后端 API 触发 CI/CD 流程
-      
     } catch (error: any) {
       toast.error('部署失败：' + error.message)
     } finally {
@@ -268,16 +271,15 @@ export default function ServiceDetailPage() {
 
             {/* 操作按钮 */}
             <div className="flex items-center gap-2">
-              {service.type === ServiceType.APPLICATION && (
-                <Button 
-                  onClick={handleDeploy} 
-                  disabled={deploying || service.status === 'building'}
-                  className="gap-2"
-                >
-                  <Rocket className="w-4 h-4" />
-                  {deploying ? '部署中...' : '部署'}
-                </Button>
-              )}
+              {/* 部署按钮 - 所有服务类型都支持 */}
+              <Button 
+                onClick={handleDeploy} 
+                disabled={deploying || service.status === 'building'}
+                className="gap-2"
+              >
+                <Rocket className="w-4 h-4" />
+                {deploying ? '部署中...' : '部署'}
+              </Button>
               
               {service.status === 'stopped' && (
                 <Button onClick={handleStart} className="gap-2">
