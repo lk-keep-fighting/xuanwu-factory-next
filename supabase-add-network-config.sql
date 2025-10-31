@@ -34,7 +34,7 @@ WHERE type = 'database'
   AND port IS NOT NULL 
   AND network_config IS NULL;
 
--- 迁移 Compose 服务的 ports 字段（取第一个端口）
+-- 迁移镜像服务的 ports 字段（取第一个端口）
 UPDATE services 
 SET network_config = jsonb_build_object(
   'container_port', (ports->0->>'container_port')::INTEGER,
@@ -42,7 +42,7 @@ SET network_config = jsonb_build_object(
   'service_type', 'ClusterIP',
   'protocol', COALESCE(ports->0->>'protocol', 'TCP')
 )
-WHERE type = 'compose' 
+WHERE type = 'image' 
   AND ports IS NOT NULL 
   AND jsonb_array_length(ports) > 0
   AND network_config IS NULL;

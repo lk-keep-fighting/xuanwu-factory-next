@@ -117,7 +117,7 @@ export default function ServiceCreateForm({
   // 环境变量管理
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
   
-  // 网络配置（Compose）
+  // 网络配置（镜像服务）
   const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   
@@ -125,7 +125,7 @@ export default function ServiceCreateForm({
   const serviceNameValue = watch('name') as string | undefined
   
   const getDefaultDomainPrefix = () => {
-    if (serviceType === ServiceType.COMPOSE) {
+    if (serviceType === ServiceType.IMAGE) {
       const fromImage = sanitizeDomainLabel(extractImageBaseName(imageValue))
       if (fromImage) {
         return fromImage
@@ -265,8 +265,8 @@ export default function ServiceCreateForm({
           serviceData.database_name
         )
       }
-      // Compose - 基于现有镜像
-      else if (serviceType === ServiceType.COMPOSE) {
+      // 镜像服务 - 基于现有镜像
+      else if (serviceType === ServiceType.IMAGE) {
         serviceData.image = data.image
         serviceData.tag = data.tag || 'latest'
         serviceData.command = data.command
@@ -723,8 +723,8 @@ export default function ServiceCreateForm({
         </Tabs>
       )}
 
-      {/* Compose - 基于现有镜像 */}
-      {serviceType === ServiceType.COMPOSE && (
+      {/* 镜像服务 - 基于现有镜像 */}
+      {serviceType === ServiceType.IMAGE && (
         <Tabs defaultValue="general" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="general">基本配置</TabsTrigger>
