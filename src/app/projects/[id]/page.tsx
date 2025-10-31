@@ -580,6 +580,7 @@ export default function ProjectDetailPage() {
           {createServiceType && id && (
             <ServiceCreateForm
               projectId={id}
+              projectIdentifier={project?.identifier}
               serviceType={createServiceType}
               onSuccess={() => {
                 setIsCreateDialogOpen(false)

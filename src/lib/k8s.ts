@@ -1,6 +1,18 @@
 import * as k8s from '@kubernetes/client-node'
 import type { Service, ApplicationService, DatabaseService, ComposeService } from '@/types/project'
 
+type NormalizedPortConfig = {
+  containerPort: number
+  servicePort: number
+  protocol: 'TCP' | 'UDP'
+  nodePort?: number
+}
+
+type NormalizedNetworkConfig = {
+  serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
+  ports: NormalizedPortConfig[]
+}
+
 class K8sService {
   private kc: k8s.KubeConfig
   private appsApi: k8s.AppsV1Api
@@ -64,8 +76,7 @@ class K8sService {
       replicas = (service as ApplicationService | ComposeService).replicas || 1
     }
     
-    // 使用 network_config 获取端口
-    const containerPort = service.network_config?.container_port
+    const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
     
     const deployment: k8s.V1Deployment = {
       metadata: {
@@ -85,7 +96,13 @@ class K8sService {
             containers: [{
               name: service.name,
               image: this.getImage(service),
-              ports: containerPort ? [{ containerPort }] : undefined,
+              ports: normalizedNetwork
+                ? normalizedNetwork.ports.map((port, index) => ({
+                    containerPort: port.containerPort,
+                    protocol: port.protocol,
+                    name: `port-${port.containerPort}-${index}`
+                  }))
+                : undefined,
               env: this.buildEnvVars(service),
               resources: this.buildResources(service.resource_limits),
               volumeMounts: this.buildVolumeMounts(service.volumes)
@@ -111,8 +128,8 @@ class K8sService {
     }
 
     // 使用 network_config 创建 K8s Service
-    if (service.network_config) {
-      await this.createServiceFromConfig(service, namespace)
+    if (normalizedNetwork) {
+      await this.createServiceFromConfig(service, namespace, normalizedNetwork)
     }
 
     return { success: true }
@@ -452,6 +469,102 @@ class K8sService {
     }
   }
 
+  private normalizeNetworkConfig(config?: Service['network_config']): NormalizedNetworkConfig | null {
+    if (!config) {
+      return null
+    }
+
+    const rawConfig = config as Record<string, unknown>
+
+    const serviceType = (() => {
+      const rawServiceType = rawConfig['service_type']
+      if (typeof rawServiceType === 'string') {
+        const normalized = rawServiceType.toLowerCase()
+        if (normalized === 'clusterip') {
+          return 'ClusterIP'
+        }
+        if (normalized === 'nodeport') {
+          return 'NodePort'
+        }
+        if (normalized === 'loadbalancer') {
+          return 'LoadBalancer'
+        }
+      }
+      return 'ClusterIP'
+    })() as NormalizedNetworkConfig['serviceType']
+
+    const parsePort = (portValue: unknown): NormalizedPortConfig | null => {
+      if (!portValue || typeof portValue !== 'object') {
+        return null
+      }
+
+      const portRecord = portValue as Record<string, unknown>
+
+      const containerPortValue = portRecord['container_port'] ?? portRecord['containerPort']
+      const containerPort = Number(containerPortValue)
+      if (!Number.isInteger(containerPort) || containerPort <= 0) {
+        return null
+      }
+
+      const servicePortValue =
+        portRecord['service_port'] ?? portRecord['servicePort'] ?? containerPort
+      const servicePortNumber = Number(servicePortValue)
+      const servicePort =
+        Number.isInteger(servicePortNumber) && servicePortNumber > 0
+          ? servicePortNumber
+          : containerPort
+
+      const protocolRaw = portRecord['protocol']
+      const protocolValue: NormalizedPortConfig['protocol'] =
+        typeof protocolRaw === 'string' && protocolRaw.toUpperCase() === 'UDP' ? 'UDP' : 'TCP'
+
+      const nodePortValue = portRecord['node_port'] ?? portRecord['nodePort']
+      const nodePortNumber = Number(nodePortValue)
+      const nodePort =
+        Number.isInteger(nodePortNumber) && nodePortNumber > 0
+          ? nodePortNumber
+          : undefined
+
+      const normalized: NormalizedPortConfig = {
+        containerPort,
+        servicePort,
+        protocol: protocolValue
+      }
+
+      if (nodePort !== undefined) {
+        normalized.nodePort = nodePort
+      }
+
+      return normalized
+    }
+
+    const rawPorts = rawConfig['ports']
+    if (Array.isArray(rawPorts)) {
+      const ports = rawPorts
+        .map((port) => parsePort(port))
+        .filter((port): port is NormalizedPortConfig => port !== null)
+
+      if (!ports.length) {
+        return null
+      }
+
+      return {
+        serviceType,
+        ports
+      }
+    }
+
+    const legacyPort = parsePort(rawConfig)
+    if (!legacyPort) {
+      return null
+    }
+
+    return {
+      serviceType,
+      ports: [legacyPort]
+    }
+  }
+
   private buildEnvVars(service: Service): k8s.V1EnvVar[] {
     const envVars: Record<string, string> = {
       ...this.buildDefaultEnvVars(service)
@@ -565,9 +678,30 @@ class K8sService {
     }))
   }
 
-  private async createServiceFromConfig(service: Service, namespace: string) {
-    const config = service.network_config!
-    
+  private async createServiceFromConfig(
+    service: Service,
+    namespace: string,
+    config: NormalizedNetworkConfig
+  ) {
+    if (!config.ports.length) {
+      return
+    }
+
+    const ports: k8s.V1ServicePort[] = config.ports.map((port, index) => {
+      const servicePort: k8s.V1ServicePort = {
+        name: `port-${port.containerPort}-${index}`,
+        port: port.servicePort,
+        targetPort: port.containerPort,
+        protocol: port.protocol
+      }
+
+      if (config.serviceType === 'NodePort' && port.nodePort) {
+        servicePort.nodePort = port.nodePort
+      }
+
+      return servicePort
+    })
+
     const k8sService: k8s.V1Service = {
       metadata: {
         name: service.name,
@@ -575,14 +709,8 @@ class K8sService {
       },
       spec: {
         selector: { app: service.name },
-        ports: [{
-          name: 'main',
-          port: config.service_port || config.container_port,
-          targetPort: config.container_port,
-          protocol: config.protocol || 'TCP',
-          ...(config.service_type === 'NodePort' && config.node_port && { nodePort: config.node_port })
-        }],
-        type: config.service_type || 'ClusterIP'
+        ports,
+        type: config.serviceType
       }
     }
 
