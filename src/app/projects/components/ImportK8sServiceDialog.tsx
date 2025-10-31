@@ -208,7 +208,7 @@ export function ImportK8sServiceDialog({
         onOpenChange(dialogOpen)
       }}
     >
-      <DialogContent className="max-w-5xl">
+      <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-[1400px] lg:max-w-[1600px] xl:max-w-[1800px]">
         <DialogHeader>
           <DialogTitle>从 Kubernetes 导入服务</DialogTitle>
           <DialogDescription>
@@ -288,67 +288,89 @@ export function ImportK8sServiceDialog({
                 </div>
               </div>
             ) : (
-              <div className="h-[420px] overflow-y-auto pr-1">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="h-[560px] overflow-y-auto pr-2">
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3">
                   {orderedCandidates.map((candidate) => (
-                    <Card key={candidate.uid} className="flex h-full flex-col">
-                      <CardHeader className="flex flex-col gap-2">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <CardTitle className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                            {candidate.name}
-                          </CardTitle>
-                          <Badge variant="secondary">{candidate.kind}</Badge>
-                          <Badge variant="outline">命名空间：{candidate.namespace}</Badge>
-                          <Badge variant="outline">副本：{candidate.replicas}</Badge>
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          镜像：{candidate.image}
-                          {candidate.tag ? `:${candidate.tag}` : ''}
+                    <Card key={candidate.uid} className="flex h-full flex-col hover:shadow-lg transition-all duration-200 border-2 hover:border-blue-200">
+                      <CardHeader className="pb-3">
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <CardTitle className="text-lg font-bold text-gray-900 dark:text-gray-100">
+                              {candidate.name}
+                            </CardTitle>
+                            <Badge variant="secondary" className="shrink-0">{candidate.kind}</Badge>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline" className="text-xs">📦 {candidate.namespace}</Badge>
+                            <Badge variant="outline" className="text-xs">🔄 {candidate.replicas} 副本</Badge>
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-800 px-2 py-1.5 rounded">
+                            {candidate.image}{candidate.tag ? `:${candidate.tag}` : ''}
+                          </div>
                         </div>
                       </CardHeader>
-                      <CardContent className="flex flex-1 flex-col justify-between gap-4">
-                        <div className="space-y-4">
-                          <div>
-                            <Label className="text-xs text-gray-500">启动命令</Label>
-                            <div className="mt-1 text-sm text-gray-700 dark:text-gray-300">
-                              {formatCommand(candidate.command)}
+                      <CardContent className="flex flex-1 flex-col gap-4 pt-0">
+                        <div className="flex-1 space-y-3">
+                          {candidate.command && (
+                            <div className="space-y-1">
+                              <Label className="text-xs font-medium text-gray-600">💻 启动命令</Label>
+                              <div className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 p-2 rounded font-mono">
+                                {formatCommand(candidate.command)}
+                              </div>
                             </div>
-                          </div>
+                          )}
 
                           {candidate.networkConfig && (
-                            <div className="space-y-2">
-                              <Label className="text-xs text-gray-500">网络配置</Label>
-                              <div className="rounded-md border border-gray-200 p-3 text-sm text-gray-700">
-                                <div className="mb-2 font-medium">
-                                  Service 类型：{candidate.networkConfig.service_type ?? 'ClusterIP'}
+                            <div className="space-y-1">
+                              <Label className="text-xs font-medium text-gray-600">🌐 网络配置</Label>
+                              <div className="rounded-lg border-2 border-blue-100 bg-blue-50/50 dark:bg-blue-950/20 p-3">
+                                <div className="mb-2 text-xs font-semibold text-blue-700 dark:text-blue-400">
+                                  {candidate.networkConfig.service_type ?? 'ClusterIP'}
                                 </div>
-                                <div className="space-y-1">
-                                  {candidate.networkConfig.ports?.map((port, index) => (
-                                    <div
-                                      key={`${candidate.uid}-port-${index}`}
-                                      className="flex flex-wrap items-center gap-3"
-                                    >
-                                      <Badge variant="outline">容器 {port.container_port}</Badge>
-                                      <Badge variant="outline">
-                                        Service {port.service_port ?? port.container_port}
-                                      </Badge>
-                                      <Badge variant="outline">协议 {port.protocol}</Badge>
-                                      {typeof port.node_port === 'number' && (
-                                        <Badge variant="outline">NodePort {port.node_port}</Badge>
+                                <div className="space-y-2">
+                                  {'ports' in candidate.networkConfig && candidate.networkConfig.ports
+                                    ? candidate.networkConfig.ports.map((port, index) => (
+                                        <div
+                                          key={`${candidate.uid}-port-${index}`}
+                                          className="flex flex-wrap items-center gap-2 text-xs"
+                                        >
+                                          <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
+                                            容器:{port.container_port}
+                                          </Badge>
+                                          <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100">
+                                            Service:{port.service_port ?? port.container_port}
+                                          </Badge>
+                                          <Badge variant="outline" className="text-xs">{port.protocol ?? 'TCP'}</Badge>
+                                          {typeof port.node_port === 'number' && (
+                                            <Badge variant="outline" className="text-xs bg-purple-50">NodePort:{port.node_port}</Badge>
+                                          )}
+                                        </div>
+                                      ))
+                                    : 'container_port' in candidate.networkConfig && (
+                                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                                          <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
+                                            容器:{candidate.networkConfig.container_port}
+                                          </Badge>
+                                          <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100">
+                                            Service:{candidate.networkConfig.service_port ?? candidate.networkConfig.container_port}
+                                          </Badge>
+                                          <Badge variant="outline" className="text-xs">{candidate.networkConfig.protocol ?? 'TCP'}</Badge>
+                                          {typeof candidate.networkConfig.node_port === 'number' && (
+                                            <Badge variant="outline" className="text-xs bg-purple-50">NodePort:{candidate.networkConfig.node_port}</Badge>
+                                          )}
+                                        </div>
                                       )}
-                                    </div>
-                                  ))}
                                 </div>
                               </div>
                             </div>
                           )}
 
                           {candidate.containers.length > 1 && (
-                            <div className="space-y-2">
-                              <Label className="text-xs text-gray-500">容器列表</Label>
-                              <div className="flex flex-wrap gap-2 text-xs text-gray-600">
+                            <div className="space-y-1">
+                              <Label className="text-xs font-medium text-gray-600">📦 容器列表 ({candidate.containers.length})</Label>
+                              <div className="flex flex-wrap gap-1.5">
                                 {candidate.containers.map((container) => (
-                                  <Badge key={container.name} variant="outline">
+                                  <Badge key={container.name} variant="outline" className="text-xs">
                                     {container.name}
                                   </Badge>
                                 ))}
@@ -357,21 +379,24 @@ export function ImportK8sServiceDialog({
                           )}
                         </div>
 
-                        <div className="flex items-center justify-end">
-                          <Button
-                            type="button"
-                            className="gap-2"
-                            onClick={() => void handleImport(candidate)}
-                            disabled={Boolean(importing)}
-                          >
-                            {importing === candidate.uid ? (
+                        <Button
+                          type="button"
+                          className="w-full gap-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-md hover:shadow-lg transition-all"
+                          onClick={() => void handleImport(candidate)}
+                          disabled={Boolean(importing)}
+                        >
+                          {importing === candidate.uid ? (
+                            <>
                               <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
+                              导入中...
+                            </>
+                          ) : (
+                            <>
                               <Download className="h-4 w-4" />
-                            )}
-                            {importing === candidate.uid ? '导入中...' : '导入为服务'}
-                          </Button>
-                        </div>
+                              导入为服务
+                            </>
+                          )}
+                        </Button>
                       </CardContent>
                     </Card>
                   ))}
