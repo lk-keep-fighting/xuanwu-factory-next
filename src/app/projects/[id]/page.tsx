@@ -27,21 +27,49 @@ import { toast } from 'sonner'
 import { projectSvc } from '@/service/projectSvc'
 import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType } from '@/types/project'
-import type { Project, Service } from '@/types/project'
+import type { ApplicationService, DatabaseService, ImageService, Project, Service } from '@/types/project'
 import ServiceCreateForm from '../components/ServiceCreateForm'
 import { ImportK8sServiceDialog } from '../components/ImportK8sServiceDialog'
 
-const SERVICE_TYPE_ICONS: Record<ServiceType, LucideIcon> = {
+const SERVICE_TYPE_ICONS = {
   [ServiceType.APPLICATION]: Package,
   [ServiceType.DATABASE]: Database,
   [ServiceType.IMAGE]: Box
-}
+} satisfies Record<ServiceType, LucideIcon>
 
-const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
+const SERVICE_TYPE_LABELS = {
   [ServiceType.APPLICATION]: 'Application',
   [ServiceType.DATABASE]: 'Database',
   [ServiceType.IMAGE]: 'Image'
+} satisfies Record<ServiceType, string>
+
+const UNKNOWN_SERVICE_TYPE_LABEL = '未知服务类型'
+
+const SERVICE_TYPE_VALUES = new Set<ServiceType>(Object.values(ServiceType))
+
+const normalizeServiceType = (value: ServiceType | string | null | undefined): ServiceType | null => {
+  if (!value) {
+    return null
+  }
+
+  const normalized = String(value).trim().toLowerCase() as ServiceType
+  return SERVICE_TYPE_VALUES.has(normalized) ? normalized : null
 }
+
+const isApplicationService = (
+  service: Service,
+  type: ServiceType | null
+): service is ApplicationService => type === ServiceType.APPLICATION
+
+const isDatabaseService = (
+  service: Service,
+  type: ServiceType | null
+): service is DatabaseService => type === ServiceType.DATABASE
+
+const isImageService = (
+  service: Service,
+  type: ServiceType | null
+): service is ImageService => type === ServiceType.IMAGE
 
 const STATUS_COLORS: Record<string, string> = {
   running: 'bg-green-500',
@@ -224,18 +252,32 @@ export default function ProjectDetailPage() {
   }
 
   // 过滤服务
-  const filteredServices = services.filter(service => {
+  const filteredServices = services.filter((service) => {
+    const normalizedType = normalizeServiceType(service.type)
     const matchesSearch = service.name.toLowerCase().includes(searchKeyword.toLowerCase())
-    const matchesType = selectedType === 'all' || service.type === selectedType
+    const matchesType = selectedType === 'all' || normalizedType === selectedType
     return matchesSearch && matchesType
   })
 
   // 统计服务数量
+  const serviceTypeCounts: Record<ServiceType, number> = {
+    [ServiceType.APPLICATION]: 0,
+    [ServiceType.DATABASE]: 0,
+    [ServiceType.IMAGE]: 0
+  }
+
+  services.forEach((service) => {
+    const normalizedType = normalizeServiceType(service.type)
+    if (normalizedType) {
+      serviceTypeCounts[normalizedType] += 1
+    }
+  })
+
   const serviceStats = {
     total: services.length,
-    application: services.filter(s => s.type === 'application').length,
-    database: services.filter(s => s.type === 'database').length,
-    image: services.filter(s => s.type === 'image').length
+    application: serviceTypeCounts[ServiceType.APPLICATION],
+    database: serviceTypeCounts[ServiceType.DATABASE],
+    image: serviceTypeCounts[ServiceType.IMAGE]
   }
 
   return (
@@ -404,12 +446,28 @@ export default function ProjectDetailPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredServices.map((service) => {
-              const Icon = SERVICE_TYPE_ICONS[service.type]
-              const statusColor = STATUS_COLORS[service.status || 'pending']
-              const statusLabel = STATUS_LABELS[service.status || 'pending']
+              const normalizedType = normalizeServiceType(service.type)
+              const Icon = normalizedType ? SERVICE_TYPE_ICONS[normalizedType] : Package
+              const serviceTypeLabel =
+                normalizedType
+                  ? SERVICE_TYPE_LABELS[normalizedType]
+                  : typeof service.type === 'string' && service.type.trim().length
+                    ? service.type
+                    : UNKNOWN_SERVICE_TYPE_LABEL
+              const statusKey =
+                typeof service.status === 'string' ? service.status.trim().toLowerCase() : 'pending'
+              const statusColor = STATUS_COLORS[statusKey] ?? 'bg-gray-500'
+              const statusLabel =
+                STATUS_LABELS[statusKey] ??
+                (typeof service.status === 'string' && service.status.trim().length
+                  ? service.status
+                  : '未知状态')
+              const applicationService = isApplicationService(service, normalizedType) ? service : null
+              const databaseService = isDatabaseService(service, normalizedType) ? service : null
+              const imageService = isImageService(service, normalizedType) ? service : null
               
               return (
-                <Card 
+                <Card
                   key={service.id} 
                   className="hover:shadow-lg transition-all duration-200 cursor-pointer"
                   onClick={() => router.push(`/projects/${id}/services/${service.id}`)}
@@ -423,7 +481,7 @@ export default function ProjectDetailPage() {
                         <div>
                           <h3 className="font-semibold text-gray-900">{service.name}</h3>
                           <Badge variant="outline" className="mt-1">
-                            {SERVICE_TYPE_LABELS[service.type]}
+                            {serviceTypeLabel}
                           </Badge>
                         </div>
                       </div>
@@ -476,41 +534,44 @@ export default function ProjectDetailPage() {
                         </div>
                       </div>
                       
-                      {service.type === ServiceType.APPLICATION && (
+                      {applicationService && (
                         <>
                           <div className="flex items-center justify-between">
                             <span className="text-gray-500">代码源</span>
-                            <span className="text-gray-900 truncate ml-2">{service.git_repository || '-'}</span>
+                            <span className="text-gray-900 truncate ml-2">
+                              {applicationService.git_repository || '-'}
+                            </span>
                           </div>
-                          {service.port && (
+                          {applicationService.port && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-500">端口</span>
-                              <span className="text-gray-900">{service.port}</span>
+                              <span className="text-gray-900">{applicationService.port}</span>
                             </div>
                           )}
                         </>
                       )}
                       
-                      {service.type === ServiceType.DATABASE && (
+                      {databaseService && (
                         <>
                           <div className="flex items-center justify-between">
                             <span className="text-gray-500">类型</span>
-                            <span className="text-gray-900 uppercase">{service.database_type}</span>
+                            <span className="text-gray-900 uppercase">{databaseService.database_type}</span>
                           </div>
-                          {service.version && (
+                          {databaseService.version && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-500">版本</span>
-                              <span className="text-gray-900">{service.version}</span>
+                              <span className="text-gray-900">{databaseService.version}</span>
                             </div>
                           )}
                         </>
                       )}
                       
-                      {service.type === ServiceType.IMAGE && (
+                      {imageService && (
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500">镜像</span>
                           <span className="text-gray-900 truncate ml-2">
-                            {service.image}{service.tag && `:${service.tag}`}
+                            {imageService.image}
+                            {imageService.tag && `:${imageService.tag}`}
                           </span>
                         </div>
                       )}
