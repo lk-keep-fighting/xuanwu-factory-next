@@ -71,6 +71,8 @@ export async function DELETE(
     return NextResponse.json({ error: '服务名称缺失，无法删除' }, { status: 400 })
   }
 
+  let warning: string | undefined
+
   try {
     await k8sService.deleteService(serviceData.name)
   } catch (error: unknown) {
@@ -79,12 +81,29 @@ export async function DELETE(
         ? error.message
         : typeof error === 'string'
           ? error
-          : ''
+          : String(error)
 
-    return NextResponse.json(
-      { error: errorMessage || '删除 Kubernetes 资源失败' },
-      { status: 500 }
-    )
+    const normalizedMessage = errorMessage.toLowerCase()
+    const notFound =
+      normalizedMessage.includes('not found') ||
+      normalizedMessage.includes('404') ||
+      normalizedMessage.includes('does not exist') ||
+      normalizedMessage.includes('no matches') ||
+      normalizedMessage.includes('不存在') ||
+      normalizedMessage.includes('未找到')
+
+    if (notFound) {
+      warning = `Kubernetes 集群中未找到服务「${serviceData.name}」，已跳过集群资源清理。`
+
+      if (errorMessage && errorMessage !== warning) {
+        console.warn(`[Service Delete] Kubernetes 删除资源时未找到：${errorMessage}`)
+      }
+    } else {
+      return NextResponse.json(
+        { error: errorMessage || '删除 Kubernetes 资源失败' },
+        { status: 500 }
+      )
+    }
   }
 
   const { error: deleteError } = await supabase
@@ -96,5 +115,5 @@ export async function DELETE(
     return NextResponse.json({ error: deleteError.message }, { status: 500 })
   }
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ success: true, message: '服务已删除', warning })
 }

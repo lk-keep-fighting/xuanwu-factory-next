@@ -1,5 +1,6 @@
 'use client'
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X } from 'lucide-react'
@@ -9,7 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType } from '@/types/project'
@@ -265,8 +265,11 @@ export default function ServiceDetailPage() {
     if (!serviceId || !confirm('确定要删除这个服务吗？')) return
     
     try {
-      await serviceSvc.deleteService(serviceId)
-      toast.success('服务删除成功')
+      const result = await serviceSvc.deleteService(serviceId)
+      toast.success(result.message || '服务删除成功')
+      if (result.warning) {
+        toast.warning(result.warning)
+      }
       router.push(`/projects/${projectId}`)
     } catch (error: any) {
       toast.error('删除失败：' + error.message)
