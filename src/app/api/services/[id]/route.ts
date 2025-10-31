@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { k8sService } from '@/lib/k8s'
 import { supabase } from '@/lib/supabase'
 import type { Service } from '@/types/project'
+import { INVALID_SERVICE_TYPE_MESSAGE, normalizeServiceType } from '../service-type'
 
 export async function GET(
   request: NextRequest,
@@ -27,11 +28,40 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const body = await request.json()
+  let rawBody: unknown
+
+  try {
+    rawBody = await request.json()
+  } catch (error) {
+    return NextResponse.json({ error: '请求体不是有效的 JSON 数据' }, { status: 400 })
+  }
+
+  if (!rawBody || typeof rawBody !== 'object') {
+    return NextResponse.json({ error: '请求体格式不正确' }, { status: 400 })
+  }
+
+  const body = rawBody as Record<string, unknown>
+  let payload: Record<string, unknown> = body
+
+  if (Object.prototype.hasOwnProperty.call(body, 'type')) {
+    const normalizedType = normalizeServiceType(body.type)
+
+    if (!normalizedType) {
+      return NextResponse.json(
+        { error: INVALID_SERVICE_TYPE_MESSAGE },
+        { status: 400 }
+      )
+    }
+
+    payload = {
+      ...body,
+      type: normalizedType
+    }
+  }
 
   const { data, error } = await supabase
     .from('services')
-    .update(body)
+    .update(payload)
     .eq('id', id)
     .select()
     .single()
