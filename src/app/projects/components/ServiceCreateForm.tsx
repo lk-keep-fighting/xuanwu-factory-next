@@ -18,16 +18,7 @@ import { toast } from 'sonner'
 import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType, DatabaseType, GitProvider, BuildType, Service } from '@/types/project'
 import { Github, Gitlab, Box, Database as DatabaseIcon, Plus, Trash2 } from 'lucide-react'
-
-const DEFAULT_DOMAIN_ROOT = 'dev.aimstek.cn'
-
-const sanitizeDomainLabel = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '')
-    .replace(/^-+/, '')
-    .replace(/-+$/, '')
-    .slice(0, 63)
+import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 
 const extractImageBaseName = (image?: string) => {
   if (!image) return ''

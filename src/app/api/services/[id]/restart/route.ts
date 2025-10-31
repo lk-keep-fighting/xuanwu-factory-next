@@ -15,7 +15,7 @@ export async function POST(
     // 获取服务信息
     const { data: service, error: serviceError } = await supabase
       .from('services')
-      .select('name')
+      .select('name, project:projects!inner(identifier)')
       .eq('id', id)
       .single()
 
@@ -26,8 +26,24 @@ export async function POST(
       )
     }
 
+    const namespace = service.project?.identifier?.trim()
+
+    if (!namespace) {
+      return NextResponse.json(
+        { error: '项目缺少编号，无法重启服务' },
+        { status: 400 }
+      )
+    }
+
+    if (!service.name) {
+      return NextResponse.json(
+        { error: '服务名称缺失' },
+        { status: 400 }
+      )
+    }
+
     // 重启 K8s 服务
-    const result = await k8sService.restartService(service.name)
+    const result = await k8sService.restartService(service.name, namespace)
     
     // 更新数据库状态
     await supabase
@@ -36,9 +52,10 @@ export async function POST(
       .eq('id', id)
 
     return NextResponse.json(result)
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json(
-      { error: error.message },
+      { error: message },
       { status: 500 }
     )
   }

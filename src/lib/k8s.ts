@@ -81,21 +81,24 @@ class K8sService {
   /**
    * 部署服务到 Kubernetes
    */
-  async deployService(service: Service) {
-    const namespace = 'default'
-    
+  async deployService(service: Service, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
+    await this.ensureNamespace(targetNamespace)
+
     // 获取replicas值，根据不同类型处理
     let replicas = 1
     if (service.type === ServiceType.APPLICATION || service.type === ServiceType.IMAGE) {
       replicas = (service as ApplicationService | ImageService).replicas || 1
     }
-    
+
     const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
-    
+
     const deployment: k8s.V1Deployment = {
       metadata: {
         name: service.name,
-        labels: { app: service.name }
+        labels: { app: service.name },
+        namespace: targetNamespace
       },
       spec: {
         replicas,
@@ -128,13 +131,13 @@ class K8sService {
     }
 
     try {
-      await this.appsApi.createNamespacedDeployment({ namespace, body: deployment })
+      await this.appsApi.createNamespacedDeployment({ namespace: targetNamespace, body: deployment })
     } catch (error: unknown) {
       if (this.getStatusCode(error) === 409) {
-        await this.appsApi.replaceNamespacedDeployment({ 
-          name: service.name, 
-          namespace, 
-          body: deployment 
+        await this.appsApi.replaceNamespacedDeployment({
+          name: service.name,
+          namespace: targetNamespace,
+          body: deployment
         })
       } else {
         throw error
@@ -143,7 +146,7 @@ class K8sService {
 
     // 使用 network_config 创建 K8s Service
     if (normalizedNetwork) {
-      await this.createServiceFromConfig(service, namespace, normalizedNetwork)
+      await this.createServiceFromConfig(service, targetNamespace, normalizedNetwork)
     }
 
     return { success: true }
@@ -152,13 +155,13 @@ class K8sService {
   /**
    * 停止服务（将副本数设为 0）
    */
-  async stopService(serviceName: string) {
-    const namespace = 'default'
-    
+  async stopService(serviceName: string, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
-      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace: targetNamespace })
       const originalReplicas = deployment.spec?.replicas || 1
-      
+
       const updatedDeployment = {
         ...deployment,
         metadata: {
@@ -173,13 +176,13 @@ class K8sService {
           replicas: 0
         }
       }
-      
+
       await this.appsApi.replaceNamespacedDeployment({
         name: serviceName,
-        namespace,
+        namespace: targetNamespace,
         body: updatedDeployment as k8s.V1Deployment
       })
-      
+
       return { success: true, message: '服务已停止' }
     } catch (error: unknown) {
       console.error('Failed to stop service:', error)
@@ -190,15 +193,15 @@ class K8sService {
   /**
    * 启动服务（恢复副本数）
    */
-  async startService(serviceName: string) {
-    const namespace = 'default'
-    
+  async startService(serviceName: string, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
-      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace: targetNamespace })
       const originalReplicas = parseInt(
         deployment.metadata?.annotations?.['xuanwu.io/original-replicas'] || '1'
       )
-      
+
       const updatedDeployment = {
         ...deployment,
         spec: {
@@ -206,13 +209,13 @@ class K8sService {
           replicas: originalReplicas
         }
       }
-      
+
       await this.appsApi.replaceNamespacedDeployment({
         name: serviceName,
-        namespace,
+        namespace: targetNamespace,
         body: updatedDeployment as k8s.V1Deployment
       })
-      
+
       return { success: true, message: '服务已启动' }
     } catch (error: unknown) {
       console.error('Failed to start service:', error)
@@ -223,16 +226,16 @@ class K8sService {
   /**
    * 重启服务（重建所有 Pod）
    */
-  async restartService(serviceName: string) {
-    const namespace = 'default'
-    
+  async restartService(serviceName: string, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
       console.log(`[K8s] 尝试重启服务: ${serviceName}`)
-      
-      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
-      
+
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace: targetNamespace })
+
       console.log(`[K8s] 读取到 Deployment: ${serviceName}, 当前副本数: ${deployment.spec?.replicas}`)
-      
+
       const updatedDeployment = {
         ...deployment,
         spec: {
@@ -249,21 +252,21 @@ class K8sService {
           }
         }
       }
-      
+
       await this.appsApi.replaceNamespacedDeployment({
         name: serviceName,
-        namespace,
+        namespace: targetNamespace,
         body: updatedDeployment as k8s.V1Deployment
       })
-      
+
       console.log(`[K8s] ✅ 服务 ${serviceName} 重启成功`)
       return { success: true, message: '服务正在重启' }
     } catch (error: unknown) {
       console.error(`[K8s] ❌ 重启服务失败: ${serviceName}`, error)
-      
+
       const rawMessage = this.getErrorMessage(error)
       let errorMessage = rawMessage
-      
+
       if (rawMessage.includes('HTTP protocol is not allowed')) {
         errorMessage = 'Kubernetes 配置错误：API Server 地址不可访问。请检查 kubeconfig 中的 server 地址是否正确。'
       } else if (rawMessage.includes('ENOTFOUND') || rawMessage.includes('ECONNREFUSED')) {
@@ -271,7 +274,7 @@ class K8sService {
       } else if (rawMessage.includes('404') || rawMessage.includes('not found')) {
         errorMessage = `服务 "${serviceName}" 在 Kubernetes 集群中不存在。请先部署服务。`
       }
-      
+
       throw new Error(errorMessage)
     }
   }
@@ -279,12 +282,12 @@ class K8sService {
   /**
    * 扩缩容服务
    */
-  async scaleService(serviceName: string, replicas: number) {
-    const namespace = 'default'
-    
+  async scaleService(serviceName: string, replicas: number, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
-      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
-      
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace: targetNamespace })
+
       const updatedDeployment = {
         ...deployment,
         spec: {
@@ -292,13 +295,13 @@ class K8sService {
           replicas
         }
       }
-      
+
       await this.appsApi.replaceNamespacedDeployment({
         name: serviceName,
-        namespace,
+        namespace: targetNamespace,
         body: updatedDeployment as k8s.V1Deployment
       })
-      
+
       return { success: true, message: `服务已扩缩至 ${replicas} 个副本` }
     } catch (error: unknown) {
       console.error('Failed to scale service:', error)
@@ -309,11 +312,11 @@ class K8sService {
   /**
    * 删除服务
    */
-  async deleteService(serviceName: string) {
-    const namespace = 'default'
-    
+  async deleteService(serviceName: string, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
-      await this.appsApi.deleteNamespacedDeployment({ name: serviceName, namespace })
+      await this.appsApi.deleteNamespacedDeployment({ name: serviceName, namespace: targetNamespace })
     } catch (error: unknown) {
       if (this.getStatusCode(error) !== 404) {
         console.error('Failed to delete deployment:', error)
@@ -322,7 +325,7 @@ class K8sService {
     }
 
     try {
-      await this.coreApi.deleteNamespacedService({ name: serviceName, namespace })
+      await this.coreApi.deleteNamespacedService({ name: serviceName, namespace: targetNamespace })
     } catch (error: unknown) {
       if (this.getStatusCode(error) !== 404) {
         console.error('Failed to delete service resource:', error)
@@ -336,18 +339,18 @@ class K8sService {
   /**
    * 获取服务状态
    */
-  async getServiceStatus(serviceName: string) {
-    const namespace = 'default'
-    
+  async getServiceStatus(serviceName: string, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
-      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace })
+      const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace: targetNamespace })
       const replicas = deployment.spec?.replicas || 0
       const availableReplicas = deployment.status?.availableReplicas || 0
       const readyReplicas = deployment.status?.readyReplicas || 0
       const updatedReplicas = deployment.status?.updatedReplicas || 0
-      
+
       let status: 'running' | 'pending' | 'stopped' | 'error' = 'pending'
-      
+
       if (replicas === 0) {
         status = 'stopped'
       } else if (availableReplicas === replicas && readyReplicas === replicas) {
@@ -355,7 +358,7 @@ class K8sService {
       } else if (availableReplicas === 0) {
         status = 'error'
       }
-      
+
       return {
         status,
         replicas,
@@ -375,30 +378,30 @@ class K8sService {
   /**
    * 获取服务日志
    */
-  async getServiceLogs(serviceName: string, lines: number = 100) {
-    const namespace = 'default'
-    
+  async getServiceLogs(serviceName: string, lines: number = 100, namespace: string = 'default') {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
       const pods = await this.coreApi.listNamespacedPod({
-        namespace,
+        namespace: targetNamespace,
         labelSelector: `app=${serviceName}`
       })
-      
+
       if (pods.items.length === 0) {
         return { logs: '', error: '未找到运行的 Pod' }
       }
-      
+
       const podName = pods.items[0].metadata?.name
       if (!podName) {
         return { logs: '', error: 'Pod 名称无效' }
       }
-      
+
       const logs = await this.coreApi.readNamespacedPodLog({
         name: podName,
-        namespace,
+        namespace: targetNamespace,
         tailLines: lines
       })
-      
+
       return { logs }
     } catch (error: unknown) {
       console.error('Failed to get service logs:', error)
@@ -409,15 +412,15 @@ class K8sService {
   /**
    * 获取服务事件
    */
-  async getServiceEvents(serviceName: string) {
-    const namespace = 'default'
-    
+  async getServiceEvents(serviceName: string, namespace: string = 'default') {
+    const targetNamespace = namespace?.trim() || 'default'
+
     try {
       const events = await this.coreApi.listNamespacedEvent({
-        namespace,
+        namespace: targetNamespace,
         fieldSelector: `involvedObject.name=${serviceName}`
       })
-      
+
       return {
         events: events.items.map(event => ({
           type: event.type || 'Normal',
@@ -430,6 +433,39 @@ class K8sService {
     } catch (error: unknown) {
       console.error('Failed to get service events:', error)
       return { events: [], error: this.getErrorMessage(error) }
+    }
+  }
+
+  private async ensureNamespace(namespace: string): Promise<void> {
+    const normalized = namespace.trim()
+
+    if (!normalized || normalized === 'default') {
+      return
+    }
+
+    try {
+      await this.coreApi.readNamespace({ name: normalized })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) === 404) {
+        const body: k8s.V1Namespace = {
+          metadata: {
+            name: normalized,
+            labels: {
+              'managed-by': 'xuanwu-platform'
+            }
+          }
+        }
+
+        try {
+          await this.coreApi.createNamespace({ body })
+        } catch (createError: unknown) {
+          if (this.getStatusCode(createError) !== 409) {
+            throw createError
+          }
+        }
+      } else {
+        throw error
+      }
     }
   }
   
