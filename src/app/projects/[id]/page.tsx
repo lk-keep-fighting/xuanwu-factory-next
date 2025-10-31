@@ -211,8 +211,11 @@ export default function ProjectDetailPage() {
     if (!confirm('确定要删除这个服务吗？')) return
     
     try {
-      await serviceSvc.deleteService(serviceId)
-      toast.success('服务删除成功')
+      const result = await serviceSvc.deleteService(serviceId)
+      toast.success(result.message || '服务删除成功')
+      if (result.warning) {
+        toast.warning(result.warning)
+      }
       loadServices()
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误'

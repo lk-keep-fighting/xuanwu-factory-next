@@ -2,6 +2,12 @@ import type { Service, CreateServiceRequest, UpdateServiceRequest, Deployment } 
 
 const API_BASE = '/api/services'
 
+type DeleteServiceResult = {
+  success: boolean
+  message?: string
+  warning?: string
+}
+
 /**
  * 服务管理
  */
@@ -74,14 +80,27 @@ export const serviceSvc = {
   /**
    * 删除服务
    */
-  async deleteService(id: string): Promise<void> {
+  async deleteService(id: string): Promise<DeleteServiceResult> {
     const response = await fetch(`${API_BASE}/${id}`, {
       method: 'DELETE'
     })
-    
+
+    const result = (await response.json().catch(() => ({}))) as Partial<DeleteServiceResult> & {
+      error?: string
+    }
+
     if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Failed to delete service')
+      throw new Error(result.error || 'Failed to delete service')
+    }
+
+    if (result.success === false) {
+      throw new Error(result.message || result.warning || 'Failed to delete service')
+    }
+
+    return {
+      success: result.success ?? true,
+      message: result.message,
+      warning: result.warning
     }
   },
 
@@ -238,7 +257,7 @@ export const serviceSvc = {
   /**
    * 获取服务实时状态（从 K8s）
    */
-  async getK8sServiceStatus(id: string): Promise<any> {
+  async getK8sServiceStatus(id: string): Promise<unknown> {
     const service = await this.getServiceById(id)
     if (!service) throw new Error('服务不存在')
     
