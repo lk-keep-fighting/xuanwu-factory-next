@@ -34,13 +34,13 @@ import { ImportK8sServiceDialog } from '../components/ImportK8sServiceDialog'
 const SERVICE_TYPE_ICONS: Record<ServiceType, LucideIcon> = {
   [ServiceType.APPLICATION]: Package,
   [ServiceType.DATABASE]: Database,
-  [ServiceType.COMPOSE]: Box
+  [ServiceType.IMAGE]: Box
 }
 
 const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
   [ServiceType.APPLICATION]: 'Application',
   [ServiceType.DATABASE]: 'Database',
-  [ServiceType.COMPOSE]: 'Compose'
+  [ServiceType.IMAGE]: 'Image'
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -235,7 +235,7 @@ export default function ProjectDetailPage() {
     total: services.length,
     application: services.filter(s => s.type === 'application').length,
     database: services.filter(s => s.type === 'database').length,
-    compose: services.filter(s => s.type === 'compose').length
+    image: services.filter(s => s.type === 'image').length
   }
 
   return (
@@ -290,9 +290,9 @@ export default function ProjectDetailPage() {
                       <Database className="w-4 h-4 mr-2" />
                       Database
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.COMPOSE)}>
+                    <DropdownMenuItem onClick={() => handleOpenCreateDialog(ServiceType.IMAGE)}>
                       <Box className="w-4 h-4 mr-2" />
-                      Compose
+                      Image
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -347,8 +347,8 @@ export default function ProjectDetailPage() {
                 <div className="text-sm text-gray-500">Databases</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{serviceStats.compose}</div>
-                <div className="text-sm text-gray-500">Composes</div>
+                <div className="text-2xl font-bold text-green-600">{serviceStats.image}</div>
+                <div className="text-sm text-gray-500">Images</div>
               </div>
             </div>
           </div>
@@ -385,9 +385,9 @@ export default function ProjectDetailPage() {
                 <Database className="w-4 h-4 mr-2" />
                 Database
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSelectedType(ServiceType.COMPOSE)}>
+              <DropdownMenuItem onClick={() => setSelectedType(ServiceType.IMAGE)}>
                 <Box className="w-4 h-4 mr-2" />
-                Compose
+                Image
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -506,7 +506,7 @@ export default function ProjectDetailPage() {
                         </>
                       )}
                       
-                      {service.type === ServiceType.COMPOSE && (
+                      {service.type === ServiceType.IMAGE && (
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500">镜像</span>
                           <span className="text-gray-900 truncate ml-2">

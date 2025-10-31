@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS services (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('application', 'database', 'compose')),
+  type TEXT NOT NULL CHECK (type IN ('application', 'database', 'image')),
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'stopped', 'error', 'building')),
   
   -- 通用配置
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS services (
   internal_host TEXT,
   internal_connection_url TEXT,
   
-  -- Compose 特定字段（基于现有镜像）
+  -- 镜像服务特定字段（基于现有镜像）
   image TEXT,
   tag TEXT,
   health_check JSONB,

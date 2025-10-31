@@ -7,7 +7,7 @@ const resolveDeploymentTag = (service: Service): string | null => {
   switch (service.type) {
     case 'application':
       return service.built_image || service.git_branch || null
-    case 'compose':
+    case 'image':
       return service.tag ? `${service.image}:${service.tag}` : service.image
     case 'database':
       return service.version ? `${service.database_type}:${service.version}` : service.database_type
@@ -84,8 +84,13 @@ export async function POST(
       }
 
       return NextResponse.json({ success: true, message: '部署成功' })
-    } catch (k8sError: any) {
-      const errorMessage = k8sError?.message || '部署失败'
+    } catch (k8sError: unknown) {
+      const errorMessage =
+        k8sError instanceof Error
+          ? k8sError.message
+          : typeof k8sError === 'string'
+            ? k8sError
+            : '部署失败'
 
       await supabase
         .from('services')
@@ -105,7 +110,14 @@ export async function POST(
 
       return NextResponse.json({ error: `部署失败: ${errorMessage}` }, { status: 500 })
     }
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message || '部署过程出现异常' }, { status: 500 })
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : '部署过程出现异常'
+
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

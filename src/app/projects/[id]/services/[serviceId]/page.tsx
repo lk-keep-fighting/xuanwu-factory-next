@@ -1,7 +1,7 @@
 'use client'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -109,7 +109,7 @@ export default function ServiceDetailPage() {
   const [hasLoadedLogs, setHasLoadedLogs] = useState(false)
 
   // 加载服务详情
-  const loadService = async () => {
+  const loadService = useCallback(async () => {
     if (!serviceId) return
 
     try {
@@ -144,9 +144,9 @@ export default function ServiceDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [projectId, router, serviceId])
 
-  const loadDeployments = async (showToast = false) => {
+  const loadDeployments = useCallback(async (showToast = false) => {
     if (!serviceId) return
 
     try {
@@ -163,9 +163,9 @@ export default function ServiceDetailPage() {
     } finally {
       setDeploymentsLoading(false)
     }
-  }
+  }, [serviceId])
 
-  const loadLogs = async (showToast = false) => {
+  const loadLogs = useCallback(async (showToast = false) => {
     if (!serviceId) return
 
     try {
@@ -194,11 +194,11 @@ export default function ServiceDetailPage() {
       setLogsLoading(false)
       setHasLoadedLogs(true)
     }
-  }
+  }, [serviceId])
 
   useEffect(() => {
     loadService()
-  }, [serviceId])
+  }, [loadService])
 
   useEffect(() => {
     if (!serviceId) return
@@ -209,7 +209,7 @@ export default function ServiceDetailPage() {
     setLogsError(null)
     setDeploymentsLoading(true)
     loadDeployments()
-  }, [serviceId])
+  }, [loadDeployments, serviceId])
 
   useEffect(() => {
     if (activeTab === 'deployments') {
@@ -219,7 +219,7 @@ export default function ServiceDetailPage() {
     if (activeTab === 'logs' && !hasLoadedLogs) {
       loadLogs()
     }
-  }, [activeTab])
+  }, [activeTab, hasLoadedLogs, loadDeployments, loadLogs])
 
   // 启动服务
   const handleStart = async () => {
@@ -282,7 +282,7 @@ export default function ServiceDetailPage() {
     
     const confirmMessage = service.type === ServiceType.APPLICATION 
       ? '确定要构建并部署此应用吗？'
-      : `确定要部署此${service.type === ServiceType.DATABASE ? '数据库' : 'Compose'}服务吗？`
+      : `确定要部署此${service.type === ServiceType.DATABASE ? '数据库' : '镜像'}服务吗？`
     
     if (!confirm(confirmMessage)) return
     
@@ -403,7 +403,7 @@ export default function ServiceDetailPage() {
                 <Badge variant="outline">
                   {service.type === ServiceType.APPLICATION && 'Application'}
                   {service.type === ServiceType.DATABASE && 'Database'}
-                  {service.type === ServiceType.COMPOSE && 'Compose'}
+                  {service.type === ServiceType.IMAGE && 'Image'}
                 </Badge>
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${statusColor}`} />
@@ -692,8 +692,8 @@ export default function ServiceDetailPage() {
               </>
             )}
 
-            {/* Compose 配置 */}
-            {service.type === ServiceType.COMPOSE && (
+            {/* 镜像配置 */}
+            {service.type === ServiceType.IMAGE && (
               <Card>
                 <CardHeader>
                   <CardTitle>镜像配置</CardTitle>

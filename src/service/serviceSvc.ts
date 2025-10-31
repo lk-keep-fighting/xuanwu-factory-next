@@ -13,7 +13,7 @@ type DeleteServiceResult = {
  */
 export const serviceSvc = {
   /**
-   * 创建服务（Application/Database/Compose）
+   * 创建服务（Application/Database/Image）
    */
   async createService(service: CreateServiceRequest): Promise<Service> {
     const response = await fetch(API_BASE, {

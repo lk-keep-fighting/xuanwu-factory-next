@@ -3,7 +3,7 @@ import {
   type Service,
   type ApplicationService,
   type DatabaseService,
-  type ComposeService,
+  type ImageService,
   type CreateServiceRequest,
   ServiceType,
   type NetworkConfigV2
@@ -86,8 +86,8 @@ class K8sService {
     
     // 获取replicas值，根据不同类型处理
     let replicas = 1
-    if (service.type === 'application' || service.type === 'compose') {
-      replicas = (service as ApplicationService | ComposeService).replicas || 1
+    if (service.type === ServiceType.APPLICATION || service.type === ServiceType.IMAGE) {
+      replicas = (service as ApplicationService | ImageService).replicas || 1
     }
     
     const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
@@ -478,8 +478,8 @@ class K8sService {
       const version = dbService.version || 'latest'
       return `${dbService.database_type}:${version}`
     } else {
-      const composeService = service as ComposeService
-      return `${composeService.image}:${composeService.tag || 'latest'}`
+      const imageService = service as ImageService
+      return `${imageService.image}:${imageService.tag || 'latest'}`
     }
   }
 
@@ -876,7 +876,7 @@ class K8sService {
     const payload: CreateServiceRequest = {
       project_id: projectId,
       name: candidate.name,
-      type: ServiceType.COMPOSE,
+      type: ServiceType.IMAGE,
       image: candidate.image,
       tag: candidate.tag,
       command: candidate.command,

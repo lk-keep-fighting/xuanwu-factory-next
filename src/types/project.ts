@@ -12,7 +12,7 @@ export interface Project {
 export enum ServiceType {
   APPLICATION = 'application',  // 基于源码构建
   DATABASE = 'database',        // 内置数据库镜像
-  COMPOSE = 'compose'           // 基于现有镜像部署
+  IMAGE = 'image'               // 基于现有镜像部署
 }
 
 // 数据库类型枚举
@@ -148,9 +148,9 @@ export interface DatabaseService extends BaseService {
   internal_connection_url?: string  // 内部连接 URL
 }
 
-// Compose 服务 - 基于现有镜像部署
-export interface ComposeService extends BaseService {
-  type: ServiceType.COMPOSE
+// 镜像服务 - 基于现有镜像部署
+export interface ImageService extends BaseService {
+  type: ServiceType.IMAGE
   
   // 镜像配置
   image: string              // 镜像名称，如 nginx、redis
@@ -169,7 +169,7 @@ export interface ComposeService extends BaseService {
 }
 
 // 统一服务类型
-export type Service = ApplicationService | DatabaseService | ComposeService
+export type Service = ApplicationService | DatabaseService | ImageService
 
 // 服务创建请求类型
 export type CreateServiceRequest = Omit<Service, 'id' | 'created_at' | 'updated_at' | 'status'>
