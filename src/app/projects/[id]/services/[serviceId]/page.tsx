@@ -34,6 +34,23 @@ const STATUS_LABELS: Record<string, string> = {
   building: '构建中'
 }
 
+const SERVICE_STATUSES = ['running', 'pending', 'stopped', 'error', 'building'] as const
+
+type ServiceStatus = (typeof SERVICE_STATUSES)[number]
+
+const normalizeServiceStatus = (status?: string): ServiceStatus => {
+  if (!status || typeof status !== 'string') {
+    return 'pending'
+  }
+  const normalized = status.trim().toLowerCase()
+
+  if (normalized === 'stoped' || normalized === 'inactive') {
+    return 'stopped'
+  }
+
+  return SERVICE_STATUSES.includes(normalized as ServiceStatus) ? (normalized as ServiceStatus) : 'pending'
+}
+
 const DEPLOYMENT_STATUS_META: Record<Deployment['status'], { label: string; className: string }> = {
   pending: { label: '待开始', className: 'bg-gray-100 text-gray-600' },
   building: { label: '构建中', className: 'bg-blue-100 text-blue-700' },
@@ -512,6 +529,27 @@ export default function ServiceDetailPage() {
       } else {
         updateData.network_config = null
       }
+
+      if (service.type === ServiceType.IMAGE) {
+        const rawImage =
+          typeof updateData.image === 'string'
+            ? updateData.image
+            : service.image
+
+        const trimmedImage = rawImage.trim()
+
+        if (!trimmedImage) {
+          toast.error('镜像名称不能为空')
+          return
+        }
+
+        updateData.image = trimmedImage
+
+        if (typeof updateData.tag === 'string') {
+          const trimmedTag = updateData.tag.trim()
+          updateData.tag = trimmedTag ? trimmedTag : null
+        }
+      }
       
       await serviceSvc.updateService(serviceId, updateData)
       toast.success('配置保存成功')
@@ -590,8 +628,9 @@ export default function ServiceDetailPage() {
     )
   }
 
-  const statusColor = STATUS_COLORS[service.status || 'pending']
-  const statusLabel = STATUS_LABELS[service.status || 'pending']
+  const normalizedStatus = normalizeServiceStatus(service.status)
+  const statusColor = STATUS_COLORS[normalizedStatus]
+  const statusLabel = STATUS_LABELS[normalizedStatus]
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -629,20 +668,20 @@ export default function ServiceDetailPage() {
               {/* 部署按钮 - 所有服务类型都支持 */}
               <Button 
                 onClick={handleDeploy} 
-                disabled={deploying || service.status === 'building'}
+                disabled={deploying || normalizedStatus === 'building'}
                 className="gap-2"
               >
                 <Rocket className="w-4 h-4" />
                 {deploying ? '部署中...' : '部署'}
               </Button>
               
-              {service.status === 'stopped' && (
+              {normalizedStatus === 'stopped' && (
                 <Button onClick={handleStart} className="gap-2">
                   <Play className="w-4 h-4" />
                   启动
                 </Button>
               )}
-              {service.status === 'running' && (
+              {normalizedStatus === 'running' && (
                 <Button onClick={handleStop} variant="outline" className="gap-2">
                   <Square className="w-4 h-4" />
                   停止
@@ -918,11 +957,39 @@ export default function ServiceDetailPage() {
                   <div className="grid grid-cols-3 gap-4">
                     <div className="col-span-2 space-y-2">
                       <Label>镜像</Label>
-                      <Input value={service.image || '-'} disabled />
+                      <Input
+                        placeholder="例如：nginx"
+                        value={
+                          isEditing
+                            ? (typeof editedService.image === 'string' ? editedService.image : '')
+                            : service.image || '-'
+                        }
+                        onChange={(e) =>
+                          setEditedService({
+                            ...editedService,
+                            image: e.target.value
+                          })
+                        }
+                        disabled={!isEditing}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>标签</Label>
-                      <Input value={service.tag || 'latest'} disabled />
+                      <Input
+                        placeholder="例如：latest"
+                        value={
+                          isEditing
+                            ? (typeof editedService.tag === 'string' ? editedService.tag : '')
+                            : service.tag || 'latest'
+                        }
+                        onChange={(e) =>
+                          setEditedService({
+                            ...editedService,
+                            tag: e.target.value
+                          })
+                        }
+                        disabled={!isEditing}
+                      />
                     </div>
                   </div>
                   {service.command && (
