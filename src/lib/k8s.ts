@@ -1,5 +1,13 @@
 import * as k8s from '@kubernetes/client-node'
-import type { Service, ApplicationService, DatabaseService, ComposeService, CreateServiceRequest, ServiceType, NetworkConfigV2 } from '@/types/project'
+import {
+  type Service,
+  type ApplicationService,
+  type DatabaseService,
+  type ComposeService,
+  type CreateServiceRequest,
+  ServiceType,
+  type NetworkConfigV2
+} from '@/types/project'
 import type { K8sImportCandidate, K8sWorkloadKind } from '@/types/k8s'
 
 type NormalizedPortConfig = {
@@ -568,6 +576,36 @@ class K8sService {
     return {
       serviceType,
       ports: [legacyPort]
+    }
+  }
+
+  async listNamespaces(): Promise<string[]> {
+    try {
+      const response = await this.coreApi.listNamespace()
+      const directItems = Array.isArray((response as { items?: k8s.V1Namespace[] }).items)
+        ? (response as { items: k8s.V1Namespace[] }).items
+        : undefined
+      const items = directItems ?? ((response as { body?: { items?: k8s.V1Namespace[] } }).body?.items ?? [])
+      const names = items
+        .map((item) => item.metadata?.name?.trim())
+        .filter((name): name is string => Boolean(name && name.length))
+
+      if (!names.includes('default')) {
+        names.push('default')
+      }
+
+      const unique = Array.from(new Set(names))
+      unique.sort((a, b) => {
+        if (a === 'default') return -1
+        if (b === 'default') return 1
+        return a.localeCompare(b)
+      })
+
+      return unique
+    } catch (error) {
+      const message = this.getErrorMessage(error)
+      console.error('[K8s] Failed to list namespaces:', message)
+      throw new Error(`获取命名空间列表失败: ${message}`)
     }
   }
 
