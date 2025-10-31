@@ -17,7 +17,7 @@ export async function GET(
     // 获取服务名称
     const { data: service, error } = await supabase
       .from('services')
-      .select('name')
+      .select('name, project:projects!inner(identifier)')
       .eq('id', id)
       .single()
 
@@ -28,13 +28,30 @@ export async function GET(
       )
     }
 
+    const namespace = service.project?.identifier?.trim()
+
+    if (!namespace) {
+      return NextResponse.json(
+        { error: '项目缺少编号，无法获取日志' },
+        { status: 400 }
+      )
+    }
+
+    if (!service.name) {
+      return NextResponse.json(
+        { error: '服务名称缺失' },
+        { status: 400 }
+      )
+    }
+
     // 获取 K8s 日志
-    const result = await k8sService.getServiceLogs(service.name, lines)
+    const result = await k8sService.getServiceLogs(service.name, lines, namespace)
     
     return NextResponse.json(result)
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json(
-      { error: error.message },
+      { error: message },
       { status: 500 }
     )
   }

@@ -3,17 +3,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X } from 'lucide-react'
+import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import { serviceSvc } from '@/service/serviceSvc'
+import { projectSvc } from '@/service/projectSvc'
+import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 import { ServiceType } from '@/types/project'
-import type { Service, Deployment } from '@/types/project'
+import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig } from '@/types/project'
 
 const STATUS_COLORS: Record<string, string> = {
   running: 'bg-green-500',
@@ -39,6 +42,34 @@ const DEPLOYMENT_STATUS_META: Record<Deployment['status'], { label: string; clas
 }
 
 const LOGS_LINE_COUNT = 200
+
+type NetworkPortFormState = {
+  id: string
+  containerPort: string
+  servicePort: string
+  protocol: 'TCP' | 'UDP'
+  nodePort: string
+  enableDomain: boolean
+  domainPrefix: string
+}
+
+const generatePortId = () =>
+  typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : Math.random().toString(36).slice(2, 10)
+
+const createEmptyPort = (): NetworkPortFormState => ({
+  id: generatePortId(),
+  containerPort: '',
+  servicePort: '',
+  protocol: 'TCP',
+  nodePort: '',
+  enableDomain: false,
+  domainPrefix: ''
+})
+
+const isNetworkConfigV2 = (config: NetworkConfig): config is NetworkConfigV2 =>
+  Boolean(config) && Array.isArray((config as NetworkConfigV2).ports)
 
 const formatDateTime = (value?: string) => {
   if (!value) return '-'
@@ -93,12 +124,15 @@ export default function ServiceDetailPage() {
   const serviceId = params.serviceId as string
   
   const [service, setService] = useState<Service | null>(null)
+  const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('general')
   const [isEditing, setIsEditing] = useState(false)
   const [editedService, setEditedService] = useState<any>({})
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([])
   const [volumes, setVolumes] = useState<Array<{ host_path: string; container_path: string; read_only: boolean }>>([])
+  const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
+  const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [deploying, setDeploying] = useState(false)
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const [deploymentsLoading, setDeploymentsLoading] = useState(true)
@@ -107,6 +141,65 @@ export default function ServiceDetailPage() {
   const [logsLoading, setLogsLoading] = useState(false)
   const [logsError, setLogsError] = useState<string | null>(null)
   const [hasLoadedLogs, setHasLoadedLogs] = useState(false)
+
+  const projectIdentifier = project?.identifier?.trim()
+  const domainSuffixText = projectIdentifier
+    ? `${projectIdentifier}.${DEFAULT_DOMAIN_ROOT}`
+    : `项目编号.${DEFAULT_DOMAIN_ROOT}`
+  const derivedDefaultDomainSource = (() => {
+    if (!service) return 'service'
+    if (service.type === ServiceType.IMAGE) {
+      const imageName = service.image ?? ''
+      if (imageName) {
+        const segments = imageName.split('/')
+        const lastSegment = segments[segments.length - 1] || imageName
+        const [name] = lastSegment.split(':')
+        return name || lastSegment || service.name || 'service'
+      }
+    }
+    return service.name || 'service'
+  })()
+  const defaultDomainPrefix = sanitizeDomainLabel(derivedDefaultDomainSource)
+
+  const initializeNetworkState = useCallback((svc: Service) => {
+    const config = svc.network_config as NetworkConfig | undefined
+
+    if (config && isNetworkConfigV2(config) && config.ports.length > 0) {
+      setNetworkServiceType(config.service_type ?? 'ClusterIP')
+      setNetworkPorts(
+        config.ports.map((port) => ({
+          id: generatePortId(),
+          containerPort: port.container_port ? String(port.container_port) : '',
+          servicePort: port.service_port ? String(port.service_port) : '',
+          protocol: port.protocol ?? 'TCP',
+          nodePort: port.node_port ? String(port.node_port) : '',
+          enableDomain: Boolean(port.domain?.enabled),
+          domainPrefix: port.domain?.prefix ?? ''
+        }))
+      )
+      return
+    }
+
+    if (config && !isNetworkConfigV2(config)) {
+      const legacy = config
+      setNetworkServiceType(legacy.service_type ?? 'ClusterIP')
+      setNetworkPorts([
+        {
+          id: generatePortId(),
+          containerPort: legacy.container_port ? String(legacy.container_port) : '',
+          servicePort: legacy.service_port ? String(legacy.service_port) : '',
+          protocol: legacy.protocol ?? 'TCP',
+          nodePort: legacy.node_port ? String(legacy.node_port) : '',
+          enableDomain: false,
+          domainPrefix: ''
+        }
+      ])
+      return
+    }
+
+    setNetworkServiceType('ClusterIP')
+    setNetworkPorts([createEmptyPort()])
+  }, [])
 
   // 加载服务详情
   const loadService = useCallback(async () => {
@@ -124,6 +217,18 @@ export default function ServiceDetailPage() {
 
       setService(data)
       setEditedService(data)
+      initializeNetworkState(data)
+
+      if (data.project_id) {
+        try {
+          const projectDetail = await projectSvc.getProjectById(data.project_id)
+          setProject(projectDetail)
+        } catch (projectError: any) {
+          console.error('加载项目失败：', projectError)
+        }
+      } else {
+        setProject(null)
+      }
 
       // 初始化环境变量
       if (data.env_vars) {
@@ -144,7 +249,7 @@ export default function ServiceDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, router, serviceId])
+  }, [initializeNetworkState, projectId, router, serviceId])
 
   const loadDeployments = useCallback(async (showToast = false) => {
     if (!serviceId) return
@@ -321,10 +426,91 @@ export default function ServiceDetailPage() {
         }
       })
       
-      const updateData = {
+      const updateData: Record<string, unknown> = {
         ...editedService,
         env_vars: envVarsObj,
-        volumes: volumes.filter(v => v.container_path.trim())
+        volumes: volumes.filter((v) => v.container_path.trim())
+      }
+
+      const portsPayload: NetworkPortConfig[] = []
+      let networkError: string | null = null
+
+      for (const port of networkPorts) {
+        const hasInput =
+          port.containerPort.trim().length > 0 ||
+          port.servicePort.trim().length > 0 ||
+          port.nodePort.trim().length > 0 ||
+          port.enableDomain
+
+        const containerPortValue = parseInt(port.containerPort.trim(), 10)
+
+        if (!Number.isInteger(containerPortValue) || containerPortValue <= 0) {
+          if (hasInput) {
+            networkError = '请为启用的网络配置填写有效的容器端口。'
+            break
+          }
+          continue
+        }
+
+        const servicePortInput = port.servicePort.trim()
+        const parsedServicePort = servicePortInput ? parseInt(servicePortInput, 10) : containerPortValue
+        const servicePortNumber =
+          Number.isInteger(parsedServicePort) && parsedServicePort > 0
+            ? parsedServicePort
+            : containerPortValue
+
+        const portPayload: NetworkPortConfig = {
+          container_port: containerPortValue,
+          service_port: servicePortNumber,
+          protocol: port.protocol ?? 'TCP'
+        }
+
+        if (networkServiceType === 'NodePort') {
+          const nodePortInput = port.nodePort.trim()
+          if (nodePortInput) {
+            const parsedNodePort = parseInt(nodePortInput, 10)
+            if (!Number.isInteger(parsedNodePort) || parsedNodePort <= 0) {
+              networkError = 'NodePort 端口必须是正整数。'
+              break
+            }
+            portPayload.node_port = parsedNodePort
+          }
+        }
+
+        if (port.enableDomain) {
+          if (!projectIdentifier) {
+            networkError = '启用域名访问前，请先在项目中配置项目编号。'
+            break
+          }
+
+          const effectivePrefix = sanitizeDomainLabel(port.domainPrefix || defaultDomainPrefix)
+          if (!effectivePrefix) {
+            networkError = '域名前缀不能为空，请使用小写字母、数字或中划线。'
+            break
+          }
+
+          portPayload.domain = {
+            enabled: true,
+            prefix: effectivePrefix,
+            host: `${effectivePrefix}.${domainSuffixText}`
+          }
+        }
+
+        portsPayload.push(portPayload)
+      }
+
+      if (networkError) {
+        toast.error(networkError)
+        return
+      }
+
+      if (portsPayload.length > 0) {
+        updateData.network_config = {
+          service_type: networkServiceType,
+          ports: portsPayload
+        }
+      } else {
+        updateData.network_config = null
       }
       
       await serviceSvc.updateService(serviceId, updateData)
@@ -334,6 +520,32 @@ export default function ServiceDetailPage() {
     } catch (error: any) {
       toast.error('保存失败：' + error.message)
     }
+  }
+
+  const addNetworkPort = () => {
+    setNetworkPorts((ports) => [...ports, createEmptyPort()])
+  }
+
+  const removeNetworkPort = (id: string) => {
+    setNetworkPorts((ports) => (ports.length > 1 ? ports.filter((port) => port.id !== id) : ports))
+  }
+
+  const updatePortField = <K extends keyof NetworkPortFormState>(
+    id: string,
+    field: K,
+    value: NetworkPortFormState[K]
+  ) => {
+    setNetworkPorts((ports) =>
+      ports.map((port) => (port.id === id ? { ...port, [field]: value } : port))
+    )
+  }
+
+  const handleDomainPrefixChange = (id: string, value: string) => {
+    updatePortField(id, 'domainPrefix', sanitizeDomainLabel(value))
+  }
+
+  const handleToggleDomain = (id: string, enabled: boolean) => {
+    updatePortField(id, 'enableDomain', enabled)
   }
 
   // 添加环境变量
@@ -464,6 +676,10 @@ export default function ServiceDetailPage() {
             <TabsTrigger value="volumes" className="gap-2">
               <HardDrive className="w-4 h-4" />
               卷挂载
+            </TabsTrigger>
+            <TabsTrigger value="network" className="gap-2">
+              <Globe className="w-4 h-4" />
+              网络配置
             </TabsTrigger>
             <TabsTrigger value="deployments" className="gap-2">
               <Activity className="w-4 h-4" />
@@ -897,6 +1113,188 @@ export default function ServiceDetailPage() {
                     <Button onClick={handleSave} className="gap-2">
                       <Save className="w-4 h-4" />
                       保存卷配置
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* 网络配置 */}
+          <TabsContent value="network" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>网络配置</CardTitle>
+                    <CardDescription>配置服务的端口暴露和访问方式</CardDescription>
+                  </div>
+                  <Button onClick={addNetworkPort} size="sm" className="gap-2">
+                    <Plus className="w-4 h-4" />
+                    添加端口
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-2">
+                  <Label>Service 类型</Label>
+                  <Select
+                    value={networkServiceType}
+                    onValueChange={(value) =>
+                      setNetworkServiceType(value as 'ClusterIP' | 'NodePort' | 'LoadBalancer')
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ClusterIP">ClusterIP（集群内部）</SelectItem>
+                      <SelectItem value="NodePort">NodePort（节点端口）</SelectItem>
+                      <SelectItem value="LoadBalancer">LoadBalancer（负载均衡）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {networkPorts.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">
+                    暂无网络端口，点击右上方按钮添加
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {networkPorts.map((port, index) => {
+                      const resolvedPrefix = port.domainPrefix
+                        ? sanitizeDomainLabel(port.domainPrefix)
+                        : defaultDomainPrefix
+                      const previewDomain = `${resolvedPrefix}.${domainSuffixText}`
+                      return (
+                        <div
+                          key={port.id}
+                          className="space-y-4 rounded-lg border border-gray-200 bg-white p-4"
+                        >
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium text-gray-900">
+                              端口配置 {index + 1}
+                            </h4>
+                            {networkPorts.length > 1 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeNetworkPort(port.id)}
+                                className="gap-1 text-red-600 hover:text-red-700"
+                              >
+                                <X className="w-4 h-4" />
+                                移除
+                              </Button>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label className="text-sm font-medium text-gray-700">
+                                容器监听端口 *
+                              </Label>
+                              <Input
+                                type="number"
+                                placeholder="8080"
+                                value={port.containerPort}
+                                onChange={(e) => updatePortField(port.id, 'containerPort', e.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-sm font-medium text-gray-700">Service 端口</Label>
+                              <Input
+                                type="number"
+                                placeholder="默认同容器端口"
+                                value={port.servicePort}
+                                onChange={(e) => updatePortField(port.id, 'servicePort', e.target.value)}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label className="text-sm font-medium text-gray-700">协议</Label>
+                              <Select
+                                value={port.protocol}
+                                onValueChange={(value) =>
+                                  updatePortField(port.id, 'protocol', value as 'TCP' | 'UDP')
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="TCP">TCP</SelectItem>
+                                  <SelectItem value="UDP">UDP</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {networkServiceType === 'NodePort' && (
+                              <div className="space-y-2">
+                                <Label className="text-sm font-medium text-gray-700">NodePort 端口</Label>
+                                <Input
+                                  type="number"
+                                  placeholder="30000-32767"
+                                  value={port.nodePort}
+                                  onChange={(e) => updatePortField(port.id, 'nodePort', e.target.value)}
+                                />
+                                <p className="text-xs text-gray-500">
+                                  可选，范围 30000-32767，不填写自动分配
+                                </p>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4"
+                                checked={port.enableDomain}
+                                onChange={(e) => handleToggleDomain(port.id, e.target.checked)}
+                              />
+                              启用域名访问
+                            </label>
+                            <p className="text-xs text-gray-500">
+                              启用后可通过{' '}
+                              <span className="font-mono text-gray-700">{previewDomain}</span> 访问该端口
+                            </p>
+                            {port.enableDomain && (
+                              <div className="space-y-3">
+                                <div className="space-y-2">
+                                  <Label className="text-sm font-medium text-gray-700">域名前缀</Label>
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      placeholder={defaultDomainPrefix}
+                                      value={port.domainPrefix}
+                                      onChange={(e) => handleDomainPrefixChange(port.id, e.target.value)}
+                                    />
+                                    <span className="text-sm text-gray-500">.{domainSuffixText}</span>
+                                  </div>
+                                </div>
+                                <div className="rounded-md bg-gray-100 px-3 py-2 text-xs text-gray-600">
+                                  实际域名：
+                                  <span className="ml-1 font-mono text-gray-900">{previewDomain}</span>
+                                </div>
+                                {!projectIdentifier && (
+                                  <p className="text-xs text-amber-600">
+                                    项目尚未设置编号，保存前请先在项目详情中配置项目编号。
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {networkPorts.length > 0 && (
+                  <div className="flex justify-end pt-4">
+                    <Button onClick={handleSave} className="gap-2">
+                      <Save className="w-4 h-4" />
+                      保存网络配置
                     </Button>
                   </div>
                 )}

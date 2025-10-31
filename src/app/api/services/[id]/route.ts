@@ -32,7 +32,7 @@ export async function PUT(
 
   try {
     rawBody = await request.json()
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: '请求体不是有效的 JSON 数据' }, { status: 400 })
   }
 
@@ -81,7 +81,7 @@ export async function DELETE(
 
   const { data: service, error: fetchError } = await supabase
     .from('services')
-    .select('*')
+    .select('*, project:projects!inner(identifier)')
     .eq('id', id)
     .single()
 
@@ -95,7 +95,17 @@ export async function DELETE(
     return NextResponse.json({ error: '服务不存在' }, { status: 404 })
   }
 
-  const serviceData = service as Service
+  const { project: projectMeta, ...serviceWithoutProject } = service as Service & {
+    project?: { identifier?: string }
+  }
+
+  const namespace = projectMeta?.identifier?.trim()
+
+  if (!namespace) {
+    return NextResponse.json({ error: '项目缺少编号，无法删除服务' }, { status: 400 })
+  }
+
+  const serviceData = serviceWithoutProject as Service
 
   if (!serviceData.name) {
     return NextResponse.json({ error: '服务名称缺失，无法删除' }, { status: 400 })
@@ -104,7 +114,7 @@ export async function DELETE(
   let warning: string | undefined
 
   try {
-    await k8sService.deleteService(serviceData.name)
+    await k8sService.deleteService(serviceData.name, namespace)
   } catch (error: unknown) {
     const errorMessage =
       error instanceof Error

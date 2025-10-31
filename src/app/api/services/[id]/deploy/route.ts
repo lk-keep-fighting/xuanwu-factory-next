@@ -26,7 +26,7 @@ export async function POST(
     // 获取服务信息
     const { data: service, error: serviceError } = await supabase
       .from('services')
-      .select('*')
+      .select('*, project:projects!inner(identifier)')
       .eq('id', id)
       .single()
 
@@ -34,7 +34,17 @@ export async function POST(
       return NextResponse.json({ error: '服务不存在' }, { status: 404 })
     }
 
-    const typedService = service as Service
+    const { project: projectMeta, ...serviceData } = service as Service & {
+      project?: { identifier?: string }
+    }
+
+    const namespace = projectMeta?.identifier?.trim()
+
+    if (!namespace) {
+      return NextResponse.json({ error: '项目缺少编号，无法部署' }, { status: 400 })
+    }
+
+    const typedService = serviceData as Service
 
     // 更新服务状态为 building
     const { error: statusError } = await supabase
@@ -66,7 +76,7 @@ export async function POST(
     }
 
     try {
-      await k8sService.deployService(typedService)
+      await k8sService.deployService(typedService, namespace)
 
       await supabase
         .from('services')

@@ -23,7 +23,7 @@ export async function POST(
     // 获取服务信息
     const { data: service, error: serviceError } = await supabase
       .from('services')
-      .select('name')
+      .select('name, project:projects!inner(identifier)')
       .eq('id', id)
       .single()
 
@@ -34,8 +34,24 @@ export async function POST(
       )
     }
 
+    const namespace = service.project?.identifier?.trim()
+
+    if (!namespace) {
+      return NextResponse.json(
+        { error: '项目缺少编号，无法调整副本数' },
+        { status: 400 }
+      )
+    }
+
+    if (!service.name) {
+      return NextResponse.json(
+        { error: '服务名称缺失' },
+        { status: 400 }
+      )
+    }
+
     // 扩缩容 K8s 服务
-    const result = await k8sService.scaleService(service.name, replicas)
+    const result = await k8sService.scaleService(service.name, replicas, namespace)
     
     // 更新数据库中的副本数
     await supabase
@@ -44,9 +60,10 @@ export async function POST(
       .eq('id', id)
 
     return NextResponse.json(result)
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json(
-      { error: error.message },
+      { error: message },
       { status: 500 }
     )
   }
