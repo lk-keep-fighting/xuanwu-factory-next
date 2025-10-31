@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2, Tag, Pencil } from 'lucide-react'
+import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2, Tag, Pencil, Download } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,6 +29,7 @@ import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType } from '@/types/project'
 import type { Project, Service } from '@/types/project'
 import ServiceCreateForm from '../components/ServiceCreateForm'
+import { ImportK8sServiceDialog } from '../components/ImportK8sServiceDialog'
 
 const SERVICE_TYPE_ICONS: Record<ServiceType, LucideIcon> = {
   [ServiceType.APPLICATION]: Package,
@@ -99,6 +100,7 @@ export default function ProjectDetailPage() {
   const [selectedType, setSelectedType] = useState<ServiceType | 'all'>('all')
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [createServiceType, setCreateServiceType] = useState<ServiceType | null>(null)
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false)
   const [projectForm, setProjectForm] = useState<ProjectFormState>({
     name: '',
@@ -291,6 +293,16 @@ export default function ProjectDetailPage() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => setIsImportDialogOpen(true)}
+                >
+                  <Download className="w-4 h-4" />
+                  从 K8s 导入
+                </Button>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -580,6 +592,7 @@ export default function ProjectDetailPage() {
           {createServiceType && id && (
             <ServiceCreateForm
               projectId={id}
+              projectIdentifier={project?.identifier}
               serviceType={createServiceType}
               onSuccess={() => {
                 setIsCreateDialogOpen(false)
@@ -594,6 +607,16 @@ export default function ProjectDetailPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {id && (
+        <ImportK8sServiceDialog
+          projectId={id}
+          projectIdentifier={project?.identifier}
+          open={isImportDialogOpen}
+          onOpenChange={setIsImportDialogOpen}
+          onImported={loadServices}
+        />
+      )}
     </div>
   )
 }

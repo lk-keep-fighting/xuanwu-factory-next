@@ -39,6 +39,37 @@ export enum BuildType {
   BUILDPACKS = 'buildpacks'
 }
 
+// 网络配置类型
+export interface NetworkDomainConfig {
+  enabled: boolean
+  prefix: string
+  host: string
+}
+
+export interface NetworkPortConfig {
+  name?: string
+  container_port: number
+  service_port?: number
+  protocol?: 'TCP' | 'UDP'
+  node_port?: number
+  domain?: NetworkDomainConfig
+}
+
+export interface NetworkConfigV2 {
+  service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
+  ports: NetworkPortConfig[]
+}
+
+export interface LegacyNetworkConfig {
+  container_port: number
+  service_port?: number
+  service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
+  node_port?: number
+  protocol?: 'TCP' | 'UDP'
+}
+
+export type NetworkConfig = NetworkConfigV2 | LegacyNetworkConfig
+
 // 服务基础接口
 export interface BaseService {
   id?: string
@@ -61,13 +92,7 @@ export interface BaseService {
     read_only?: boolean
   }>
   // 网络配置（Kubernetes Service）
-  network_config?: {
-    container_port: number        // 容器监听端口（必需）
-    service_port?: number         // K8s Service 暴露端口（默认同 container_port）
-    service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer'  // Service 类型
-    node_port?: number            // NodePort 端口（仅 NodePort 类型）
-    protocol?: 'TCP' | 'UDP'      // 协议类型
-  }
+  network_config?: NetworkConfig
 }
 
 // Application 服务 - 基于源码构建
