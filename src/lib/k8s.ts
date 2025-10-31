@@ -1,5 +1,6 @@
 import * as k8s from '@kubernetes/client-node'
-import type { Service, ApplicationService, DatabaseService, ComposeService } from '@/types/project'
+import type { Service, ApplicationService, DatabaseService, ComposeService, CreateServiceRequest, ServiceType, NetworkConfigV2 } from '@/types/project'
+import type { K8sImportCandidate, K8sWorkloadKind } from '@/types/k8s'
 
 type NormalizedPortConfig = {
   containerPort: number
@@ -11,6 +12,11 @@ type NormalizedPortConfig = {
 type NormalizedNetworkConfig = {
   serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
   ports: NormalizedPortConfig[]
+}
+
+type ImageInfo = {
+  repository: string
+  tag: string
 }
 
 class K8sService {
@@ -565,6 +571,62 @@ class K8sService {
     }
   }
 
+  async listImportableServices(namespace: string = 'default'): Promise<K8sImportCandidate[]> {
+    try {
+      const [deployments, statefulSets, services] = await Promise.all([
+        this.appsApi.listNamespacedDeployment({ namespace }),
+        this.appsApi.listNamespacedStatefulSet({ namespace }),
+        this.coreApi.listNamespacedService({ namespace })
+      ])
+
+      const serviceItems = services.items ?? []
+      const candidates: K8sImportCandidate[] = []
+
+      for (const deployment of deployments.items ?? []) {
+        const candidate = this.buildImportCandidateFromWorkload(deployment, 'Deployment', serviceItems)
+        if (candidate) {
+          candidates.push(candidate)
+        }
+      }
+
+      for (const statefulSet of statefulSets.items ?? []) {
+        const candidate = this.buildImportCandidateFromWorkload(statefulSet, 'StatefulSet', serviceItems)
+        if (candidate) {
+          candidates.push(candidate)
+        }
+      }
+
+      return candidates
+    } catch (error) {
+      console.error('[K8s] Failed to list importable services:', this.getErrorMessage(error))
+      return []
+    }
+  }
+
+  async buildServicePayloadFromWorkload(
+    projectId: string,
+    namespace: string,
+    name: string,
+    kind: K8sWorkloadKind
+  ): Promise<CreateServiceRequest | null> {
+    try {
+      const services = await this.coreApi.listNamespacedService({ namespace })
+
+      if (kind === 'Deployment') {
+        const workload = await this.appsApi.readNamespacedDeployment({ name, namespace })
+        const candidate = this.buildImportCandidateFromWorkload(workload, kind, services.items ?? [])
+        return candidate ? this.candidateToCreateRequest(projectId, candidate) : null
+      }
+
+      const workload = await this.appsApi.readNamespacedStatefulSet({ name, namespace })
+      const candidate = this.buildImportCandidateFromWorkload(workload, kind, services.items ?? [])
+      return candidate ? this.candidateToCreateRequest(projectId, candidate) : null
+    } catch (error) {
+      console.error('[K8s] Failed to build service payload from workload:', this.getErrorMessage(error))
+      return null
+    }
+  }
+
   private buildEnvVars(service: Service): k8s.V1EnvVar[] {
     const envVars: Record<string, string> = {
       ...this.buildDefaultEnvVars(service)
@@ -676,6 +738,299 @@ class K8sService {
         }
       })
     }))
+  }
+
+  private buildImportCandidateFromWorkload(
+    workload: k8s.V1Deployment | k8s.V1StatefulSet,
+    kind: K8sWorkloadKind,
+    services: k8s.V1Service[]
+  ): K8sImportCandidate | null {
+    const metadata = workload.metadata
+    const spec = 'spec' in workload ? workload.spec : undefined
+    const templateSpec = spec?.template?.spec
+
+    if (!metadata?.name || !templateSpec) {
+      return null
+    }
+
+    const namespace = metadata.namespace ?? 'default'
+    const labels = metadata.labels ?? {}
+    const containers = templateSpec.containers ?? []
+
+    if (containers.length === 0) {
+      return null
+    }
+
+    const primaryContainer = containers[0]
+    if (!primaryContainer.image) {
+      return null
+    }
+
+    const imageInfo = this.parseImage(primaryContainer.image)
+    const commandParts = [
+      ...(primaryContainer.command ?? []),
+      ...(primaryContainer.args ?? [])
+    ]
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    const volumeInfos = this.extractVolumesFromTemplate(templateSpec, primaryContainer)
+
+    const matchedServices = services
+      .filter((service) => this.isServiceMatch(service, namespace, labels))
+      .map((service) => this.toMatchedService(service, containers))
+      .filter((service): service is NonNullable<ReturnType<typeof this.toMatchedService>> => Boolean(service))
+
+    const networkConfig = this.buildNetworkConfigFromServices(matchedServices)
+
+    const containersInfo = containers.map((container) => {
+      const info = this.parseImage(container.image)
+      const command = [
+        ...(container.command ?? []),
+        ...(container.args ?? [])
+      ]
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .join(' ')
+
+      const envVars = this.extractEnvVars(container)
+
+      return {
+        name: container.name || info.repository,
+        image: info.repository,
+        tag: info.tag,
+        command: command || undefined,
+        env: Object.keys(envVars).length ? envVars : undefined
+      }
+    })
+
+    return {
+      uid: metadata.uid || `${namespace}/${metadata.name}`,
+      name: metadata.name,
+      namespace,
+      kind,
+      labels,
+      replicas: spec?.replicas ?? 1,
+      image: imageInfo.repository,
+      tag: imageInfo.tag,
+      command: commandParts.length ? commandParts.join(' ') : undefined,
+      containers: containersInfo,
+      volumes: volumeInfos,
+      services: matchedServices,
+      networkConfig: networkConfig || undefined
+    }
+  }
+
+  private candidateToCreateRequest(projectId: string, candidate: K8sImportCandidate): CreateServiceRequest {
+    const primaryEnv = candidate.containers[0]?.env ?? {}
+    const envVars = Object.fromEntries(
+      Object.entries(primaryEnv).filter(([key, value]) => key && typeof value === 'string' && value.length)
+    )
+
+    const volumes = candidate.volumes
+      .filter((volume) => volume.containerPath)
+      .map((volume) => ({
+        container_path: volume.containerPath,
+        ...(volume.hostPath ? { host_path: volume.hostPath } : {}),
+        ...(volume.readOnly ? { read_only: true } : {})
+      }))
+
+    const payload: CreateServiceRequest = {
+      project_id: projectId,
+      name: candidate.name,
+      type: ServiceType.COMPOSE,
+      image: candidate.image,
+      tag: candidate.tag,
+      command: candidate.command,
+      replicas: candidate.replicas,
+      ...(Object.keys(envVars).length ? { env_vars: envVars } : {}),
+      ...(volumes.length ? { volumes } : {}),
+      ...(candidate.networkConfig ? { network_config: candidate.networkConfig } : {})
+    }
+
+    return payload
+  }
+
+  private extractEnvVars(container: k8s.V1Container): Record<string, string> {
+    const envVars: Record<string, string> = {}
+    for (const envVar of container.env ?? []) {
+      if (envVar.value !== undefined) {
+        envVars[envVar.name] = envVar.value
+      }
+    }
+    return envVars
+  }
+
+  private extractVolumesFromTemplate(
+    templateSpec: k8s.V1PodSpec,
+    container: k8s.V1Container
+  ): Array<{ containerPath: string; hostPath?: string; readOnly?: boolean }> {
+    const mounts = container.volumeMounts ?? []
+    if (mounts.length === 0) {
+      return []
+    }
+
+    const volumes = templateSpec.volumes ?? []
+
+    return mounts.map((mount) => {
+      const matchedVolume = volumes.find((volume) => volume.name === mount.name)
+      const hostPath = matchedVolume?.hostPath?.path
+
+      return {
+        containerPath: mount.mountPath,
+        hostPath: hostPath || undefined,
+        readOnly: mount.readOnly || undefined
+      }
+    })
+  }
+
+  private isServiceMatch(service: k8s.V1Service, namespace: string, labels: Record<string, string>): boolean {
+    if ((service.metadata?.namespace ?? 'default') !== namespace) {
+      return false
+    }
+
+    const selector = service.spec?.selector
+    if (!selector || Object.keys(selector).length === 0) {
+      return false
+    }
+
+    return Object.entries(selector).every(([key, value]) => labels[key] === value)
+  }
+
+  private toMatchedService(
+    service: k8s.V1Service,
+    containers: k8s.V1Container[]
+  ) {
+    const ports = (service.spec?.ports ?? [])
+      .map((port) => {
+        const targetPort = this.resolveTargetPort(port, containers)
+        if (!targetPort) {
+          return null
+        }
+
+        return {
+          name: port.name || undefined,
+          port: port.port ?? targetPort,
+          targetPort,
+          protocol: (port.protocol === 'UDP' ? 'UDP' : 'TCP') as 'TCP' | 'UDP',
+          nodePort: port.nodePort ?? undefined
+        }
+      })
+      .filter((port): port is { name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number } => Boolean(port))
+
+    if (ports.length === 0) {
+      return null
+    }
+
+    return {
+      name: service.metadata?.name ?? 'service',
+      type: this.normalizeServiceType(service.spec?.type),
+      ports
+    }
+  }
+
+  private resolveTargetPort(port: k8s.V1ServicePort, containers: k8s.V1Container[]): number {
+    const target = port.targetPort
+
+    if (typeof target === 'number') {
+      return target
+    }
+
+    if (typeof target === 'string' && target) {
+      const namedPort = containers
+        .flatMap((container) => container.ports ?? [])
+        .find((containerPort) => containerPort?.name === target)?.containerPort
+
+      if (namedPort) {
+        return namedPort
+      }
+
+      const numeric = Number(target)
+      if (Number.isInteger(numeric) && numeric > 0) {
+        return numeric
+      }
+    }
+
+    if (port.port && port.port > 0) {
+      return port.port
+    }
+
+    const fallback = containers
+      .flatMap((container) => container.ports ?? [])
+      .find((containerPort) => typeof containerPort?.containerPort === 'number')?.containerPort
+
+    return fallback ?? 0
+  }
+
+  private buildNetworkConfigFromServices(services: Array<ReturnType<typeof this.toMatchedService>>): NetworkConfigV2 | null {
+    if (!services.length) {
+      return null
+    }
+
+    const serviceType = services[0]?.type ?? 'ClusterIP'
+    const ports = services.flatMap((service) =>
+      service.ports.map((port) => ({
+        container_port: port.targetPort,
+        service_port: port.port,
+        protocol: port.protocol,
+        node_port: port.nodePort
+      }))
+    )
+
+    const validPorts = ports.filter((port) => Number.isInteger(port.container_port) && port.container_port > 0)
+
+    if (!validPorts.length) {
+      return null
+    }
+
+    return {
+      service_type: serviceType === 'NodePort' || serviceType === 'LoadBalancer' ? serviceType : 'ClusterIP',
+      ports: validPorts
+    }
+  }
+
+  private normalizeServiceType(type?: string): 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName' {
+    if (!type) {
+      return 'ClusterIP'
+    }
+
+    const normalized = type.toLowerCase()
+    if (normalized === 'nodeport') {
+      return 'NodePort'
+    }
+    if (normalized === 'loadbalancer') {
+      return 'LoadBalancer'
+    }
+    if (normalized === 'externalname') {
+      return 'ExternalName'
+    }
+    return 'ClusterIP'
+  }
+
+  private parseImage(image?: string): ImageInfo {
+    if (!image) {
+      return {
+        repository: 'unknown',
+        tag: 'latest'
+      }
+    }
+
+    const digestIndex = image.indexOf('@')
+    const workableImage = digestIndex === -1 ? image : image.slice(0, digestIndex)
+    const lastSlash = workableImage.lastIndexOf('/')
+    const lastColon = workableImage.lastIndexOf(':')
+
+    if (lastColon > lastSlash) {
+      return {
+        repository: workableImage.slice(0, lastColon),
+        tag: workableImage.slice(lastColon + 1) || 'latest'
+      }
+    }
+
+    return {
+      repository: workableImage,
+      tag: 'latest'
+    }
   }
 
   private async createServiceFromConfig(
