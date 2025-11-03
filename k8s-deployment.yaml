@@ -49,7 +49,7 @@ metadata:
   labels:
     app: xuanwu-factory
 spec:
-  replicas: 2
+  replicas: 1
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -74,7 +74,7 @@ spec:
       
       containers:
       - name: xuanwu-factory
-        image: nexus.aimstek.cn/xuanwu-factory:latest  # 替换为实际镜像地址
+        image: nexus.aimstek.cn/xuanwu-factory:20251103-163731  # 替换为实际镜像地址
         imagePullPolicy: Always
         
         ports:
@@ -205,7 +205,7 @@ spec:
   #   secretName: xuanwu-factory-tls
   
   rules:
-  - host: factory.yourdomain.com  # 替换为实际域名
+  - host: factory.dev.aimstek.cn  # 替换为实际域名
     http:
       paths:
       - path: /
@@ -228,7 +228,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: xuanwu-factory
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 10
   metrics:
   - type: Resource
@@ -257,6 +257,6 @@ spec:
         value: 100
         periodSeconds: 30
       - type: Pods
-        value: 2
+        value: 1
         periodSeconds: 30
       selectPolicy: Max
