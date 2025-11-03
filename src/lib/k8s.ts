@@ -560,10 +560,10 @@ class K8sService {
     } catch (error: unknown) {
       const statusCode = this.getStatusCode(error)
       console.log(`[K8s] Read namespace error - Status Code: ${statusCode}, Error:`, error)
-      
+
       if (statusCode === 404) {
         console.log(`[K8s] Namespace ${normalized} not found, creating...`)
-        
+
         const body: k8s.V1Namespace = {
           metadata: {
             name: normalized,
@@ -576,7 +576,7 @@ class K8sService {
         try {
           await this.coreApi.createNamespace({ body })
           console.log(`[K8s] ✅ Successfully created namespace ${normalized}`)
-          
+
           // 验证 namespace 是否真的创建成功
           await this.coreApi.readNamespace({ name: normalized })
           console.log(`[K8s] ✅ Verified namespace ${normalized} is accessible`)
@@ -599,6 +599,11 @@ class K8sService {
             throw createError
           }
         }
+      } else if (statusCode === 403 || statusCode === 401) {
+        console.warn(
+          `[K8s] ⚠️ Insufficient permissions to verify namespace ${normalized}. Assuming it exists.`
+        )
+        namespaceReady = true
       } else {
         console.error(`[K8s] ❌ Error reading namespace ${normalized}:`, error)
         throw error
