@@ -36,6 +36,7 @@ class K8sService {
   private coreApi: k8s.CoreV1Api
   private rbacApi: k8s.RbacAuthorizationV1Api
   private namespaceAccessCache = new Set<string>()
+  private clusterAccessCache = new Set<string>()
   private serviceAccountIdentity?: { namespace: string; name: string } | null
 
   constructor() {
@@ -631,6 +632,8 @@ class K8sService {
       return
     }
 
+    await this.ensureClusterAccess(serviceAccount)
+
     const { roleName, roleBindingName } = this.buildNamespaceRoleNames(serviceAccount)
 
     const desiredRole: k8s.V1Role = {
@@ -658,6 +661,41 @@ class K8sService {
 
     if (roleBindingEnsured) {
       this.namespaceAccessCache.add(normalized)
+    }
+  }
+
+  private async ensureClusterAccess(serviceAccount: { namespace: string; name: string }): Promise<void> {
+    const cacheKey = `${serviceAccount.namespace}/${serviceAccount.name}`
+
+    if (this.clusterAccessCache.has(cacheKey)) {
+      return
+    }
+
+    const { clusterRoleName, clusterRoleBindingName } = this.buildClusterRoleNames(serviceAccount)
+
+    const desiredClusterRole: k8s.V1ClusterRole = {
+      metadata: {
+        name: clusterRoleName,
+        labels: {
+          'managed-by': 'xuanwu-platform'
+        }
+      },
+      rules: this.buildNamespaceRoleRules()
+    }
+
+    const roleEnsured = await this.ensureClusterRole(desiredClusterRole)
+    if (!roleEnsured) {
+      return
+    }
+
+    const bindingEnsured = await this.ensureClusterRoleBinding(
+      clusterRoleBindingName,
+      clusterRoleName,
+      serviceAccount
+    )
+
+    if (bindingEnsured) {
+      this.clusterAccessCache.add(cacheKey)
     }
   }
 
@@ -717,6 +755,71 @@ class K8sService {
         `[K8s] ❌ Failed to ensure Role ${roleName} in namespace ${namespace}:`,
         this.getErrorMessage(error)
       )
+      return false
+    }
+  }
+
+  private async ensureClusterRole(desiredRole: k8s.V1ClusterRole): Promise<boolean> {
+    const roleName = desiredRole.metadata?.name
+    if (!roleName) {
+      console.warn('[K8s] ⚠️ Missing cluster role name when ensuring cluster access')
+      return false
+    }
+
+    try {
+      await this.rbacApi.createClusterRole({ body: desiredRole })
+      console.log(`[K8s] ✅ Created ClusterRole ${roleName}`)
+      return true
+    } catch (error: unknown) {
+      const statusCode = this.getStatusCode(error)
+      if (statusCode === 409) {
+        try {
+          const existingRole = await this.rbacApi.readClusterRole({ name: roleName })
+          if (!this.arePolicyRulesEqual(existingRole.rules, desiredRole.rules)) {
+            const resourceVersion = existingRole.metadata?.resourceVersion
+            if (!resourceVersion) {
+              console.warn(
+                `[K8s] ⚠️ Unable to update ClusterRole ${roleName}: missing resourceVersion`
+              )
+              return true
+            }
+
+            const updatedRole: k8s.V1ClusterRole = {
+              ...desiredRole,
+              metadata: {
+                ...desiredRole.metadata,
+                resourceVersion
+              }
+            }
+
+            await this.rbacApi.replaceClusterRole({
+              name: roleName,
+              body: updatedRole
+            })
+
+            console.log(`[K8s] 🔄 Updated ClusterRole ${roleName}`)
+          }
+
+          return true
+        } catch (readError: unknown) {
+          console.error(
+            `[K8s] ❌ Failed to reconcile ClusterRole ${roleName}:`,
+            this.getErrorMessage(readError)
+          )
+          return false
+        }
+      }
+
+      if (statusCode === 403) {
+        console.warn(
+          `[K8s] ⚠️ Insufficient permissions to ensure ClusterRole ${roleName}: ${this.getErrorMessage(error)}`
+        )
+      } else {
+        console.error(
+          `[K8s] ❌ Failed to ensure ClusterRole ${roleName}:`,
+          this.getErrorMessage(error)
+        )
+      }
       return false
     }
   }
@@ -839,6 +942,126 @@ class K8sService {
     }
   }
 
+  private async ensureClusterRoleBinding(
+    bindingName: string,
+    roleName: string,
+    serviceAccount: { namespace: string; name: string }
+  ): Promise<boolean> {
+    const desiredBinding: k8s.V1ClusterRoleBinding = {
+      metadata: {
+        name: bindingName,
+        labels: {
+          'managed-by': 'xuanwu-platform'
+        }
+      },
+      roleRef: {
+        apiGroup: 'rbac.authorization.k8s.io',
+        kind: 'ClusterRole',
+        name: roleName
+      },
+      subjects: [
+        {
+          kind: 'ServiceAccount',
+          name: serviceAccount.name,
+          namespace: serviceAccount.namespace
+        }
+      ]
+    }
+
+    try {
+      await this.rbacApi.createClusterRoleBinding({ body: desiredBinding })
+      console.log(`[K8s] ✅ Created ClusterRoleBinding ${bindingName}`)
+      return true
+    } catch (error: unknown) {
+      const statusCode = this.getStatusCode(error)
+      if (statusCode === 409) {
+        try {
+          const existingBinding = await this.rbacApi.readClusterRoleBinding({ name: bindingName })
+
+          const existingSubjects = existingBinding.subjects ?? []
+          const hasSubject = existingSubjects.some(
+            (subject) =>
+              subject.kind === 'ServiceAccount' &&
+              subject.name === serviceAccount.name &&
+              subject.namespace === serviceAccount.namespace
+          )
+
+          const roleRefMatches =
+            existingBinding.roleRef?.apiGroup === 'rbac.authorization.k8s.io' &&
+            existingBinding.roleRef?.kind === 'ClusterRole' &&
+            existingBinding.roleRef?.name === roleName
+
+          if (hasSubject && roleRefMatches) {
+            return true
+          }
+
+          const resourceVersion = existingBinding.metadata?.resourceVersion
+          if (!resourceVersion) {
+            console.warn(
+              `[K8s] ⚠️ Unable to update ClusterRoleBinding ${bindingName}: missing resourceVersion`
+            )
+            return false
+          }
+
+          const updatedSubjects = hasSubject
+            ? existingSubjects
+            : [
+                ...existingSubjects,
+                {
+                  kind: 'ServiceAccount',
+                  name: serviceAccount.name,
+                  namespace: serviceAccount.namespace
+                }
+              ]
+
+          const updatedBinding: k8s.V1ClusterRoleBinding = {
+            metadata: {
+              ...existingBinding.metadata,
+              name: bindingName,
+              labels: {
+                ...(existingBinding.metadata?.labels ?? {}),
+                'managed-by': 'xuanwu-platform'
+              },
+              resourceVersion
+            },
+            roleRef: {
+              apiGroup: 'rbac.authorization.k8s.io',
+              kind: 'ClusterRole',
+              name: roleName
+            },
+            subjects: updatedSubjects
+          }
+
+          await this.rbacApi.replaceClusterRoleBinding({
+            name: bindingName,
+            body: updatedBinding
+          })
+
+          console.log(`[K8s] 🔄 Updated ClusterRoleBinding ${bindingName}`)
+          return true
+        } catch (readError: unknown) {
+          console.error(
+            `[K8s] ❌ Failed to reconcile ClusterRoleBinding ${bindingName}:`,
+            this.getErrorMessage(readError)
+          )
+          return false
+        }
+      }
+
+      if (statusCode === 403) {
+        console.warn(
+          `[K8s] ⚠️ Insufficient permissions to ensure ClusterRoleBinding ${bindingName}: ${this.getErrorMessage(error)}`
+        )
+      } else {
+        console.error(
+          `[K8s] ❌ Failed to ensure ClusterRoleBinding ${bindingName}:`,
+          this.getErrorMessage(error)
+        )
+      }
+      return false
+    }
+  }
+
   private buildNamespaceRoleRules(): k8s.V1PolicyRule[] {
     return [
       {
@@ -957,6 +1180,23 @@ class K8sService {
     const roleBindingName = this.truncateName(`xuanwu-access-${roleBase}-binding`, 63)
 
     return { roleName, roleBindingName }
+  }
+
+  private buildClusterRoleNames(serviceAccount: { namespace: string; name: string }): {
+    clusterRoleName: string
+    clusterRoleBindingName: string
+  } {
+    const sanitized = this.sanitizeNamePart(`${serviceAccount.namespace}-${serviceAccount.name}`)
+    const hash = createHash('sha256').update(`cluster-${sanitized}`).digest('hex').slice(0, 6)
+    const roleBase = sanitized ? `${sanitized}-${hash}` : hash
+
+    const clusterRoleName = this.truncateName(`xuanwu-cluster-access-${roleBase}`, 63)
+    const clusterRoleBindingName = this.truncateName(
+      `xuanwu-cluster-access-${roleBase}-binding`,
+      63
+    )
+
+    return { clusterRoleName, clusterRoleBindingName }
   }
 
   private sanitizeNamePart(value: string): string {
