@@ -1,4 +1,6 @@
 import * as k8s from '@kubernetes/client-node'
+import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import {
   type Service,
   type ApplicationService,
@@ -32,6 +34,9 @@ class K8sService {
   private kc: k8s.KubeConfig
   private appsApi: k8s.AppsV1Api
   private coreApi: k8s.CoreV1Api
+  private rbacApi: k8s.RbacAuthorizationV1Api
+  private namespaceAccessCache = new Set<string>()
+  private serviceAccountIdentity?: { namespace: string; name: string } | null
 
   constructor() {
     this.kc = new k8s.KubeConfig()
@@ -77,6 +82,7 @@ class K8sService {
     
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api)
+    this.rbacApi = this.kc.makeApiClient(k8s.RbacAuthorizationV1Api)
   }
 
   /**
@@ -383,6 +389,8 @@ class K8sService {
     const targetNamespace = namespace?.trim() || 'default'
 
     try {
+      await this.ensureNamespaceAccess(targetNamespace)
+
       const pods = await this.coreApi.listNamespacedPod({
         namespace: targetNamespace,
         labelSelector: `app=${serviceName}`
@@ -417,6 +425,8 @@ class K8sService {
     const targetNamespace = namespace?.trim() || 'default'
 
     try {
+      await this.ensureNamespaceAccess(targetNamespace)
+
       const events = await this.coreApi.listNamespacedEvent({
         namespace: targetNamespace,
         fieldSelector: `involvedObject.name=${serviceName}`
@@ -540,10 +550,12 @@ class K8sService {
 
     console.log(`[K8s] Ensuring namespace ${normalized} exists...`)
 
+    let namespaceReady = false
+
     try {
       await this.coreApi.readNamespace({ name: normalized })
       console.log(`[K8s] ✅ Namespace ${normalized} already exists`)
-      return
+      namespaceReady = true
     } catch (error: unknown) {
       const statusCode = this.getStatusCode(error)
       console.log(`[K8s] Read namespace error - Status Code: ${statusCode}, Error:`, error)
@@ -567,6 +579,7 @@ class K8sService {
           // 验证 namespace 是否真的创建成功
           await this.coreApi.readNamespace({ name: normalized })
           console.log(`[K8s] ✅ Verified namespace ${normalized} is accessible`)
+          namespaceReady = true
         } catch (createError: unknown) {
           const statusCode = this.getStatusCode(createError)
           if (statusCode === 409) {
@@ -575,6 +588,7 @@ class K8sService {
             try {
               await this.coreApi.readNamespace({ name: normalized })
               console.log(`[K8s] ✅ Verified namespace ${normalized} exists after 409`)
+              namespaceReady = true
             } catch (verifyError: unknown) {
               console.error(`[K8s] ❌ Namespace ${normalized} returned 409 but still not accessible:`, verifyError)
               throw verifyError
@@ -589,6 +603,414 @@ class K8sService {
         throw error
       }
     }
+
+    if (!namespaceReady) {
+      return
+    }
+
+    await this.ensureNamespaceAccess(normalized)
+  }
+
+  private async ensureNamespaceAccess(namespace: string): Promise<void> {
+    const normalized = namespace.trim()
+
+    if (!normalized || normalized === 'default') {
+      return
+    }
+
+    if (this.namespaceAccessCache.has(normalized)) {
+      return
+    }
+
+    const serviceAccount = this.getServiceAccountIdentity()
+    if (!serviceAccount) {
+      console.warn(
+        `[K8s] ⚠️ Skipping RBAC setup for namespace ${normalized}: unable to determine service account identity`
+      )
+      this.namespaceAccessCache.add(normalized)
+      return
+    }
+
+    const { roleName, roleBindingName } = this.buildNamespaceRoleNames(serviceAccount)
+
+    const desiredRole: k8s.V1Role = {
+      metadata: {
+        name: roleName,
+        namespace: normalized,
+        labels: {
+          'managed-by': 'xuanwu-platform'
+        }
+      },
+      rules: this.buildNamespaceRoleRules()
+    }
+
+    const roleEnsured = await this.ensureNamespaceRole(normalized, desiredRole)
+    if (!roleEnsured) {
+      return
+    }
+
+    const roleBindingEnsured = await this.ensureNamespaceRoleBinding(
+      normalized,
+      roleBindingName,
+      roleName,
+      serviceAccount
+    )
+
+    if (roleBindingEnsured) {
+      this.namespaceAccessCache.add(normalized)
+    }
+  }
+
+  private async ensureNamespaceRole(namespace: string, desiredRole: k8s.V1Role): Promise<boolean> {
+    const roleName = desiredRole.metadata?.name
+    if (!roleName) {
+      console.warn('[K8s] ⚠️ Missing role name when ensuring namespace access')
+      return false
+    }
+
+    try {
+      await this.rbacApi.createNamespacedRole({ namespace, body: desiredRole })
+      console.log(`[K8s] ✅ Created Role ${roleName} in namespace ${namespace}`)
+      return true
+    } catch (error: unknown) {
+      const statusCode = this.getStatusCode(error)
+      if (statusCode === 409) {
+        try {
+          const existingRole = await this.rbacApi.readNamespacedRole({ name: roleName, namespace })
+          if (!this.arePolicyRulesEqual(existingRole.rules, desiredRole.rules)) {
+            const resourceVersion = existingRole.metadata?.resourceVersion
+            if (!resourceVersion) {
+              console.warn(
+                `[K8s] ⚠️ Unable to update Role ${roleName} in namespace ${namespace}: missing resourceVersion`
+              )
+              return true
+            }
+
+            const updatedRole: k8s.V1Role = {
+              ...desiredRole,
+              metadata: {
+                ...desiredRole.metadata,
+                resourceVersion
+              }
+            }
+
+            await this.rbacApi.replaceNamespacedRole({
+              name: roleName,
+              namespace,
+              body: updatedRole
+            })
+
+            console.log(`[K8s] 🔄 Updated Role ${roleName} in namespace ${namespace}`)
+          }
+
+          return true
+        } catch (readError: unknown) {
+          console.error(
+            `[K8s] ❌ Failed to reconcile Role ${roleName} in namespace ${namespace}:`,
+            this.getErrorMessage(readError)
+          )
+          return false
+        }
+      }
+
+      console.error(
+        `[K8s] ❌ Failed to ensure Role ${roleName} in namespace ${namespace}:`,
+        this.getErrorMessage(error)
+      )
+      return false
+    }
+  }
+
+  private async ensureNamespaceRoleBinding(
+    namespace: string,
+    roleBindingName: string,
+    roleName: string,
+    serviceAccount: { namespace: string; name: string }
+  ): Promise<boolean> {
+    const desiredBinding: k8s.V1RoleBinding = {
+      metadata: {
+        name: roleBindingName,
+        namespace,
+        labels: {
+          'managed-by': 'xuanwu-platform'
+        }
+      },
+      roleRef: {
+        apiGroup: 'rbac.authorization.k8s.io',
+        kind: 'Role',
+        name: roleName
+      },
+      subjects: [
+        {
+          kind: 'ServiceAccount',
+          name: serviceAccount.name,
+          namespace: serviceAccount.namespace
+        }
+      ]
+    }
+
+    try {
+      await this.rbacApi.createNamespacedRoleBinding({ namespace, body: desiredBinding })
+      console.log(`[K8s] ✅ Created RoleBinding ${roleBindingName} in namespace ${namespace}`)
+      return true
+    } catch (error: unknown) {
+      const statusCode = this.getStatusCode(error)
+      if (statusCode === 409) {
+        try {
+          const existingBinding = await this.rbacApi.readNamespacedRoleBinding({ name: roleBindingName, namespace })
+
+          const existingSubjects = existingBinding.subjects ?? []
+          const hasSubject = existingSubjects.some(
+            (subject) =>
+              subject.kind === 'ServiceAccount' &&
+              subject.name === serviceAccount.name &&
+              subject.namespace === serviceAccount.namespace
+          )
+
+          const roleRefMatches =
+            existingBinding.roleRef?.apiGroup === 'rbac.authorization.k8s.io' &&
+            existingBinding.roleRef?.kind === 'Role' &&
+            existingBinding.roleRef?.name === roleName
+
+          if (hasSubject && roleRefMatches) {
+            return true
+          }
+
+          const resourceVersion = existingBinding.metadata?.resourceVersion
+          if (!resourceVersion) {
+            console.warn(
+              `[K8s] ⚠️ Unable to update RoleBinding ${roleBindingName} in namespace ${namespace}: missing resourceVersion`
+            )
+            return false
+          }
+
+          const updatedSubjects = hasSubject
+            ? existingSubjects
+            : [
+                ...existingSubjects,
+                {
+                  kind: 'ServiceAccount',
+                  name: serviceAccount.name,
+                  namespace: serviceAccount.namespace
+                }
+              ]
+
+          const updatedBinding: k8s.V1RoleBinding = {
+            metadata: {
+              ...existingBinding.metadata,
+              name: roleBindingName,
+              namespace,
+              labels: {
+                ...(existingBinding.metadata?.labels ?? {}),
+                'managed-by': 'xuanwu-platform'
+              },
+              resourceVersion
+            },
+            roleRef: {
+              apiGroup: 'rbac.authorization.k8s.io',
+              kind: 'Role',
+              name: roleName
+            },
+            subjects: updatedSubjects
+          }
+
+          await this.rbacApi.replaceNamespacedRoleBinding({
+            name: roleBindingName,
+            namespace,
+            body: updatedBinding
+          })
+
+          console.log(`[K8s] 🔄 Updated RoleBinding ${roleBindingName} in namespace ${namespace}`)
+          return true
+        } catch (readError: unknown) {
+          console.error(
+            `[K8s] ❌ Failed to reconcile RoleBinding ${roleBindingName} in namespace ${namespace}:`,
+            this.getErrorMessage(readError)
+          )
+          return false
+        }
+      }
+
+      console.error(
+        `[K8s] ❌ Failed to ensure RoleBinding ${roleBindingName} in namespace ${namespace}:`,
+        this.getErrorMessage(error)
+      )
+      return false
+    }
+  }
+
+  private buildNamespaceRoleRules(): k8s.V1PolicyRule[] {
+    return [
+      {
+        apiGroups: [''],
+        resources: ['pods'],
+        verbs: ['get', 'list', 'watch']
+      },
+      {
+        apiGroups: [''],
+        resources: ['pods/log'],
+        verbs: ['get']
+      },
+      {
+        apiGroups: [''],
+        resources: ['events'],
+        verbs: ['get', 'list', 'watch']
+      }
+    ]
+  }
+
+  private getServiceAccountIdentity(): { namespace: string; name: string } | null {
+    if (this.serviceAccountIdentity !== undefined) {
+      return this.serviceAccountIdentity
+    }
+
+    const envNamespace = process.env.K8S_SERVICE_ACCOUNT_NAMESPACE?.trim()
+    const envName = process.env.K8S_SERVICE_ACCOUNT_NAME?.trim()
+
+    const tokenInfo = this.decodeServiceAccountToken()
+    const namespaceFromFile = this.readServiceAccountNamespaceFromDisk()
+
+    const namespace = envNamespace || tokenInfo?.namespace || namespaceFromFile
+    const name = envName || tokenInfo?.name
+
+    if (!namespace || !name) {
+      this.serviceAccountIdentity = null
+      return null
+    }
+
+    this.serviceAccountIdentity = { namespace, name }
+    return this.serviceAccountIdentity
+  }
+
+  private readServiceAccountNamespaceFromDisk(): string | undefined {
+    const namespacePath = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
+
+    try {
+      if (!fs.existsSync(namespacePath)) {
+        return undefined
+      }
+      const value = fs.readFileSync(namespacePath, 'utf8').trim()
+      return value || undefined
+    } catch (error) {
+      console.warn('[K8s] ⚠️ Failed to read service account namespace from disk', error)
+      return undefined
+    }
+  }
+
+  private decodeServiceAccountToken(): { namespace?: string; name?: string } | null {
+    const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+
+    try {
+      if (!fs.existsSync(tokenPath)) {
+        return null
+      }
+
+      const rawToken = fs.readFileSync(tokenPath, 'utf8').trim()
+      if (!rawToken) {
+        return null
+      }
+
+      const parts = rawToken.split('.')
+      if (parts.length < 2) {
+        return null
+      }
+
+      const payload = this.decodeJwtPayloadSegment(parts[1])
+      if (!payload) {
+        return null
+      }
+
+      const namespaceClaim = payload['kubernetes.io/serviceaccount/service-account.namespace']
+      const nameClaim = payload['kubernetes.io/serviceaccount/service-account.name']
+
+      const namespace = typeof namespaceClaim === 'string' ? namespaceClaim : undefined
+      const name = typeof nameClaim === 'string' ? nameClaim : undefined
+
+      return { namespace, name }
+    } catch (error) {
+      console.warn('[K8s] ⚠️ Failed to decode service account token', error)
+      return null
+    }
+  }
+
+  private decodeJwtPayloadSegment(segment: string): Record<string, unknown> | null {
+    try {
+      const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
+      const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4))
+      const decoded = Buffer.from(`${normalized}${padding}`, 'base64').toString('utf8')
+      return JSON.parse(decoded) as Record<string, unknown>
+    } catch (error) {
+      console.warn('[K8s] ⚠️ Failed to parse JWT payload segment', error)
+      return null
+    }
+  }
+
+  private buildNamespaceRoleNames(serviceAccount: { namespace: string; name: string }): {
+    roleName: string
+    roleBindingName: string
+  } {
+    const sanitized = this.sanitizeNamePart(`${serviceAccount.namespace}-${serviceAccount.name}`)
+    const hash = createHash('sha256').update(sanitized).digest('hex').slice(0, 6)
+    const roleBase = sanitized ? `${sanitized}-${hash}` : hash
+
+    const roleName = this.truncateName(`xuanwu-access-${roleBase}`, 63)
+    const roleBindingName = this.truncateName(`xuanwu-access-${roleBase}-binding`, 63)
+
+    return { roleName, roleBindingName }
+  }
+
+  private sanitizeNamePart(value: string): string {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+  }
+
+  private truncateName(name: string, maxLength: number): string {
+    if (name.length <= maxLength) {
+      return name
+    }
+    return name.slice(0, maxLength)
+  }
+
+  private normalizePolicyRule(rule?: k8s.V1PolicyRule | null): string {
+    if (!rule) {
+      return ''
+    }
+
+    const normalizeList = (list?: string[] | null) =>
+      list
+        ? [...list]
+            .map((item) => (item ?? '').trim())
+            .filter((item) => item.length > 0)
+            .sort()
+        : []
+
+    return JSON.stringify({
+      apiGroups: normalizeList(rule.apiGroups),
+      resources: normalizeList(rule.resources),
+      verbs: normalizeList(rule.verbs),
+      resourceNames: normalizeList(rule.resourceNames),
+      nonResourceURLs: normalizeList(rule.nonResourceURLs)
+    })
+  }
+
+  private arePolicyRulesEqual(
+    first?: k8s.V1PolicyRule[] | null,
+    second?: k8s.V1PolicyRule[] | null
+  ): boolean {
+    const normalize = (rules?: k8s.V1PolicyRule[] | null) =>
+      (rules ?? []).map((rule) => this.normalizePolicyRule(rule)).sort()
+
+    const firstNormalized = normalize(first)
+    const secondNormalized = normalize(second)
+
+    if (firstNormalized.length !== secondNormalized.length) {
+      return false
+    }
+
+    return firstNormalized.every((value, index) => value === secondNormalized[index])
   }
 
   /**
