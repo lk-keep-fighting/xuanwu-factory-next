@@ -1146,8 +1146,22 @@ class K8sService {
       const namespaceClaim = payload['kubernetes.io/serviceaccount/service-account.namespace']
       const nameClaim = payload['kubernetes.io/serviceaccount/service-account.name']
 
-      const namespace = typeof namespaceClaim === 'string' ? namespaceClaim : undefined
-      const name = typeof nameClaim === 'string' ? nameClaim : undefined
+      let namespace = typeof namespaceClaim === 'string' ? namespaceClaim : undefined
+      let name = typeof nameClaim === 'string' ? nameClaim : undefined
+
+      const subjectClaim = typeof payload.sub === 'string' ? payload.sub : undefined
+      if ((!namespace || !name) && subjectClaim) {
+        const subjectMatch = subjectClaim.match(/^system:serviceaccount:([^:]+):(.+)$/)
+        if (subjectMatch) {
+          const [, subjectNamespace, subjectName] = subjectMatch
+          if (!namespace && subjectNamespace) {
+            namespace = subjectNamespace
+          }
+          if (!name && subjectName) {
+            name = subjectName
+          }
+        }
+      }
 
       return { namespace, name }
     } catch (error) {
