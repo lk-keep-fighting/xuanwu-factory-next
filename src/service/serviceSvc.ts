@@ -21,13 +21,43 @@ export const serviceSvc = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(service)
     })
-    
+
     if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Failed to create service')
+      let message = 'Failed to create service'
+      let rawBody = ''
+
+      try {
+        rawBody = (await response.text()).trim()
+      } catch (error) {
+        console.error('[serviceSvc] Failed to read createService error response:', error)
+      }
+
+      if (rawBody) {
+        try {
+          const parsed = JSON.parse(rawBody) as { error?: unknown; message?: unknown }
+          const parsedMessage = [parsed.error, parsed.message]
+            .map(value => (typeof value === 'string' ? value.trim() : ''))
+            .find(value => value.length > 0)
+
+          message = parsedMessage || rawBody
+        } catch {
+          message = rawBody
+        }
+      } else if (response.status === 502 || response.status === 503) {
+        message = '服务暂时不可用，请稍后重试。'
+      } else {
+        message = `请求失败（${response.status}）`
+      }
+
+      throw new Error(message)
     }
-    
-    return response.json()
+
+    try {
+      return await response.json()
+    } catch (error) {
+      console.error('[serviceSvc] Failed to parse createService response:', error)
+      throw new Error('服务已创建，但返回数据格式无效。')
+    }
   },
 
   /**
