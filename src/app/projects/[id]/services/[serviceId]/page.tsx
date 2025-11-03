@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe } from 'lucide-react'
+import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { serviceSvc } from '@/service/serviceSvc'
 import { projectSvc } from '@/service/projectSvc'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
+import { findVolumeTemplate, generateNFSSubpath, type VolumeTemplate } from '@/lib/volume-templates'
 import { ServiceType } from '@/types/project'
 import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig } from '@/types/project'
 
@@ -147,7 +148,7 @@ export default function ServiceDetailPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [editedService, setEditedService] = useState<any>({})
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([])
-  const [volumes, setVolumes] = useState<Array<{ host_path: string; container_path: string; read_only: boolean }>>([])
+  const [volumes, setVolumes] = useState<Array<{ nfs_subpath?: string; container_path: string; read_only: boolean }>>([])
   const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [deploying, setDeploying] = useState(false)
@@ -158,6 +159,9 @@ export default function ServiceDetailPage() {
   const [logsLoading, setLogsLoading] = useState(false)
   const [logsError, setLogsError] = useState<string | null>(null)
   const [hasLoadedLogs, setHasLoadedLogs] = useState(false)
+  const [yamlContent, setYamlContent] = useState<string>('')
+  const [yamlLoading, setYamlLoading] = useState(false)
+  const [yamlError, setYamlError] = useState<string | null>(null)
 
   const projectIdentifier = project?.identifier?.trim()
   const domainSuffixText = projectIdentifier
@@ -318,6 +322,28 @@ export default function ServiceDetailPage() {
     }
   }, [serviceId])
 
+  const loadYAML = useCallback(async (showToast = false) => {
+    if (!serviceId) return
+
+    try {
+      setYamlLoading(true)
+      setYamlError(null)
+      const yaml = await serviceSvc.getServiceYAML(serviceId)
+      setYamlContent(yaml)
+      if (showToast) {
+        toast.success('YAML 已刷新')
+      }
+    } catch (error: any) {
+      const errorMsg = error.message || '未知错误'
+      setYamlError(errorMsg)
+      if (showToast) {
+        toast.error(`YAML 加载失败：${errorMsg}`)
+      }
+    } finally {
+      setYamlLoading(false)
+    }
+  }, [serviceId])
+
   useEffect(() => {
     loadService()
   }, [loadService])
@@ -341,7 +367,11 @@ export default function ServiceDetailPage() {
     if (activeTab === 'logs' && !hasLoadedLogs) {
       loadLogs()
     }
-  }, [activeTab, hasLoadedLogs, loadDeployments, loadLogs])
+    
+    if (activeTab === 'yaml' && !yamlContent) {
+      loadYAML()
+    }
+  }, [activeTab, hasLoadedLogs, loadDeployments, loadLogs, loadYAML, yamlContent])
 
   // 启动服务
   const handleStart = async () => {
@@ -530,13 +560,14 @@ export default function ServiceDetailPage() {
         updateData.network_config = null
       }
 
-      if (service.type === ServiceType.IMAGE) {
+      if (service && service.type === ServiceType.IMAGE) {
+        const imageService = service as any
         const rawImage =
           typeof updateData.image === 'string'
             ? updateData.image
-            : service.image
+            : imageService.image
 
-        const trimmedImage = rawImage.trim()
+        const trimmedImage = rawImage?.trim()
 
         if (!trimmedImage) {
           toast.error('镜像名称不能为空')
@@ -603,9 +634,31 @@ export default function ServiceDetailPage() {
     setEnvVars(newEnvVars)
   }
 
+  // 应用卷挂载模板
+  const applyVolumeTemplate = () => {
+    if (!service || !project) return
+    
+    const imageName = service.type === ServiceType.IMAGE ? (service as any).image : ''
+    const template = findVolumeTemplate(imageName)
+    
+    if (!template) {
+      toast.error(`未找到 "${imageName}" 的预设模板`)
+      return
+    }
+    
+    const newVolumes = template.volumes.map(v => ({
+      nfs_subpath: generateNFSSubpath(service.name, v.container_path),
+      container_path: v.container_path,
+      read_only: v.read_only || false
+    }))
+    
+    setVolumes(newVolumes)
+    toast.success(`已应用 ${template.displayName} 模板，共 ${newVolumes.length} 个挂载点`)
+  }
+
   // 添加卷挂载
   const addVolume = () => {
-    setVolumes([...volumes, { host_path: '', container_path: '', read_only: false }])
+    setVolumes([...volumes, { nfs_subpath: '', container_path: '', read_only: false }])
   }
 
   // 删除卷挂载
@@ -719,6 +772,10 @@ export default function ServiceDetailPage() {
             <TabsTrigger value="network" className="gap-2">
               <Globe className="w-4 h-4" />
               网络配置
+            </TabsTrigger>
+            <TabsTrigger value="yaml" className="gap-2">
+              <FileCode className="w-4 h-4" />
+              YAML 配置
             </TabsTrigger>
             <TabsTrigger value="deployments" className="gap-2">
               <Activity className="w-4 h-4" />
@@ -1118,13 +1175,36 @@ export default function ServiceDetailPage() {
                     <CardTitle>卷挂载配置</CardTitle>
                     <CardDescription>配置服务的持久化存储</CardDescription>
                   </div>
-                  <Button onClick={addVolume} size="sm" className="gap-2">
-                    <Plus className="w-4 h-4" />
-                    添加卷
-                  </Button>
+                  <div className="flex gap-2">
+                    {service.type === ServiceType.IMAGE && findVolumeTemplate((service as any).image) && (
+                      <Button 
+                        onClick={applyVolumeTemplate} 
+                        size="sm" 
+                        variant="outline"
+                        className="gap-2"
+                      >
+                        <HardDrive className="w-4 h-4" />
+                        应用模板
+                      </Button>
+                    )}
+                    <Button onClick={addVolume} size="sm" className="gap-2">
+                      <Plus className="w-4 h-4" />
+                      添加卷
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                {service.type === ServiceType.IMAGE && findVolumeTemplate((service as any).image) && (
+                  <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm">
+                    <p className="text-blue-900 font-medium mb-1">
+                      💡 检测到 {findVolumeTemplate((service as any).image)?.displayName} 预设模板
+                    </p>
+                    <p className="text-blue-700 text-xs">
+                      点击上方「应用模板」按钮即可自动配置常用挂载目录，无需手动填写。
+                    </p>
+                  </div>
+                )}
                 {volumes.length === 0 ? (
                   <p className="text-gray-500 text-center py-8">暂无卷挂载，点击上方按钮添加</p>
                 ) : (
@@ -1135,12 +1215,15 @@ export default function ServiceDetailPage() {
                           <div className="space-y-3">
                             <div className="flex gap-2 items-start">
                               <div className="flex-1 space-y-2">
-                                <Label>主机路径（可选）</Label>
+                                <Label>NFS 子路径（可选）</Label>
                                 <Input
-                                  placeholder="/path/on/host"
-                                  value={volume.host_path || ''}
-                                  onChange={(e) => updateVolume(index, 'host_path', e.target.value)}
+                                  placeholder="默认为 {serviceName}/{containerPath}"
+                                  value={volume.nfs_subpath || ''}
+                                  onChange={(e) => updateVolume(index, 'nfs_subpath', e.target.value)}
                                 />
+                                <p className="text-xs text-gray-500">
+                                  留空则自动生成，前缀一定是服务名
+                                </p>
                               </div>
                               <Button
                                 variant="ghost"
@@ -1158,6 +1241,14 @@ export default function ServiceDetailPage() {
                                 value={volume.container_path}
                                 onChange={(e) => updateVolume(index, 'container_path', e.target.value)}
                               />
+                              {volume.container_path && (() => {
+                                const imageName = service.type === ServiceType.IMAGE ? (service as any).image : ''
+                                const template = findVolumeTemplate(imageName)
+                                const volumeTemplate = template?.volumes.find(v => v.container_path === volume.container_path)
+                                return volumeTemplate?.description ? (
+                                  <p className="text-xs text-blue-600">📌 {volumeTemplate.description}</p>
+                                ) : null
+                              })()}
                             </div>
                             <div className="flex items-center gap-2">
                               <input
@@ -1363,6 +1454,83 @@ export default function ServiceDetailPage() {
                       <Save className="w-4 h-4" />
                       保存网络配置
                     </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* YAML 配置预览 */}
+          <TabsContent value="yaml" className="space-y-6">
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between gap-4">
+                <div>
+                  <CardTitle>Kubernetes YAML 配置</CardTitle>
+                  <CardDescription>
+                    查看服务的 Kubernetes 部署配置（仅供预览，实际部署以保存的配置为准）
+                  </CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => {
+                      if (yamlContent) {
+                        navigator.clipboard.writeText(yamlContent)
+                        toast.success('已复制到剪贴板')
+                      }
+                    }}
+                    disabled={!yamlContent || yamlLoading}
+                  >
+                    <FileText className="w-4 h-4" />
+                    复制
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => loadYAML(true)}
+                    disabled={yamlLoading}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${yamlLoading ? 'animate-spin' : ''}`} />
+                    刷新
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {yamlLoading ? (
+                  <div className="text-center py-16 text-gray-500">
+                    <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-gray-400" />
+                    <p>生成 YAML 配置中...</p>
+                  </div>
+                ) : yamlError ? (
+                  <div className="text-center py-16 space-y-4">
+                    <p className="text-red-500">生成失败：{yamlError}</p>
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => loadYAML(true)}>
+                      <RefreshCw className="w-4 h-4" />
+                      重试
+                    </Button>
+                  </div>
+                ) : yamlContent ? (
+                  <div className="space-y-4">
+                    <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm space-y-2">
+                      <p className="text-blue-900 font-medium">💡 使用提示</p>
+                      <ul className="text-blue-700 text-xs space-y-1 list-disc list-inside">
+                        <li>此 YAML 基于当前保存的服务配置自动生成</li>
+                        <li>可复制此配置用于其他 Kubernetes 环境</li>
+                        <li>包含 Deployment 和 Service（如有网络配置）资源定义</li>
+                        <li>修改配置后需点击"刷新"重新生成 YAML</li>
+                      </ul>
+                    </div>
+                    <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-xs min-h-[400px] max-h-[600px] overflow-auto">
+                      <pre className="whitespace-pre">{yamlContent}</pre>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-16 text-gray-500">
+                    <FileCode className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <p>暂无 YAML 配置</p>
                   </div>
                 )}
               </CardContent>

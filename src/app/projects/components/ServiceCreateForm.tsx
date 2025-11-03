@@ -249,11 +249,11 @@ export default function ServiceCreateForm({
         serviceData.internal_host = `service-${serviceData.name}`
         serviceData.internal_connection_url = generateConnectionUrl(
           selectedDatabaseType,
-          serviceData.internal_host,
-          serviceData.port,
-          serviceData.username,
-          serviceData.password,
-          serviceData.database_name
+          serviceData.internal_host as string,
+          serviceData.port as number,
+          serviceData.username as string,
+          serviceData.password as string,
+          serviceData.database_name as string
         )
       }
       // 镜像服务 - 基于现有镜像
@@ -716,14 +716,11 @@ export default function ServiceCreateForm({
 
       {/* 镜像服务 - 基于现有镜像 */}
       {serviceType === ServiceType.IMAGE && (
-        <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="general">基本配置</TabsTrigger>
-            <TabsTrigger value="network">网络</TabsTrigger>
-            <TabsTrigger value="storage">存储</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="general" className="space-y-4 mt-4">
+        <div className="space-y-6">
+          {/* 基本配置 */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium text-gray-900">基本配置</h3>
+            
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2 space-y-2">
                 <Label htmlFor="image">镜像名称 *</Label>
@@ -745,12 +742,13 @@ export default function ServiceCreateForm({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="command">启动命令</Label>
+              <Label htmlFor="command">启动命令（可选）</Label>
               <Input
                 id="command"
                 {...register('command')}
                 placeholder="nginx -g 'daemon off;'"
               />
+              <p className="text-xs text-gray-500">留空则使用镜像默认命令</p>
             </div>
 
             <div className="space-y-2">
@@ -763,270 +761,72 @@ export default function ServiceCreateForm({
                 defaultValue="1"
               />
             </div>
-          </TabsContent>
+          </div>
 
-          <TabsContent value="network" className="space-y-4 mt-4">
-            <Card>
-              <CardContent className="pt-6 space-y-6">
-                <div className="text-sm text-gray-600">
-                  配置服务的网络访问，将创建 Kubernetes Service 资源。
-                </div>
-
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Service 类型</Label>
-                    <Select
-                      value={networkServiceType}
-                      onValueChange={(value: 'ClusterIP' | 'NodePort' | 'LoadBalancer') =>
-                        setNetworkServiceType(value)
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ClusterIP">ClusterIP（集群内部）</SelectItem>
-                        <SelectItem value="NodePort">NodePort（节点端口）</SelectItem>
-                        <SelectItem value="LoadBalancer">LoadBalancer（负载均衡）</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-4">
-                    {networkPorts.map((port, index) => {
-                      const defaultPrefix = getDefaultDomainPrefix()
-                      const activePrefix = port.domainPrefix || defaultPrefix
-                      const previewDomain = `${activePrefix}.${domainSuffixText}`
-
-                      return (
-                        <div
-                          key={port.id}
-                          className="space-y-4 rounded-lg border border-gray-200 bg-white/80 p-4"
-                        >
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-medium text-gray-900">端口配置 {index + 1}</h4>
-                            {networkPorts.length > 1 && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => removeNetworkPort(port.id)}
-                                className="gap-1 text-red-600 hover:text-red-700"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                移除
-                              </Button>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label className="text-sm font-medium text-gray-700">容器监听端口 *</Label>
-                              <Input
-                                type="number"
-                                placeholder="8080"
-                                value={port.containerPort}
-                                onChange={(e) => updatePortField(port.id, 'containerPort', e.target.value)}
-                              />
-                              <p className="text-xs text-gray-500">应用实际监听的端口</p>
-                            </div>
-
-                            <div className="space-y-2">
-                              <Label className="text-sm font-medium text-gray-700">Service 端口</Label>
-                              <Input
-                                type="number"
-                                placeholder="默认同容器端口"
-                                value={port.servicePort}
-                                onChange={(e) => updatePortField(port.id, 'servicePort', e.target.value)}
-                              />
-                              <p className="text-xs text-gray-500">Kubernetes Service 暴露的端口</p>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label className="text-sm font-medium text-gray-700">协议</Label>
-                              <Select
-                                value={port.protocol}
-                                onValueChange={(value: 'TCP' | 'UDP') =>
-                                  updatePortField(port.id, 'protocol', value)
-                                }
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="TCP">TCP</SelectItem>
-                                  <SelectItem value="UDP">UDP</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            {networkServiceType === 'NodePort' && (
-                              <div className="space-y-2">
-                                <Label className="text-sm font-medium text-gray-700">NodePort 端口</Label>
-                                <Input
-                                  type="number"
-                                  placeholder="30000-32767"
-                                  value={port.nodePort}
-                                  onChange={(e) => updatePortField(port.id, 'nodePort', e.target.value)}
-                                />
-                                <p className="text-xs text-gray-500">可选，范围 30000-32767，不填写自动分配</p>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4"
-                                checked={port.enableDomain}
-                                onChange={(e) => handleToggleDomain(port.id, e.target.checked)}
-                              />
-                              启用域名访问
-                            </label>
-                            <p className="text-xs text-gray-500">
-                              启用后可通过 <span className="font-mono text-gray-700">{previewDomain}</span> 访问该端口
-                            </p>
-                            {port.enableDomain && (
-                              <div className="space-y-3">
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium text-gray-700">域名前缀</Label>
-                                  <div className="flex items-center gap-2">
-                                    <Input
-                                      placeholder={defaultPrefix}
-                                      value={port.domainPrefix}
-                                      onChange={(e) => handleDomainPrefixChange(port.id, e.target.value)}
-                                    />
-                                    <span className="text-sm text-gray-500">.{domainSuffixText}</span>
-                                  </div>
-                                </div>
-                                <div className="rounded-md bg-gray-100 px-3 py-2 text-xs text-gray-600">
-                                  实际域名：
-                                  <span className="ml-1 font-mono text-gray-900">{previewDomain}</span>
-                                </div>
-                                {!projectIdentifier && (
-                                  <p className="text-xs text-amber-600">
-                                    项目尚未设置编号，保存前请先在项目信息中配置项目编号。
-                                  </p>
-                                )}
-                                <p className="text-xs text-gray-500">
-                                  默认使用镜像名作为前缀，仅可修改前缀部分
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="flex items-center gap-2"
-                    onClick={addNetworkPort}
-                  >
-                    <Plus className="h-4 w-4" />
-                    添加端口
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="storage" className="space-y-4 mt-4">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>卷挂载</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setVolumes([...volumes, { container_path: '', host_path: '', read_only: false }])}
-                  className="gap-1"
-                >
-                  <Plus className="w-3 h-3" />
-                  添加卷
-                </Button>
-              </div>
-              <div className="space-y-3">
-                {volumes.map((volume, index) => (
-                  <Card key={index}>
-                    <CardContent className="pt-4">
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <Label className="text-xs">容器路径 *</Label>
-                            <Input
-                              placeholder="/app/data"
-                              value={volume.container_path}
-                              onChange={(e) => {
-                                const newVolumes = [...volumes]
-                                newVolumes[index].container_path = e.target.value
-                                setVolumes(newVolumes)
-                              }}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">主机路径</Label>
-                            <Input
-                              placeholder="/data"
-                              value={volume.host_path}
-                              onChange={(e) => {
-                                const newVolumes = [...volumes]
-                                newVolumes[index].host_path = e.target.value
-                                setVolumes(newVolumes)
-                              }}
-                            />
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              id={`readonly-${index}`}
-                              checked={volume.read_only}
-                              onChange={(e) => {
-                                const newVolumes = [...volumes]
-                                newVolumes[index].read_only = e.target.checked
-                                setVolumes(newVolumes)
-                              }}
-                              className="w-4 h-4"
-                            />
-                            <Label htmlFor={`readonly-${index}`} className="text-sm">只读模式</Label>
-                          </div>
-                          {volumes.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setVolumes(volumes.filter((_, i) => i !== index))}
-                              className="text-red-600 hover:text-red-700"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+          {/* 环境变量 */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label>环境变量（可选）</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
+                className="gap-1"
+              >
+                <Plus className="w-3 h-3" />
+                添加
+              </Button>
             </div>
-          </TabsContent>
-        </Tabs>
+            <div className="space-y-2">
+              {envVars.map((env, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input
+                    placeholder="变量名"
+                    value={env.key}
+                    onChange={(e) => {
+                      const newEnvVars = [...envVars]
+                      newEnvVars[index].key = e.target.value
+                      setEnvVars(newEnvVars)
+                    }}
+                    className="flex-1"
+                  />
+                  <Input
+                    placeholder="值"
+                    value={env.value}
+                    onChange={(e) => {
+                      const newEnvVars = [...envVars]
+                      newEnvVars[index].value = e.target.value
+                      setEnvVars(newEnvVars)
+                    }}
+                    className="flex-1"
+                  />
+                  {envVars.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEnvVars(envVars.filter((_, i) => i !== index))}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500">
+              更多配置（网络、存储等）可在服务创建后进入编辑页面进行配置
+            </p>
+          </div>
+        </div>
       )}
 
-      {/* 通用配置 */}
-      <div className="space-y-4 border-t pt-4">
-        <h4 className="font-medium">通用配置</h4>
-        
+      {/* 通用环境变量 - 仅 Application 和 Database 类型显示 */}
+      {(serviceType === ServiceType.APPLICATION || serviceType === ServiceType.DATABASE) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <Label>环境变量</Label>
+            <Label>环境变量（可选）</Label>
             <Button
               type="button"
               variant="outline"
@@ -1042,7 +842,7 @@ export default function ServiceCreateForm({
             {envVars.map((env, index) => (
               <div key={index} className="flex gap-2">
                 <Input
-                  placeholder="变量名（如 NODE_ENV）"
+                  placeholder="变量名"
                   value={env.key}
                   onChange={(e) => {
                     const newEnvVars = [...envVars]
@@ -1052,7 +852,7 @@ export default function ServiceCreateForm({
                   className="flex-1"
                 />
                 <Input
-                  placeholder="值（如 production）"
+                  placeholder="值"
                   value={env.value}
                   onChange={(e) => {
                     const newEnvVars = [...envVars]
@@ -1076,29 +876,10 @@ export default function ServiceCreateForm({
             ))}
           </div>
         </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="cpu">CPU 限制</Label>
-            <Input
-              id="cpu"
-              {...register('cpu')}
-              placeholder="500m"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="memory">内存限制</Label>
-            <Input
-              id="memory"
-              {...register('memory')}
-              placeholder="512Mi"
-            />
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* 操作按钮 */}
-      <div className="flex justify-end gap-2 pt-4 border-t">
+      <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onCancel} disabled={loading}>
           取消
         </Button>

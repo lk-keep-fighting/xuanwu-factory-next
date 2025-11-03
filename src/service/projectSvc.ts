@@ -9,7 +9,7 @@ export const projectSvc = {
   /**
    * 创建项目
    */
-  async createProject(project: Omit<Project, 'id' | 'created_at' | 'updated_at'>): Promise<Project> {
+  async createProject(project: Omit<Project, 'id' | 'created_at' | 'updated_at'>): Promise<Project & { warning?: string }> {
     const response = await fetch(API_BASE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

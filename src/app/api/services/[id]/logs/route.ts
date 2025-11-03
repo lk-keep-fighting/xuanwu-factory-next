@@ -17,7 +17,7 @@ export async function GET(
     // 获取服务名称
     const { data: service, error } = await supabase
       .from('services')
-      .select('name, project:projects!inner(identifier)')
+      .select('name, project:projects(identifier)')
       .eq('id', id)
       .single()
 
@@ -28,7 +28,7 @@ export async function GET(
       )
     }
 
-    const namespace = service.project?.identifier?.trim()
+    const namespace = (service.project as { identifier?: string })?.identifier?.trim()
 
     if (!namespace) {
       return NextResponse.json(

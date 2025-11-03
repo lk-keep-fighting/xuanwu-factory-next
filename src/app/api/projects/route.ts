@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { k8sService } from '@/lib/k8s'
 
 const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
@@ -76,5 +77,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status })
   }
 
-  return NextResponse.json(data)
+  // 项目创建成功后，自动创建 K8s 命名空间和 NFS PVC
+  let k8sWarning: string | undefined
+  try {
+    console.log(`[Project] 🚀 Starting K8s resources creation for project: ${identifier}`)
+    await k8sService.createProjectPVC(identifier)
+    console.log(`[Project] ✅ Successfully created namespace and PVC for project: ${identifier}`)
+  } catch (k8sError: unknown) {
+    const errorMsg = k8sError instanceof Error ? k8sError.message : String(k8sError)
+    console.error(`[Project] ❌ Failed to create K8s resources for project ${identifier}:`, errorMsg)
+    console.error('[Project] Error details:', k8sError)
+    k8sWarning = `项目已创建，但 Kubernetes 资源创建失败：${errorMsg}`
+    // 不阻断项目创建，但返回警告
+  }
+
+  return NextResponse.json({
+    ...data,
+    ...(k8sWarning && { warning: k8sWarning })
+  })
 }

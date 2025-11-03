@@ -1,0 +1,262 @@
+# ===================================
+# 玄武工厂平台 Kubernetes 部署配置示例
+# ===================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xuanwu-factory
+  labels:
+    app: xuanwu-factory
+
+---
+# ConfigMap - 应用配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xuanwu-factory-config
+  namespace: xuanwu-factory
+data:
+  NODE_ENV: "production"
+  NEXT_TELEMETRY_DISABLED: "1"
+  # 根据实际情况修改以下配置
+  SUPABASE_URL: "http://192.168.154.154:8000"
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJhbm9uIiwKICAgICJpc3MiOiAic3VwYWJhc2UtZGVtbyIsCiAgICAiaWF0IjogMTY0MTc2OTIwMCwKICAgICJleHAiOiAxNzk5NTM1NjAwCn0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE"
+
+---
+# Secret - 敏感信息
+apiVersion: v1
+kind: Secret
+metadata:
+  name: xuanwu-factory-secret
+  namespace: xuanwu-factory
+type: Opaque
+stringData:
+  # Supabase 配置（请替换为实际值）
+  SUPABASE_URL: "http://192.168.154.154:8000"
+  SUPABASE_SERVICE_ROLE_KEY: "your-service-role-key"
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJhbm9uIiwKICAgICJpc3MiOiAic3VwYWJhc2UtZGVtbyIsCiAgICAiaWF0IjogMTY0MTc2OTIwMCwKICAgICJleHAiOiAxNzk5NTM1NjAwCn0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE"
+  
+  # Kubernetes 配置（如果需要）
+  # KUBECONFIG_DATA: "base64-encoded-kubeconfig"
+
+---
+# Deployment - 应用部署
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xuanwu-factory
+  namespace: xuanwu-factory
+  labels:
+    app: xuanwu-factory
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: xuanwu-factory
+  template:
+    metadata:
+      labels:
+        app: xuanwu-factory
+      annotations:
+        # 自动重启以应用配置更新
+        prometheus.io/scrape: "false"
+    spec:
+      # 使用非 root 用户运行（与 Dockerfile 一致）
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      
+      containers:
+      - name: xuanwu-factory
+        image: nexus.aimstek.cn/xuanwu-factory:latest  # 替换为实际镜像地址
+        imagePullPolicy: Always
+        
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+        
+        env:
+        # 从 ConfigMap 加载
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: xuanwu-factory-config
+              key: NODE_ENV
+        
+        # 从 Secret 加载
+        - name: SUPABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: SUPABASE_URL
+        
+        - name: SUPABASE_SERVICE_ROLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: SUPABASE_SERVICE_ROLE_KEY
+        
+        - name: NEXT_PUBLIC_SUPABASE_ANON_KEY
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        
+        # K8s 配置（如果应用需要管理 K8s 资源）
+        - name: KUBECONFIG_DATA
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: KUBECONFIG_DATA
+              optional: true
+        
+        # 资源限制
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        
+        # 健康检查
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # 启动探针（给应用足够的启动时间）
+        startupProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 30
+      
+      # 如果使用私有镜像仓库
+      # imagePullSecrets:
+      # - name: registry-secret
+
+---
+# Service - 集群内部访问
+apiVersion: v1
+kind: Service
+metadata:
+  name: xuanwu-factory
+  namespace: xuanwu-factory
+  labels:
+    app: xuanwu-factory
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 3000
+    protocol: TCP
+    name: http
+  selector:
+    app: xuanwu-factory
+
+---
+# Ingress - 外部访问（使用 Nginx Ingress Controller）
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: xuanwu-factory
+  namespace: xuanwu-factory
+  annotations:
+    # Nginx Ingress 配置
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    
+    # HTTPS 配置（如果使用 cert-manager）
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  
+  # TLS 配置（可选）
+  # tls:
+  # - hosts:
+  #   - factory.yourdomain.com
+  #   secretName: xuanwu-factory-tls
+  
+  rules:
+  - host: factory.yourdomain.com  # 替换为实际域名
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: xuanwu-factory
+            port:
+              number: 80
+
+---
+# HorizontalPodAutoscaler - 自动扩缩容（可选）
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: xuanwu-factory
+  namespace: xuanwu-factory
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: xuanwu-factory
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      selectPolicy: Max

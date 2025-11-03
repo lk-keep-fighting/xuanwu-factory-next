@@ -130,6 +130,12 @@ export default function ProjectsPage() {
       }
 
       toast.success('项目创建成功')
+      
+      // 显示 K8s 警告（如果有）
+      if (result?.warning) {
+        toast.warning(result.warning, { duration: 5000 })
+      }
+      
       setIsCreateDialogOpen(false)
       resetForm('create')
       await loadProjects()

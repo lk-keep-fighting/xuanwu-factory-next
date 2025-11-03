@@ -26,7 +26,7 @@ export async function POST(
     // 获取服务信息
     const { data: service, error: serviceError } = await supabase
       .from('services')
-      .select('*, project:projects!inner(identifier)')
+      .select('*, project:projects(identifier)')
       .eq('id', id)
       .single()
 

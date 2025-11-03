@@ -269,5 +269,19 @@ export const serviceSvc = {
     }
     
     return response.json()
+  },
+
+  /**
+   * 获取服务的 Kubernetes YAML 配置
+   */
+  async getServiceYAML(id: string): Promise<string> {
+    const response = await fetch(`${API_BASE}/${id}/yaml`)
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error((error as { error?: string }).error || '获取 YAML 失败')
+    }
+    
+    return response.text()
   }
 }

@@ -9,6 +9,7 @@ import {
   type NetworkConfigV2
 } from '@/types/project'
 import type { K8sImportCandidate, K8sWorkloadKind } from '@/types/k8s'
+import * as yaml from 'js-yaml'
 
 type NormalizedPortConfig = {
   containerPort: number
@@ -122,7 +123,7 @@ class K8sService {
                 : undefined,
               env: this.buildEnvVars(service),
               resources: this.buildResources(service.resource_limits),
-              volumeMounts: this.buildVolumeMounts(service.volumes)
+              volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
             }],
             volumes: this.buildVolumes(service.volumes)
           }
@@ -436,6 +437,100 @@ class K8sService {
     }
   }
 
+  /**
+   * 生成服务的 Kubernetes YAML 配置
+   */
+  generateServiceYAML(service: Service, namespace: string = 'default'): string {
+    const targetNamespace = namespace?.trim() || 'default'
+
+    // 获取replicas值
+    let replicas = 1
+    if (service.type === ServiceType.APPLICATION || service.type === ServiceType.IMAGE) {
+      replicas = (service as ApplicationService | ImageService).replicas || 1
+    }
+
+    const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
+
+    // 构建 Deployment 对象
+    const deployment: k8s.V1Deployment = {
+      apiVersion: 'apps/v1',
+      kind: 'Deployment',
+      metadata: {
+        name: service.name,
+        namespace: targetNamespace,
+        labels: { 
+          app: service.name,
+          'managed-by': 'xuanwu-platform'
+        }
+      },
+      spec: {
+        replicas,
+        selector: {
+          matchLabels: { app: service.name }
+        },
+        template: {
+          metadata: {
+            labels: { app: service.name }
+          },
+          spec: {
+            containers: [{
+              name: service.name,
+              image: this.getImage(service),
+              ports: normalizedNetwork
+                ? normalizedNetwork.ports.map((port, index) => ({
+                    containerPort: port.containerPort,
+                    protocol: port.protocol,
+                    name: `port-${port.containerPort}-${index}`
+                  }))
+                : undefined,
+              env: this.buildEnvVars(service),
+              resources: this.buildResources(service.resource_limits),
+              volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
+            }],
+            volumes: this.buildVolumes(service.volumes)
+          }
+        }
+      }
+    }
+
+    const yamlDocs: string[] = []
+
+    // 添加 Deployment YAML
+    yamlDocs.push(yaml.dump(deployment, { indent: 2, lineWidth: -1 }))
+
+    // 如果有网络配置，添加 Service YAML
+    if (normalizedNetwork) {
+      const k8sService: k8s.V1Service = {
+        apiVersion: 'v1',
+        kind: 'Service',
+        metadata: {
+          name: service.name,
+          namespace: targetNamespace,
+          labels: { 
+            app: service.name,
+            'managed-by': 'xuanwu-platform'
+          }
+        },
+        spec: {
+          selector: { app: service.name },
+          type: normalizedNetwork.serviceType,
+          ports: normalizedNetwork.ports.map((port, index) => ({
+            name: `port-${index}`,
+            port: port.servicePort,
+            targetPort: port.containerPort,
+            protocol: port.protocol,
+            ...(port.nodePort && { nodePort: port.nodePort })
+          }))
+        }
+      }
+
+      yamlDocs.push(yaml.dump(k8sService, { indent: 2, lineWidth: -1 }))
+    }
+
+    // 使用 --- 分隔符连接多个 YAML 文档
+    return yamlDocs.join('\n---\n\n')
+  }
+
   private async ensureNamespace(namespace: string): Promise<void> {
     const normalized = namespace.trim()
 
@@ -443,10 +538,19 @@ class K8sService {
       return
     }
 
+    console.log(`[K8s] Ensuring namespace ${normalized} exists...`)
+
     try {
       await this.coreApi.readNamespace({ name: normalized })
+      console.log(`[K8s] ✅ Namespace ${normalized} already exists`)
+      return
     } catch (error: unknown) {
-      if (this.getStatusCode(error) === 404) {
+      const statusCode = this.getStatusCode(error)
+      console.log(`[K8s] Read namespace error - Status Code: ${statusCode}, Error:`, error)
+      
+      if (statusCode === 404) {
+        console.log(`[K8s] Namespace ${normalized} not found, creating...`)
+        
         const body: k8s.V1Namespace = {
           metadata: {
             name: normalized,
@@ -458,14 +562,115 @@ class K8sService {
 
         try {
           await this.coreApi.createNamespace({ body })
+          console.log(`[K8s] ✅ Successfully created namespace ${normalized}`)
+          
+          // 验证 namespace 是否真的创建成功
+          await this.coreApi.readNamespace({ name: normalized })
+          console.log(`[K8s] ✅ Verified namespace ${normalized} is accessible`)
         } catch (createError: unknown) {
-          if (this.getStatusCode(createError) !== 409) {
+          const statusCode = this.getStatusCode(createError)
+          if (statusCode === 409) {
+            console.log(`[K8s] Namespace ${normalized} already exists (concurrent creation)`)
+            // 即使 409，也要验证一下是否真的存在
+            try {
+              await this.coreApi.readNamespace({ name: normalized })
+              console.log(`[K8s] ✅ Verified namespace ${normalized} exists after 409`)
+            } catch (verifyError: unknown) {
+              console.error(`[K8s] ❌ Namespace ${normalized} returned 409 but still not accessible:`, verifyError)
+              throw verifyError
+            }
+          } else {
+            console.error(`[K8s] ❌ Failed to create namespace ${normalized}:`, createError)
             throw createError
           }
         }
       } else {
+        console.error(`[K8s] ❌ Error reading namespace ${normalized}:`, error)
         throw error
       }
+    }
+  }
+
+  /**
+   * 为项目创建共享 NFS PVC
+   */
+  async createProjectPVC(namespace: string): Promise<void> {
+    const normalized = namespace.trim()
+
+    console.log(`[K8s] 🚀 createProjectPVC called for namespace: ${normalized}`)
+
+    if (!normalized || normalized === 'default') {
+      console.log('[K8s] Skipping PVC creation for default/empty namespace')
+      return
+    }
+
+    try {
+      // 确保命名空间存在
+      console.log(`[K8s] Step 1: Ensuring namespace ${normalized} exists...`)
+      await this.ensureNamespace(normalized)
+      console.log(`[K8s] ✅ Namespace ${normalized} is ready`)
+
+      const pvcName = 'shared-nfs-pvc'
+
+      try {
+        // 检查 PVC 是否已存在
+        console.log(`[K8s] Step 2: Checking if PVC ${pvcName} exists...`)
+        await this.coreApi.readNamespacedPersistentVolumeClaim({
+          name: pvcName,
+          namespace: normalized
+        })
+        console.log(`[K8s] PVC ${pvcName} already exists in namespace ${normalized}`)
+        return
+      } catch (error: unknown) {
+        if (this.getStatusCode(error) !== 404) {
+          console.error(`[K8s] ❌ Error checking PVC existence:`, error)
+          throw error
+        }
+        console.log(`[K8s] PVC does not exist, will create it`)
+      }
+
+      // 创建 PVC
+      const pvc: k8s.V1PersistentVolumeClaim = {
+        apiVersion: 'v1',
+        kind: 'PersistentVolumeClaim',
+        metadata: {
+          name: pvcName,
+          namespace: normalized,
+          labels: {
+            'managed-by': 'xuanwu-platform'
+          }
+        },
+        spec: {
+          accessModes: ['ReadWriteMany'],
+          resources: {
+            requests: {
+              storage: '10Gi'
+            }
+          },
+          storageClassName: 'nfs-sc',
+          volumeMode: 'Filesystem'
+        }
+      }
+
+      console.log(`[K8s] Step 3: Creating PVC ${pvcName} with config:`, JSON.stringify(pvc, null, 2))
+      
+      try {
+        await this.coreApi.createNamespacedPersistentVolumeClaim({
+          namespace: normalized,
+          body: pvc
+        })
+        console.log(`[K8s] ✅ Successfully created PVC ${pvcName} in namespace ${normalized}`)
+      } catch (createError: unknown) {
+        if (this.getStatusCode(createError) === 409) {
+          console.log(`[K8s] PVC ${pvcName} already exists (concurrent creation)`)
+          return
+        }
+        console.error(`[K8s] ❌ Failed to create PVC:`, createError)
+        throw createError
+      }
+    } catch (outerError: unknown) {
+      console.error(`[K8s] ❌ createProjectPVC failed for namespace ${normalized}:`, outerError)
+      throw outerError
     }
   }
   
@@ -487,6 +692,7 @@ class K8sService {
   }
 
   private getStatusCode(error: unknown): number | undefined {
+    // 方法 1: 检查 error.response.statusCode
     if (
       typeof error === 'object' &&
       error !== null &&
@@ -501,6 +707,26 @@ class K8sService {
       ) {
         return (response as { statusCode: number }).statusCode
       }
+    }
+
+    // 方法 2: 检查 error.statusCode（直接在错误对象上）
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'statusCode' in error &&
+      typeof (error as { statusCode?: unknown }).statusCode === 'number'
+    ) {
+      return (error as { statusCode: number }).statusCode
+    }
+
+    // 方法 3: 检查 error.code
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      typeof (error as { code?: unknown }).code === 'number'
+    ) {
+      return (error as { code: number }).code
     }
 
     return undefined
@@ -524,7 +750,7 @@ class K8sService {
       return null
     }
 
-    const rawConfig = config as Record<string, unknown>
+    const rawConfig = config as unknown as Record<string, unknown>
 
     const serviceType = (() => {
       const rawServiceType = rawConfig['service_type']
@@ -793,24 +1019,52 @@ class K8sService {
     }
   }
 
-  private buildVolumeMounts(volumes?: Array<{ host_path?: string; container_path: string; read_only?: boolean }>): k8s.V1VolumeMount[] | undefined {
+  private buildVolumeMounts(volumes?: Array<{ nfs_subpath?: string; container_path: string; read_only?: boolean }>, serviceName?: string): k8s.V1VolumeMount[] | undefined {
     if (!volumes || volumes.length === 0) return undefined
     return volumes.map((v, i) => ({
       name: `volume-${i}`,
       mountPath: v.container_path,
+      subPath: this.generateSubPath(serviceName || 'unknown', v.nfs_subpath, v.container_path),
       readOnly: v.read_only
     }))
   }
 
-  private buildVolumes(volumes?: Array<{ host_path?: string; container_path: string }>): k8s.V1Volume[] | undefined {
+  /**
+   * 生成 NFS 子路径
+   * @param serviceName 服务名
+   * @param userSubpath 用户指定的子路径
+   * @param containerPath 容器路径
+   * @returns 子路径，格式：{serviceName}/{userSubpath 或 containerPath}
+   */
+  private generateSubPath(serviceName: string, userSubpath?: string, containerPath?: string): string {
+    // 如果用户指定了子路径
+    if (userSubpath) {
+      // 如果已经以服务名开头，直接使用
+      if (userSubpath.startsWith(`${serviceName}/`)) {
+        return userSubpath
+      }
+      // 否则添加服务名前缀
+      return `${serviceName}/${userSubpath}`
+    }
+    
+    // 如果没有指定，使用容器路径生成
+    if (containerPath) {
+      // 移除前导 '/' 并替换为 '-'
+      const normalized = containerPath.replace(/^\//, '').replace(/\//g, '-')
+      return `${serviceName}/${normalized}`
+    }
+    
+    return serviceName
+  }
+
+  private buildVolumes(volumes?: Array<{ nfs_subpath?: string; container_path: string }>): k8s.V1Volume[] | undefined {
     if (!volumes || volumes.length === 0) return undefined
+    // 所有卷都使用 shared-nfs-pvc
     return volumes.map((v, i) => ({
       name: `volume-${i}`,
-      ...(v.host_path && {
-        hostPath: {
-          path: v.host_path
-        }
-      })
+      persistentVolumeClaim: {
+        claimName: 'shared-nfs-pvc'
+      }
     }))
   }
 
@@ -853,7 +1107,7 @@ class K8sService {
     const matchedServices = services
       .filter((service) => this.isServiceMatch(service, namespace, labels))
       .map((service) => this.toMatchedService(service, containers))
-      .filter((service): service is NonNullable<ReturnType<typeof this.toMatchedService>> => Boolean(service))
+      .filter((service): service is NonNullable<typeof service> => service !== null)
 
     const networkConfig = this.buildNetworkConfigFromServices(matchedServices)
 
@@ -920,7 +1174,7 @@ class K8sService {
       ...(Object.keys(envVars).length ? { env_vars: envVars } : {}),
       ...(volumes.length ? { volumes } : {}),
       ...(candidate.networkConfig ? { network_config: candidate.networkConfig } : {})
-    }
+    } as CreateServiceRequest
 
     return payload
   }
@@ -974,8 +1228,8 @@ class K8sService {
   private toMatchedService(
     service: k8s.V1Service,
     containers: k8s.V1Container[]
-  ) {
-    const ports = (service.spec?.ports ?? [])
+  ): { name: string; type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName'; ports: Array<{ name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number }> } | null {
+    const rawPorts = (service.spec?.ports ?? [])
       .map((port) => {
         const targetPort = this.resolveTargetPort(port, containers)
         if (!targetPort) {
@@ -990,7 +1244,8 @@ class K8sService {
           nodePort: port.nodePort ?? undefined
         }
       })
-      .filter((port): port is { name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number } => Boolean(port))
+
+    const ports = rawPorts.filter((port): port is NonNullable<typeof port> => port !== null)
 
     if (ports.length === 0) {
       return null
@@ -1036,7 +1291,9 @@ class K8sService {
     return fallback ?? 0
   }
 
-  private buildNetworkConfigFromServices(services: Array<ReturnType<typeof this.toMatchedService>>): NetworkConfigV2 | null {
+  private buildNetworkConfigFromServices(
+    services: Array<{ name: string; type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName'; ports: Array<{ name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number }> }>
+  ): NetworkConfigV2 | null {
     if (!services.length) {
       return null
     }

@@ -1,0 +1,14 @@
+# shared-nfs-pvc-template.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-nfs-pvc
+  namespace: NAMESPACE_PLACEHOLDER  # 将在创建时替换为实际命名空间
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: nfs-sc
+  volumeMode: Filesystem

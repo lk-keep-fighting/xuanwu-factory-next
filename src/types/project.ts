@@ -87,8 +87,8 @@ export interface BaseService {
   }
   // 卷挂载（通用）
   volumes?: Array<{
-    host_path?: string       // 主机路径
-    container_path: string   // 容器路径
+    nfs_subpath?: string     // NFS 子路径（相对于 PVC 根目录），默认为 {服务名}/{容器路径}
+    container_path: string   // 容器路径（必填）
     read_only?: boolean
   }>
   // 网络配置（Kubernetes Service）

@@ -15,7 +15,7 @@ export async function POST(
     // 获取服务信息
     const { data: service, error: serviceError } = await supabase
       .from('services')
-      .select('name, project:projects!inner(identifier)')
+      .select('name, project:projects(identifier)')
       .eq('id', id)
       .single()
 
@@ -26,7 +26,7 @@ export async function POST(
       )
     }
 
-    const namespace = service.project?.identifier?.trim()
+    const namespace = (service.project as { identifier?: string })?.identifier?.trim()
 
     if (!namespace) {
       return NextResponse.json(
