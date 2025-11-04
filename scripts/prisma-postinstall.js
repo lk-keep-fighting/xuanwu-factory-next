@@ -27,9 +27,15 @@ if (!existsSync(prismaBinaryPath)) {
   process.exit(0)
 }
 
+// 默认不要使用 'native'，在多平台或 Docker 构建环境下可能导致无法解析本机二进制。
+// 提供一组常见的二进制目标，覆盖常见的 Debian/Alpine 平台；如果需要其它 target，可通过
+// 设置环境变量 PRISMA_CLI_BINARY_TARGETS 覆盖。
+const defaultBinaryTargets = process.env.PRISMA_CLI_BINARY_TARGETS ||
+  'debian-openssl-3.0.x,linux-musl-openssl-3.0.x'
+
 const env = {
   ...process.env,
-  PRISMA_CLI_BINARY_TARGETS: process.env.PRISMA_CLI_BINARY_TARGETS || 'native,linux-musl-openssl-3.0.x'
+  PRISMA_CLI_BINARY_TARGETS: defaultBinaryTargets
 }
 
 const result = spawnSync(prismaBinaryPath, ['generate'], {

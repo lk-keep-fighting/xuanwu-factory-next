@@ -66,7 +66,7 @@ kubectl logs -f deployment/xuanwu-factory -n xuanwu-factory
 
 | 变量名 | 说明 | 示例 |
 |--------|------|------|
-| `DATABASE_URL` | MySQL 连接字符串（提供给 Prisma 使用） | `mysql://username:password@mysql-host:3306/xuanwu_factory` |
+| `DATABASE_URL` | MySQL 连接字符串（提供给 Prisma 使用） | `mysql://username:password@mysql-host:3306/xuanwu_next` |
 
 ### 可选的环境变量
 

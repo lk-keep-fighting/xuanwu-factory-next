@@ -30,7 +30,7 @@ metadata:
 type: Opaque
 stringData:
   # 数据库配置（请替换为实际值）
-  DATABASE_URL: "mysql://username:password@mysql-host:3306/xuanwu_factory"
+  DATABASE_URL: "mysql://root:root@192.168.154.154:3306/xuanwu_next"
 
   # Kubernetes 管理配置（使用 doc/k8s/generate-admin-token.sh 生成）
   K8S_API_SERVER: "https://192.168.44.201:6443"
@@ -92,7 +92,7 @@ spec:
       
       containers:
       - name: xuanwu-factory
-        image: nexus.aimstek.cn/xuanwu-factory:20251103-163731  # 替换为实际镜像地址
+        image: nexus.aimstek.cn/xuanwu-factory:20251104-170926  # 替换为实际镜像地址
         imagePullPolicy: Always
         
         ports:
