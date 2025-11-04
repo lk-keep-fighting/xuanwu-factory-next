@@ -107,7 +107,8 @@ class K8sService {
 
     const cluster: k8s.Cluster = {
       name: clusterName,
-      server
+      server,
+      skipTLSVerify: false
     }
 
     const caDataRaw = process.env.K8S_CA_CERT_DATA?.trim()
