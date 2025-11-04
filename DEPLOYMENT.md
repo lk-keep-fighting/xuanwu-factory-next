@@ -17,7 +17,7 @@
 ./build-docker.sh
 
 # 构建并推送到镜像仓库
-PUSH_IMAGE=true IMAGE_TAG=v1.0.0 REGISTRY=your-registry.com ./build-docker.sh
+PUSH_IMAGE=true IMAGE_TAG=v1.0.0 REGISTRY=nexus.aimstek.cn ./build-docker.sh
 
 # 本地测试
 TEST_LOCAL=true ./build-docker.sh
@@ -30,14 +30,14 @@ TEST_LOCAL=true ./build-docker.sh
 ```yaml
 # Secret 部分 - 替换为实际的数据库配置
 stringData:
-  DATABASE_URL: "mysql://username:password@mysql-host:3306/xuanwu_factory"
+  DATABASE_URL: "mysql://root:root@192.168.154.154:3306/xuanwu_next"
 
 # Deployment 部分 - 替换镜像地址
 spec:
   template:
     spec:
       containers:
-      - image: your-registry.com/xuanwu-factory:latest  # 修改此处
+      - image: nexus.aimstek.cn/xuanwu-factory:latest  # 修改此处
 
 # Ingress 部分 - 配置域名
 spec:
@@ -153,7 +153,7 @@ kubectl top pods -n xuanwu-factory
 ```bash
 # 更新镜像
 kubectl set image deployment/xuanwu-factory \
-  xuanwu-factory=your-registry.com/xuanwu-factory:v1.0.1 \
+  xuanwu-factory=nexus.aimstek.cn/xuanwu-factory:v1.0.1 \
   -n xuanwu-factory
 
 # 查看更新状态
@@ -178,7 +178,7 @@ kubectl rollout undo deployment/xuanwu-factory --to-revision=2 -n xuanwu-factory
 1. **使用私有镜像仓库**
    ```bash
    kubectl create secret docker-registry registry-secret \
-     --docker-server=your-registry.com \
+     --docker-server=nexus.aimstek.cn \
      --docker-username=your-username \
      --docker-password=your-password \
      -n xuanwu-factory
@@ -193,7 +193,7 @@ kubectl rollout undo deployment/xuanwu-factory --to-revision=2 -n xuanwu-factory
 4. **定期更新镜像**
    ```bash
    # 扫描漏洞（使用 Trivy）
-   trivy image your-registry.com/xuanwu-factory:latest
+   trivy image nexus.aimstek.cn/xuanwu-factory:latest
    ```
 
 ## 📈 扩缩容
