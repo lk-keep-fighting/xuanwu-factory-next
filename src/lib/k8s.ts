@@ -105,23 +105,22 @@ class K8sService {
     const contextName = process.env.K8S_CONTEXT_NAME?.trim() || `${clusterName}-context`
     const userName = process.env.K8S_CLUSTER_USER?.trim() || 'xuanwu-factory-admin'
 
-    const cluster: k8s.Cluster = {
-      name: clusterName,
-      server
-    }
-
     const caDataRaw = process.env.K8S_CA_CERT_DATA?.trim()
     const skipTls = this.parseBooleanEnv(process.env.K8S_SKIP_TLS_VERIFY)
 
-    if (caDataRaw) {
-      cluster.caData = this.normalizeCaData(caDataRaw)
+    const caData = caDataRaw ? this.normalizeCaData(caDataRaw) : undefined
+    let effectiveSkipTls = skipTls
+
+    if (effectiveSkipTls === undefined && !caData) {
+      console.warn('[K8s] ⚠️ 未提供 K8S_CA_CERT_DATA，将跳过 TLS 证书校验')
+      effectiveSkipTls = true
     }
 
-    if (skipTls !== undefined) {
-      cluster.skipTLSVerify = skipTls
-    } else if (!cluster.caData) {
-      console.warn('[K8s] ⚠️ 未提供 K8S_CA_CERT_DATA，将跳过 TLS 证书校验')
-      cluster.skipTLSVerify = true
+    const cluster: k8s.Cluster = {
+      name: clusterName,
+      server,
+      ...(caData ? { caData } : {}),
+      skipTLSVerify: effectiveSkipTls ?? false
     }
 
     const user: k8s.User = {

@@ -18,9 +18,7 @@ metadata:
 data:
   NODE_ENV: "production"
   NEXT_TELEMETRY_DISABLED: "1"
-  # 根据实际情况修改以下配置
-  SUPABASE_URL: "http://192.168.154.154:8000"
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJhbm9uIiwKICAgICJpc3MiOiAic3VwYWJhc2UtZGVtbyIsCiAgICAiaWF0IjogMTY0MTc2OTIwMCwKICAgICJleHAiOiAxNzk5NTM1NjAwCn0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE"
+  # 这里可以根据需要添加更多非敏感配置项
 
 ---
 # Secret - 敏感信息
@@ -31,10 +29,8 @@ metadata:
   namespace: xuanwu-factory
 type: Opaque
 stringData:
-  # Supabase 配置（请替换为实际值）
-  SUPABASE_URL: "http://192.168.154.154:8000"
-  SUPABASE_SERVICE_ROLE_KEY: "your-service-role-key"
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJhbm9uIiwKICAgICJpc3MiOiAic3VwYWJhc2UtZGVtbyIsCiAgICAiaWF0IjogMTY0MTc2OTIwMCwKICAgICJleHAiOiAxNzk5NTM1NjAwCn0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE"
+  # 数据库配置（请替换为实际值）
+  DATABASE_URL: "mysql://root:root@192.168.154.154:3306/xuanwu_next"
 
   # Kubernetes 管理配置（使用 doc/k8s/generate-admin-token.sh 生成）
   K8S_API_SERVER: "https://192.168.44.201:6443"
@@ -96,7 +92,7 @@ spec:
       
       containers:
       - name: xuanwu-factory
-        image: nexus.aimstek.cn/xuanwu-factory:20251103-163731  # 替换为实际镜像地址
+        image: nexus.aimstek.cn/xuanwu-factory:20251104-170926  # 替换为实际镜像地址
         imagePullPolicy: Always
         
         ports:
@@ -113,23 +109,11 @@ spec:
               key: NODE_ENV
         
         # 从 Secret 加载
-        - name: SUPABASE_URL
+        - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: xuanwu-factory-secret
-              key: SUPABASE_URL
-        
-        - name: SUPABASE_SERVICE_ROLE_KEY
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: SUPABASE_SERVICE_ROLE_KEY
-        
-        - name: NEXT_PUBLIC_SUPABASE_ANON_KEY
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+              key: DATABASE_URL
         
         # K8s 管理配置（如果应用需要管理集群资源）
         - name: K8S_API_SERVER
