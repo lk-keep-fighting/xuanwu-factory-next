@@ -41,27 +41,38 @@ class K8sService {
 
   constructor() {
     this.kc = new k8s.KubeConfig()
-    
+
+    this.initializeKubeConfig()
+
+    this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
+    this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api)
+    this.rbacApi = this.kc.makeApiClient(k8s.RbacAuthorizationV1Api)
+  }
+
+  private initializeKubeConfig(): void {
     try {
-      // 支持多种配置方式
-      if (process.env.KUBECONFIG_DATA) {
-        // 方式1：从环境变量中的 JSON 配置加载（适合生产环境）
+      const kubeconfigData = process.env.KUBECONFIG_DATA?.trim()
+      const apiServer = process.env.K8S_API_SERVER?.trim()
+      const bearerToken = process.env.K8S_BEARER_TOKEN?.trim()
+
+      if (kubeconfigData) {
+        const configValue = this.decodeConfigInput(kubeconfigData)
         console.log('[K8s] 使用 KUBECONFIG_DATA 环境变量加载配置')
-        this.kc.loadFromString(process.env.KUBECONFIG_DATA)
+        this.kc.loadFromString(configValue)
+      } else if (apiServer && bearerToken) {
+        console.log('[K8s] 使用 K8S_API_SERVER + K8S_BEARER_TOKEN 环境变量加载配置')
+        this.loadFromTokenEnv()
       } else if (process.env.KUBECONFIG) {
-        // 方式2：从指定路径的文件加载
         console.log('[K8s] 使用 KUBECONFIG 路径加载配置:', process.env.KUBECONFIG)
         this.kc.loadFromFile(process.env.KUBECONFIG)
       } else {
-        // 方式3：从默认位置加载 (~/.kube/config)
         console.log('[K8s] 使用默认配置加载 (~/.kube/config)')
         this.kc.loadFromDefault()
       }
-      
-      // 验证配置
+
       const currentCluster = this.kc.getCurrentCluster()
       const currentContext = this.kc.getCurrentContext()
-      
+
       if (currentCluster) {
         console.log('[K8s] ✅ 配置加载成功')
         console.log('[K8s]    集群:', currentCluster.name)
@@ -77,13 +88,137 @@ class K8sService {
       console.error('[K8s] 💡 解决方案:')
       console.error('[K8s]    1. 本地开发：确保 ~/.kube/config 存在且有效')
       console.error('[K8s]    2. 测试连接：运行 kubectl cluster-info')
-      console.error('[K8s]    3. 生产环境：设置 KUBECONFIG_DATA 环境变量')
+      console.error('[K8s]    3. 生产环境：设置 KUBECONFIG_DATA 或 K8S_API_SERVER/K8S_BEARER_TOKEN 环境变量')
       console.error('[K8s] 原始错误对象:', error)
     }
-    
-    this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
-    this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api)
-    this.rbacApi = this.kc.makeApiClient(k8s.RbacAuthorizationV1Api)
+  }
+
+  private loadFromTokenEnv(): void {
+    const server = process.env.K8S_API_SERVER?.trim()
+    const token = process.env.K8S_BEARER_TOKEN?.trim()
+
+    if (!server || !token) {
+      throw new Error('K8S_API_SERVER 和 K8S_BEARER_TOKEN 环境变量不能为空')
+    }
+
+    const clusterName = process.env.K8S_CLUSTER_NAME?.trim() || 'xuanwu-factory-cluster'
+    const contextName = process.env.K8S_CONTEXT_NAME?.trim() || `${clusterName}-context`
+    const userName = process.env.K8S_CLUSTER_USER?.trim() || 'xuanwu-factory-admin'
+
+    const cluster: k8s.Cluster = {
+      name: clusterName,
+      server
+    }
+
+    const caDataRaw = process.env.K8S_CA_CERT_DATA?.trim()
+    const skipTls = this.parseBooleanEnv(process.env.K8S_SKIP_TLS_VERIFY)
+
+    if (caDataRaw) {
+      cluster.caData = this.normalizeCaData(caDataRaw)
+    }
+
+    if (skipTls !== undefined) {
+      cluster.skipTLSVerify = skipTls
+    } else if (!cluster.caData) {
+      console.warn('[K8s] ⚠️ 未提供 K8S_CA_CERT_DATA，将跳过 TLS 证书校验')
+      cluster.skipTLSVerify = true
+    }
+
+    const user: k8s.User = {
+      name: userName,
+      token
+    }
+
+    const context: k8s.Context = {
+      name: contextName,
+      user: userName,
+      cluster: clusterName
+    }
+
+    this.kc.loadFromOptions({
+      clusters: [cluster],
+      users: [user],
+      contexts: [context],
+      currentContext: context.name
+    })
+  }
+
+  private decodeConfigInput(rawValue: string): string {
+    const trimmed = rawValue.trim()
+    if (!trimmed) {
+      return trimmed
+    }
+
+    const sanitized = trimmed.replace(/\s+/g, '')
+    const base64Pattern = /^[A-Za-z0-9+/=]+$/
+    const isLikelyBase64 = sanitized.length >= 16 && base64Pattern.test(sanitized)
+
+    if (!isLikelyBase64) {
+      return rawValue
+    }
+
+    try {
+      const padding = sanitized.length % 4 === 0 ? '' : '='.repeat(4 - (sanitized.length % 4))
+      const decoded = Buffer.from(`${sanitized}${padding}`, 'base64').toString('utf8')
+      const normalizedDecoded = decoded.trim()
+
+      if (!normalizedDecoded) {
+        return rawValue
+      }
+
+      if (
+        normalizedDecoded.includes('apiVersion:') ||
+        normalizedDecoded.includes('clusters:') ||
+        normalizedDecoded.startsWith('{')
+      ) {
+        return decoded
+      }
+    } catch (error) {
+      console.warn('[K8s] ⚠️ KUBECONFIG_DATA 看起来不是 Base64，使用原始值', error)
+    }
+
+    return rawValue
+  }
+
+  private normalizeCaData(value: string): string {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return trimmed
+    }
+
+    if (trimmed.includes('-----BEGIN CERTIFICATE-----')) {
+      return Buffer.from(trimmed).toString('base64')
+    }
+
+    const sanitized = trimmed.replace(/\s+/g, '')
+    const base64Pattern = /^[A-Za-z0-9+/=]+$/
+
+    if (base64Pattern.test(sanitized)) {
+      return sanitized
+    }
+
+    console.warn('[K8s] ⚠️ K8S_CA_CERT_DATA 不是有效的 Base64，将保留原始值')
+    return trimmed
+  }
+
+  private parseBooleanEnv(value?: string | null): boolean | undefined {
+    if (value === undefined || value === null) {
+      return undefined
+    }
+
+    const normalized = value.trim().toLowerCase()
+    if (!normalized) {
+      return undefined
+    }
+
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true
+    }
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+      return false
+    }
+
+    return undefined
   }
 
   /**
