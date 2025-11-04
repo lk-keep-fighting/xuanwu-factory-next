@@ -27,10 +27,15 @@ if (!existsSync(prismaBinaryPath)) {
   process.exit(0)
 }
 
+const env = {
+  ...process.env,
+  PRISMA_CLI_BINARY_TARGETS: process.env.PRISMA_CLI_BINARY_TARGETS || 'native,linux-musl-openssl-3.0.x'
+}
+
 const result = spawnSync(prismaBinaryPath, ['generate'], {
   stdio: 'inherit',
   cwd: projectRoot,
-  env: process.env
+  env
 })
 
 if (result.error) {
