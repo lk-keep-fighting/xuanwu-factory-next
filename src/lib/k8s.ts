@@ -120,7 +120,7 @@ class K8sService {
       name: clusterName,
       server,
       ...(caData ? { caData } : {}),
-      ...(effectiveSkipTls !== undefined ? { skipTLSVerify: effectiveSkipTls } : {})
+      skipTLSVerify: effectiveSkipTls ?? false
     }
 
     const user: k8s.User = {
