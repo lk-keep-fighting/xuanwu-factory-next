@@ -1,32 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { prisma } from '@/lib/prisma'
 import { k8sService } from '@/lib/k8s'
 
 /**
  * 重启服务
  */
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  
-  try {
-    // 获取服务信息
-    const { data: service, error: serviceError } = await supabase
-      .from('services')
-      .select('name, project:projects(identifier)')
-      .eq('id', id)
-      .single()
 
-    if (serviceError || !service) {
+  try {
+    const service = await prisma.service.findUnique({
+      where: { id },
+      select: {
+        name: true,
+        project: {
+          select: { identifier: true }
+        }
+      }
+    })
+
+    if (!service) {
       return NextResponse.json(
         { error: '服务不存在' },
         { status: 404 }
       )
     }
 
-    const namespace = (service.project as { identifier?: string })?.identifier?.trim()
+    const namespace = service.project?.identifier?.trim()
 
     if (!namespace) {
       return NextResponse.json(
@@ -44,12 +47,12 @@ export async function POST(
 
     // 重启 K8s 服务
     const result = await k8sService.restartService(service.name, namespace)
-    
+
     // 更新数据库状态
-    await supabase
-      .from('services')
-      .update({ status: 'pending' })
-      .eq('id', id)
+    await prisma.service.update({
+      where: { id },
+      data: { status: 'pending' }
+    })
 
     return NextResponse.json(result)
   } catch (error: unknown) {

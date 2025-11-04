@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { Prisma } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
 import { k8sService } from '@/lib/k8s'
 import type { K8sImportRequest } from '@/types/k8s'
+import {
+  sanitizeServiceData,
+  normalizePrismaError,
+  normalizeUnknownError
+} from '../../services/helpers'
+
+const IMPORT_ERROR_MESSAGE = '导入服务失败，请稍后重试。'
 
 export async function POST(request: Request) {
   const payload = (await request.json()) as Partial<K8sImportRequest>
@@ -30,16 +38,13 @@ export async function POST(request: Request) {
 
   // 检查名称冲突，若存在则自动追加序号
   while (true) {
-    const { data: conflict, error: conflictError } = await supabase
-      .from('services')
-      .select('id')
-      .eq('project_id', projectId)
-      .eq('name', finalName)
-      .maybeSingle()
-
-    if (conflictError && conflictError.code !== 'PGRST116') {
-      return NextResponse.json({ error: conflictError.message }, { status: 500 })
-    }
+    const conflict = await prisma.service.findFirst({
+      where: {
+        project_id: projectId,
+        name: finalName
+      },
+      select: { id: true }
+    })
 
     if (!conflict) {
       break
@@ -49,20 +54,33 @@ export async function POST(request: Request) {
     suffix += 1
   }
 
-  const insertPayload = {
+  const sanitizedPayload = sanitizeServiceData({
     ...servicePayload,
+    project_id: projectId,
     name: finalName
+  })
+
+  sanitizedPayload.project_id = projectId
+  sanitizedPayload.name = finalName
+
+  try {
+    const service = await prisma.service.create({
+      data: sanitizedPayload as Prisma.ServiceUncheckedCreateInput
+    })
+
+    return NextResponse.json(service)
+  } catch (error: unknown) {
+    console.error('[K8s][Import] 导入服务失败:', error)
+
+    const normalized = normalizePrismaError(error, {
+      defaultMessage: IMPORT_ERROR_MESSAGE
+    })
+
+    if (normalized) {
+      return NextResponse.json({ error: normalized.message }, { status: normalized.status })
+    }
+
+    const { status, message } = normalizeUnknownError(error, IMPORT_ERROR_MESSAGE)
+    return NextResponse.json({ error: message }, { status })
   }
-
-  const { data, error } = await supabase
-    .from('services')
-    .insert(insertPayload)
-    .select()
-    .single()
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  return NextResponse.json(data)
 }

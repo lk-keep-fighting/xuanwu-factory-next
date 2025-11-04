@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { prisma } from '@/lib/prisma'
 
 export async function GET(
   _request: NextRequest,
@@ -7,15 +7,16 @@ export async function GET(
 ) {
   const { id } = await params
 
-  const { data, error } = await supabase
-    .from('deployments')
-    .select('*')
-    .eq('service_id', id)
-    .order('created_at', { ascending: false })
+  try {
+    const deployments = await prisma.deployment.findMany({
+      where: { service_id: id },
+      orderBy: { created_at: 'desc' }
+    })
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json(deployments)
+  } catch (error: unknown) {
+    console.error('[Services][Deployments] 获取部署历史失败:', error)
+    const message = error instanceof Error ? error.message : '获取部署历史失败'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  return NextResponse.json(data)
 }

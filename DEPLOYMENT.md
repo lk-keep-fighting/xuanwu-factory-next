@@ -6,7 +6,7 @@
 - Kubernetes 1.24+
 - kubectl 已配置并连接到集群
 - 镜像仓库访问权限（Docker Hub / Harbor / 阿里云等）
-- Supabase 项目已创建
+- 可用的 MySQL 8.0+ 数据库实例（支持外部或集群内访问）
 
 ## 🚀 快速开始
 
@@ -28,11 +28,9 @@ TEST_LOCAL=true ./build-docker.sh
 编辑 `k8s-deployment.yaml`，修改以下配置：
 
 ```yaml
-# Secret 部分 - 替换为实际的 Supabase 配置
+# Secret 部分 - 替换为实际的数据库配置
 stringData:
-  SUPABASE_URL: "https://your-project.supabase.co"
-  SUPABASE_SERVICE_ROLE_KEY: "your-service-role-key"
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "your-anon-key"
+  DATABASE_URL: "mysql://username:password@mysql-host:3306/xuanwu_factory"
 
 # Deployment 部分 - 替换镜像地址
 spec:
@@ -68,9 +66,7 @@ kubectl logs -f deployment/xuanwu-factory -n xuanwu-factory
 
 | 变量名 | 说明 | 示例 |
 |--------|------|------|
-| `SUPABASE_URL` | Supabase 项目 URL | `https://xxx.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase 服务密钥 | `eyJhbGci...` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase 匿名密钥 | `eyJhbGci...` |
+| `DATABASE_URL` | MySQL 连接字符串（提供给 Prisma 使用） | `mysql://username:password@mysql-host:3306/xuanwu_factory` |
 
 ### 可选的环境变量
 

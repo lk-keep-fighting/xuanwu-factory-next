@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
 import { k8sService } from '@/lib/k8s'
-import { supabase } from '@/lib/supabase'
 
 /**
  * 获取服务日志
@@ -11,24 +11,27 @@ export async function GET(
 ) {
   const { id } = await params
   const { searchParams } = new URL(request.url)
-  const lines = parseInt(searchParams.get('lines') || '100')
-  
-  try {
-    // 获取服务名称
-    const { data: service, error } = await supabase
-      .from('services')
-      .select('name, project:projects(identifier)')
-      .eq('id', id)
-      .single()
+  const lines = parseInt(searchParams.get('lines') || '100', 10)
 
-    if (error || !service) {
+  try {
+    const service = await prisma.service.findUnique({
+      where: { id },
+      select: {
+        name: true,
+        project: {
+          select: { identifier: true }
+        }
+      }
+    })
+
+    if (!service) {
       return NextResponse.json(
         { error: '服务不存在' },
         { status: 404 }
       )
     }
 
-    const namespace = (service.project as { identifier?: string })?.identifier?.trim()
+    const namespace = service.project?.identifier?.trim()
 
     if (!namespace) {
       return NextResponse.json(
@@ -46,7 +49,7 @@ export async function GET(
 
     // 获取 K8s 日志
     const result = await k8sService.getServiceLogs(service.name, lines, namespace)
-    
+
     return NextResponse.json(result)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
