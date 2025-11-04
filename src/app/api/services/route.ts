@@ -1,88 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { Prisma } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
+import {
+  ServicePayload,
+  sanitizeServiceData,
+  normalizePrismaError,
+  normalizeUnknownError
+} from './helpers'
 import { INVALID_SERVICE_TYPE_MESSAGE, isAllServiceTypeFilter, normalizeServiceType } from './service-type'
 
 const DEFAULT_CREATE_ERROR_MESSAGE = '服务创建失败，请稍后重试。'
 
-type SupabaseError = {
-  message?: string | null
-  details?: string | null
-  hint?: string | null
-  code?: string | null
-  status?: number
-  statusText?: string | null
-}
-
-const normalizeSupabaseError = (error: SupabaseError | null | undefined) => {
-  const statusFromError = typeof error?.status === 'number' ? error.status : undefined
-  let status = statusFromError && statusFromError >= 400 && statusFromError <= 599 ? statusFromError : 500
-
-  if (error?.code === '23505') {
-    status = 409
-  } else if (error?.code === '23503') {
-    status = 400
-  }
-
-  const messageCandidates = [error?.message, error?.details, error?.hint, error?.statusText]
-    .map(value => (typeof value === 'string' ? value.trim() : ''))
-    .filter(Boolean)
-
-  if (messageCandidates.some(value => value.toLowerCase().includes('fetch failed') || value.toLowerCase().includes('bad gateway'))) {
-    return {
-      status: 502,
-      message: '后端服务暂时不可用，请稍后重试。'
-    }
-  }
-
-  if (status === 502 || status === 503) {
-    return {
-      status,
-      message: '后端服务暂时不可用，请稍后重试。'
-    }
-  }
-
-  let message = messageCandidates[0]
-
-  if (error?.code === '23505') {
-    message = '服务名称已存在，请更换其他名称。'
-  } else if (error?.code === '23503') {
-    message = '关联的项目不存在或已被删除。'
-  }
-
-  if (!message) {
-    message = DEFAULT_CREATE_ERROR_MESSAGE
-  }
-
-  return { status, message }
-}
-
-const normalizeUnknownError = (error: unknown) => {
-  if (error instanceof Error) {
-    const raw = error.message.trim()
-    const normalized = raw.toLowerCase()
-
-    if (
-      normalized.includes('fetch failed') ||
-      normalized.includes('bad gateway') ||
-      normalized.includes('unexpected end of json')
-    ) {
-      return {
-        status: 502,
-        message: '服务暂时不可用，请稍后重试。'
-      }
-    }
-
-    if (raw) {
-      return { status: 500, message: raw }
-    }
-  }
-
-  return { status: 500, message: DEFAULT_CREATE_ERROR_MESSAGE }
-}
-
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
-  const projectId = searchParams.get('project_id')
+  const projectId = searchParams.get('project_id')?.trim() || null
   const typeParam = searchParams.get('type')
   const normalizedType = typeParam ? normalizeServiceType(typeParam) : null
   const ignoreTypeFilter = typeParam ? isAllServiceTypeFilter(typeParam) : false
@@ -94,25 +25,28 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  let query = supabase.from('services').select('*')
+  const where: Prisma.ServiceWhereInput = {}
 
   if (projectId) {
-    query = query.eq('project_id', projectId)
+    where.project_id = projectId
   }
 
   if (normalizedType) {
-    query = query.eq('type', normalizedType)
+    where.type = normalizedType
   }
 
-  query = query.order('created_at', { ascending: false })
+  try {
+    const services = await prisma.service.findMany({
+      where,
+      orderBy: { created_at: 'desc' }
+    })
 
-  const { data, error } = await query
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json(services)
+  } catch (error: unknown) {
+    console.error('[Services][GET] Failed to fetch services:', error)
+    const message = error instanceof Error ? error.message : '获取服务失败'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  return NextResponse.json(data)
 }
 
 export async function POST(request: NextRequest) {
@@ -128,7 +62,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '请求体格式不正确' }, { status: 400 })
   }
 
-  const body = rawBody as Record<string, unknown>
+  const body = rawBody as ServicePayload
   const normalizedType = normalizeServiceType(body.type)
 
   if (!normalizedType) {
@@ -138,31 +72,40 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const payload = {
-    ...body,
-    type: normalizedType
+  const projectId = typeof body.project_id === 'string' ? body.project_id.trim() : ''
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+
+  if (!projectId) {
+    return NextResponse.json({ error: '项目 ID 无效' }, { status: 400 })
   }
 
+  if (!name) {
+    return NextResponse.json({ error: '服务名称不能为空' }, { status: 400 })
+  }
+
+  const payload = sanitizeServiceData(body)
+  payload.project_id = projectId
+  payload.name = name
+  payload.type = normalizedType
+
   try {
-    const { data, error, status } = await supabase
-      .from('services')
-      .insert(payload)
-      .select()
-      .single()
+    const service = await prisma.service.create({
+      data: payload as Prisma.ServiceUncheckedCreateInput
+    })
 
-    if (error) {
-      const { status: normalizedStatus, message } = normalizeSupabaseError({ ...error, status })
-      return NextResponse.json({ error: message }, { status: normalizedStatus })
-    }
-
-    if (!data) {
-      return NextResponse.json({ error: DEFAULT_CREATE_ERROR_MESSAGE }, { status: 500 })
-    }
-
-    return NextResponse.json(data)
+    return NextResponse.json(service)
   } catch (error: unknown) {
     console.error('[Services][POST] 创建服务失败:', error)
-    const { status, message } = normalizeUnknownError(error)
+
+    const normalized = normalizePrismaError(error, {
+      defaultMessage: DEFAULT_CREATE_ERROR_MESSAGE
+    })
+
+    if (normalized) {
+      return NextResponse.json({ error: normalized.message }, { status: normalized.status })
+    }
+
+    const { status, message } = normalizeUnknownError(error, DEFAULT_CREATE_ERROR_MESSAGE)
     return NextResponse.json({ error: message }, { status })
   }
 }

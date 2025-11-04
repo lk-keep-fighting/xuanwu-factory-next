@@ -1,0 +1,82 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id          String    @id @default(uuid()) @db.Char(36)
+  name        String
+  identifier  String    @unique @db.VarChar(191)
+  description String?   @db.Text
+  created_at  DateTime  @default(now()) @db.Timestamp(3)
+  updated_at  DateTime  @updatedAt @db.Timestamp(3)
+  services    Service[]
+
+  @@map("projects")
+}
+
+model Service {
+  id                      String      @id @default(uuid()) @db.Char(36)
+  project_id              String      @db.Char(36)
+  project                 Project     @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  name                    String
+  type                    String      @db.VarChar(32)
+  status                  String      @default("pending") @db.VarChar(32)
+  env_vars                Json?
+  resource_limits         Json?
+  volumes                 Json?
+  network_config          Json?
+  git_provider            String?     @db.VarChar(32)
+  git_repository          String?
+  git_branch              String?
+  git_path                String?
+  build_type              String?     @db.VarChar(32)
+  dockerfile_path         String?
+  build_args              Json?
+  port                    Int?
+  replicas                Int?
+  command                 String?
+  auto_deploy             Boolean     @default(false)
+  built_image             String?
+  database_type           String?     @db.VarChar(32)
+  version                 String?
+  external_port           Int?
+  username                String?
+  password                String?
+  root_password           String?
+  database_name           String?
+  volume_size             String?
+  internal_host           String?
+  internal_connection_url String?
+  image                   String?
+  tag                     String?
+  health_check            Json?
+  created_at              DateTime    @default(now()) @db.Timestamp(3)
+  updated_at              DateTime    @updatedAt @db.Timestamp(3)
+  deployments             Deployment[]
+
+  @@index([project_id])
+  @@index([type])
+  @@index([status])
+  @@map("services")
+}
+
+model Deployment {
+  id           String    @id @default(uuid()) @db.Char(36)
+  service_id   String    @db.Char(36)
+  service      Service   @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  status       String    @db.VarChar(32)
+  build_logs   String?   @db.LongText
+  image_tag    String?
+  created_at   DateTime  @default(now()) @db.Timestamp(3)
+  completed_at DateTime? @db.Timestamp(3)
+
+  @@index([service_id])
+  @@index([status])
+  @@map("deployments")
+}

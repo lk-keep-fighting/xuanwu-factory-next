@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { Prisma } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
 
 const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
@@ -12,24 +13,24 @@ const normalizeIdentifier = (value: string) =>
     .slice(0, 63)
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
 
-  const { data, error } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('id', id)
-    .single()
+  try {
+    const project = await prisma.project.findUnique({ where: { id } })
 
-  if (error) {
-    const status = error.code === 'PGRST116' ? 404 : 500
-    const message = status === 404 ? '项目不存在' : error.message
-    return NextResponse.json({ error: message }, { status })
+    if (!project) {
+      return NextResponse.json({ error: '项目不存在' }, { status: 404 })
+    }
+
+    return NextResponse.json(project)
+  } catch (error: unknown) {
+    console.error('[Project][GET] Failed to fetch project:', error)
+    const message = error instanceof Error ? error.message : '获取项目失败'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  return NextResponse.json(data)
 }
 
 export async function PUT(
@@ -55,63 +56,64 @@ export async function PUT(
     return NextResponse.json({ error: '项目编号格式不正确' }, { status: 400 })
   }
 
-  const { data: duplicate, error: duplicateError } = await supabase
-    .from('projects')
-    .select('id')
-    .eq('identifier', identifier)
-    .neq('id', id)
-    .maybeSingle()
-
-  if (duplicateError) {
-    if (duplicateError.code !== 'PGRST116') {
-      return NextResponse.json({ error: duplicateError.message }, { status: 500 })
-    }
-  }
+  const duplicate = await prisma.project.findFirst({
+    where: {
+      identifier,
+      NOT: { id }
+    },
+    select: { id: true }
+  })
 
   if (duplicate) {
     return NextResponse.json({ error: '项目编号已被占用，请换一个' }, { status: 409 })
   }
 
-  const { data, error } = await supabase
-    .from('projects')
-    .update({
-      name,
-      identifier,
-      description
+  try {
+    const project = await prisma.project.update({
+      where: { id },
+      data: {
+        name,
+        identifier,
+        description
+      }
     })
-    .eq('id', id)
-    .select()
-    .single()
 
-  if (error) {
-    const status =
-      error.code === 'PGRST116' ? 404 : error.code === '23505' ? 409 : 500
-    const message =
-      status === 404
-        ? '项目不存在'
-        : status === 409
-          ? '项目编号已被占用，请换一个'
-          : error.message
-    return NextResponse.json({ error: message }, { status })
+    return NextResponse.json(project)
+  } catch (error: unknown) {
+    console.error('[Project][PUT] Failed to update project:', error)
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2025') {
+        return NextResponse.json({ error: '项目不存在' }, { status: 404 })
+      }
+
+      if (error.code === 'P2002') {
+        return NextResponse.json({ error: '项目编号已被占用，请换一个' }, { status: 409 })
+      }
+    }
+
+    const message = error instanceof Error ? error.message : '项目更新失败'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  return NextResponse.json(data)
 }
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
 
-  const { error } = await supabase
-    .from('projects')
-    .delete()
-    .eq('id', id)
+  try {
+    await prisma.project.delete({ where: { id } })
+    return NextResponse.json({ success: true })
+  } catch (error: unknown) {
+    console.error('[Project][DELETE] Failed to delete project:', error)
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      return NextResponse.json({ error: '项目不存在' }, { status: 404 })
+    }
+
+    const message = error instanceof Error ? error.message : '删除项目失败'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  return NextResponse.json({ success: true })
 }

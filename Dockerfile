@@ -15,6 +15,8 @@ WORKDIR /app
 
 # 复制依赖配置文件
 COPY package.json pnpm-lock.yaml* ./
+COPY prisma ./prisma
+COPY scripts ./scripts
 
 # 安装生产依赖（仅安装必需的包）
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
@@ -31,6 +33,8 @@ WORKDIR /app
 
 # 复制依赖配置
 COPY package.json pnpm-lock.yaml* ./
+COPY prisma ./prisma
+COPY scripts ./scripts
 
 # 安装所有依赖（包括 devDependencies）
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \

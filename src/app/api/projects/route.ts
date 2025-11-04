@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { Prisma } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
 import { k8sService } from '@/lib/k8s'
 
 const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
@@ -13,16 +14,17 @@ const normalizeIdentifier = (value: string) =>
     .slice(0, 63)
 
 export async function GET() {
-  const { data, error } = await supabase
-    .from('projects')
-    .select('*')
-    .order('created_at', { ascending: false })
+  try {
+    const projects = await prisma.project.findMany({
+      orderBy: { created_at: 'desc' }
+    })
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json(projects)
+  } catch (error: unknown) {
+    console.error('[Project][GET] Failed to fetch projects:', error)
+    const message = error instanceof Error ? error.message : '获取项目失败'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  return NextResponse.json(data)
 }
 
 export async function POST(request: NextRequest) {
@@ -44,37 +46,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '项目编号格式不正确' }, { status: 400 })
   }
 
-  const { data: existing, error: existingError } = await supabase
-    .from('projects')
-    .select('id')
-    .eq('identifier', identifier)
-    .maybeSingle()
-
-  if (existingError) {
-    // PGRST116 表示没有匹配的数据，可忽略
-    if (existingError.code !== 'PGRST116') {
-      return NextResponse.json({ error: existingError.message }, { status: 500 })
-    }
-  }
+  const existing = await prisma.project.findUnique({
+    where: { identifier }
+  })
 
   if (existing) {
     return NextResponse.json({ error: '项目编号已被占用，请换一个' }, { status: 409 })
   }
 
-  const { data, error } = await supabase
-    .from('projects')
-    .insert({
-      name,
-      identifier,
-      description
-    })
-    .select()
-    .single()
+  let project: Awaited<ReturnType<typeof prisma.project.create>> | null = null
 
-  if (error) {
-    const status = error.code === '23505' ? 409 : 500
-    const message = error.code === '23505' ? '项目编号已被占用，请换一个' : error.message
-    return NextResponse.json({ error: message }, { status })
+  try {
+    project = await prisma.project.create({
+      data: {
+        name,
+        identifier,
+        description
+      }
+    })
+  } catch (error: unknown) {
+    console.error('[Project][POST] Failed to create project:', error)
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return NextResponse.json({ error: '项目编号已被占用，请换一个' }, { status: 409 })
+    }
+
+    const message = error instanceof Error ? error.message : '项目创建失败，请稍后重试'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 
   // 项目创建成功后，自动创建 K8s 命名空间和 NFS PVC
@@ -91,8 +89,12 @@ export async function POST(request: NextRequest) {
     // 不阻断项目创建，但返回警告
   }
 
+  if (!project) {
+    return NextResponse.json({ error: '项目创建失败，请稍后重试' }, { status: 500 })
+  }
+
   return NextResponse.json({
-    ...data,
+    ...project,
     ...(k8sWarning && { warning: k8sWarning })
   })
 }

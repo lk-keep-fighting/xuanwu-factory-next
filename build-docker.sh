@@ -105,9 +105,7 @@ if [ "$TEST_LOCAL" = "true" ]; then
         --name xuanwu-factory-test \
         -p 3000:3000 \
         -e NODE_ENV=production \
-        -e SUPABASE_URL=${SUPABASE_URL} \
-        -e SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY} \
-        -e NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
+        -e DATABASE_URL=${DATABASE_URL} \
         ${IMAGE_NAME}:${IMAGE_TAG}
     
     echo -e "${GREEN}✓ 测试容器已启动，访问 http://localhost:3000${NC}"

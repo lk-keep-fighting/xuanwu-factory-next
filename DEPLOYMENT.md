@@ -6,7 +6,7 @@
 - Kubernetes 1.24+
 - kubectl 已配置并连接到集群
 - 镜像仓库访问权限（Docker Hub / Harbor / 阿里云等）
-- Supabase 项目已创建
+- 可用的 MySQL 8.0+ 数据库实例（支持外部或集群内访问）
 
 ## 🚀 快速开始
 
@@ -17,7 +17,7 @@
 ./build-docker.sh
 
 # 构建并推送到镜像仓库
-PUSH_IMAGE=true IMAGE_TAG=v1.0.0 REGISTRY=your-registry.com ./build-docker.sh
+PUSH_IMAGE=true IMAGE_TAG=v1.0.0 REGISTRY=nexus.aimstek.cn ./build-docker.sh
 
 # 本地测试
 TEST_LOCAL=true ./build-docker.sh
@@ -28,18 +28,16 @@ TEST_LOCAL=true ./build-docker.sh
 编辑 `k8s-deployment.yaml`，修改以下配置：
 
 ```yaml
-# Secret 部分 - 替换为实际的 Supabase 配置
+# Secret 部分 - 替换为实际的数据库配置
 stringData:
-  SUPABASE_URL: "https://your-project.supabase.co"
-  SUPABASE_SERVICE_ROLE_KEY: "your-service-role-key"
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "your-anon-key"
+  DATABASE_URL: "mysql://root:root@192.168.154.154:3306/xuanwu_next"
 
 # Deployment 部分 - 替换镜像地址
 spec:
   template:
     spec:
       containers:
-      - image: your-registry.com/xuanwu-factory:latest  # 修改此处
+      - image: nexus.aimstek.cn/xuanwu-factory:latest  # 修改此处
 
 # Ingress 部分 - 配置域名
 spec:
@@ -68,9 +66,7 @@ kubectl logs -f deployment/xuanwu-factory -n xuanwu-factory
 
 | 变量名 | 说明 | 示例 |
 |--------|------|------|
-| `SUPABASE_URL` | Supabase 项目 URL | `https://xxx.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase 服务密钥 | `eyJhbGci...` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase 匿名密钥 | `eyJhbGci...` |
+| `DATABASE_URL` | MySQL 连接字符串（提供给 Prisma 使用） | `mysql://username:password@mysql-host:3306/xuanwu_factory` |
 
 ### 可选的环境变量
 
@@ -157,7 +153,7 @@ kubectl top pods -n xuanwu-factory
 ```bash
 # 更新镜像
 kubectl set image deployment/xuanwu-factory \
-  xuanwu-factory=your-registry.com/xuanwu-factory:v1.0.1 \
+  xuanwu-factory=nexus.aimstek.cn/xuanwu-factory:v1.0.1 \
   -n xuanwu-factory
 
 # 查看更新状态
@@ -182,7 +178,7 @@ kubectl rollout undo deployment/xuanwu-factory --to-revision=2 -n xuanwu-factory
 1. **使用私有镜像仓库**
    ```bash
    kubectl create secret docker-registry registry-secret \
-     --docker-server=your-registry.com \
+     --docker-server=nexus.aimstek.cn \
      --docker-username=your-username \
      --docker-password=your-password \
      -n xuanwu-factory
@@ -197,7 +193,7 @@ kubectl rollout undo deployment/xuanwu-factory --to-revision=2 -n xuanwu-factory
 4. **定期更新镜像**
    ```bash
    # 扫描漏洞（使用 Trivy）
-   trivy image your-registry.com/xuanwu-factory:latest
+   trivy image nexus.aimstek.cn/xuanwu-factory:latest
    ```
 
 ## 📈 扩缩容
