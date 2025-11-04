@@ -35,9 +35,31 @@ stringData:
   SUPABASE_URL: "http://192.168.154.154:8000"
   SUPABASE_SERVICE_ROLE_KEY: "your-service-role-key"
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJhbm9uIiwKICAgICJpc3MiOiAic3VwYWJhc2UtZGVtbyIsCiAgICAiaWF0IjogMTY0MTc2OTIwMCwKICAgICJleHAiOiAxNzk5NTM1NjAwCn0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE"
-  
-  # Kubernetes 配置（如果需要）
-  # KUBECONFIG_DATA: "base64-encoded-kubeconfig"
+
+  # Kubernetes 管理配置（使用 doc/k8s/generate-admin-token.sh 生成）
+  K8S_API_SERVER: "https://your-k8s-api-server"
+  K8S_BEARER_TOKEN: "paste-admin-token-here"
+  K8S_CA_CERT_DATA: "LS0tLS1Zb3VyLUNBLS1EQVRBLUhlcmUtLS0tLQ=="
+  K8S_SKIP_TLS_VERIFY: "false"
+  # 可选：提供完整 kubeconfig（支持纯文本或 Base64 原文）
+  # KUBECONFIG_DATA: |
+  #   apiVersion: v1
+  #   kind: Config
+  #   clusters:
+  #   - cluster:
+  #       server: https://your-k8s-api-server
+  #       certificate-authority-data: LS0tLS1Zb3VyLUNBLS1EQVRBLUhlcmUtLS0tLQ==
+  #     name: xuanwu-factory-cluster
+  #   contexts:
+  #   - context:
+  #       cluster: xuanwu-factory-cluster
+  #       user: xuanwu-factory-admin
+  #     name: xuanwu-factory-context
+  #   current-context: xuanwu-factory-context
+  #   users:
+  #   - name: xuanwu-factory-admin
+  #     user:
+  #       token: paste-admin-token-here
 
 ---
 # Deployment - 应用部署
@@ -109,14 +131,42 @@ spec:
               name: xuanwu-factory-secret
               key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         
-        # K8s 配置（如果应用需要管理 K8s 资源）
+        # K8s 管理配置（如果应用需要管理集群资源）
+        - name: K8S_API_SERVER
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: K8S_API_SERVER
+              optional: true
+
+        - name: K8S_BEARER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: K8S_BEARER_TOKEN
+              optional: true
+
+        - name: K8S_CA_CERT_DATA
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: K8S_CA_CERT_DATA
+              optional: true
+
+        - name: K8S_SKIP_TLS_VERIFY
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: K8S_SKIP_TLS_VERIFY
+              optional: true
+
         - name: KUBECONFIG_DATA
           valueFrom:
             secretKeyRef:
               name: xuanwu-factory-secret
               key: KUBECONFIG_DATA
               optional: true
-        
+
         # 资源限制
         resources:
           requests:

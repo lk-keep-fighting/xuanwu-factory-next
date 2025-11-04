@@ -78,19 +78,30 @@ kubectl logs -f deployment/xuanwu-factory -n xuanwu-factory
 |--------|------|--------|
 | `NODE_ENV` | 运行环境 | `production` |
 | `NEXT_TELEMETRY_DISABLED` | 禁用遥测 | `1` |
-| `KUBECONFIG_DATA` | K8s 配置（Base64） | - |
+| `KUBECONFIG_DATA` | 自定义 kubeconfig 内容（支持 YAML 或 Base64 编码） | - |
+| `K8S_API_SERVER` | Kubernetes API Server 地址（使用 Token 模式时必填） | - |
+| `K8S_BEARER_TOKEN` | 用于调用 Kubernetes API 的 Bearer Token | - |
+| `K8S_CA_CERT_DATA` | 集群 CA 证书（Base64，可选） | - |
+| `K8S_SKIP_TLS_VERIFY` | 是否跳过 TLS 校验（未提供 CA 时建议设为 `true`） | `false` |
 
 ### K8s 管理配置（如果应用需要管理 K8s 资源）
 
-```bash
-# 1. 将 kubeconfig 编码为 Base64
-cat ~/.kube/config | base64
+推荐使用仓库提供的脚本生成管理员 Token：
 
-# 2. 将输出添加到 Secret
-kubectl create secret generic xuanwu-factory-secret \
-  --from-literal=KUBECONFIG_DATA="<base64-encoded-content>" \
-  -n xuanwu-factory
+```bash
+# 在拥有 kubectl 权限的节点（例如 master 节点）执行
+chmod +x doc/k8s/generate-admin-token.sh
+./doc/k8s/generate-admin-token.sh
 ```
+
+脚本会创建 `xuanwu-factory-admin` ServiceAccount、授予 `cluster-admin` 权限，并打印 `K8S_API_SERVER`、`K8S_BEARER_TOKEN`、`K8S_CA_CERT_DATA` 以及可选的 `KUBECONFIG_DATA` 片段。
+将这些值填入 `k8s-deployment.yaml` 中 `xuanwu-factory-secret` 的 `stringData` 字段后，重新应用部署：
+
+```bash
+kubectl apply -f k8s-deployment.yaml
+```
+
+> 如果你已经有现成的 kubeconfig，也可以直接将其原文或 Base64 字符串写入 `KUBECONFIG_DATA` 字段。
 
 ## 🔍 健康检查
 
