@@ -37,9 +37,7 @@ export async function POST(
       return NextResponse.json({ error: '服务不存在' }, { status: 404 })
     }
 
-    const { project: projectMeta, ...serviceWithoutProject } = serviceRecord as Service & {
-      project: { identifier?: string | null } | null
-    }
+    const { project: projectMeta, ...serviceWithoutProject } = serviceRecord
 
     const namespace = projectMeta?.identifier?.trim()
 
@@ -47,7 +45,7 @@ export async function POST(
       return NextResponse.json({ error: '项目缺少编号，无法部署' }, { status: 400 })
     }
 
-    const typedService = serviceWithoutProject as Service
+    const typedService = serviceWithoutProject as unknown as Service
 
     try {
       await prisma.service.update({
