@@ -21,7 +21,8 @@ export async function GET(
     }
 
     // 生成 YAML
-    const yaml = k8sService.generateServiceYAML(service as Service, 'default')
+    const servicePayload = JSON.parse(JSON.stringify(service)) as Service
+    const yaml = k8sService.generateServiceYAML(servicePayload, 'default')
 
     return new Response(yaml, {
       headers: {

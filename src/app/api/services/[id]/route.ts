@@ -2,7 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { k8sService } from '@/lib/k8s'
 import { prisma } from '@/lib/prisma'
-import type { Service } from '@/types/project'
+
+type ServiceWithProject = Prisma.ServiceGetPayload<{
+  include: {
+    project: {
+      select: {
+        identifier: true
+      }
+    }
+  }
+}>
 import {
   ServicePayload,
   sanitizeServiceData,
@@ -125,17 +134,17 @@ export async function DELETE(
 ) {
   const { id } = await params
 
-  let serviceWithProject: (Service & { project: { identifier: string | null } | null }) | null = null
+  let serviceWithProject: ServiceWithProject | null = null
 
   try {
-    serviceWithProject = (await prisma.service.findUnique({
+    serviceWithProject = await prisma.service.findUnique({
       where: { id },
       include: {
         project: {
           select: { identifier: true }
         }
       }
-    })) as Service & { project: { identifier: string | null } | null }
+    })
   } catch (error: unknown) {
     console.error('[Services][DELETE] 获取服务失败:', error)
     const message = error instanceof Error ? error.message : DELETE_ERROR_MESSAGE
@@ -146,23 +155,23 @@ export async function DELETE(
     return NextResponse.json({ error: '服务不存在' }, { status: 404 })
   }
 
-  const { project: projectMeta, ...serviceWithoutProject } = serviceWithProject
+  const { project: projectMeta } = serviceWithProject
   const namespace = projectMeta?.identifier?.trim()
 
   if (!namespace) {
     return NextResponse.json({ error: '项目缺少编号，无法删除服务' }, { status: 400 })
   }
 
-  const serviceData = serviceWithoutProject as Service
+  const serviceName = serviceWithProject.name?.trim()
 
-  if (!serviceData.name) {
+  if (!serviceName) {
     return NextResponse.json({ error: '服务名称缺失，无法删除' }, { status: 400 })
   }
 
   let warning: string | undefined
 
   try {
-    await k8sService.deleteService(serviceData.name, namespace)
+    await k8sService.deleteService(serviceName, namespace)
   } catch (error: unknown) {
     const errorMessage =
       error instanceof Error
@@ -181,7 +190,7 @@ export async function DELETE(
       normalizedMessage.includes('未找到')
 
     if (notFound) {
-      warning = `Kubernetes 集群中未找到服务「${serviceData.name}」，已跳过集群资源清理。`
+      warning = `Kubernetes 集群中未找到服务「${serviceName}」，已跳过集群资源清理。`
 
       if (errorMessage && errorMessage !== warning) {
         console.warn(`[Service Delete] Kubernetes 删除资源时未找到：${errorMessage}`)

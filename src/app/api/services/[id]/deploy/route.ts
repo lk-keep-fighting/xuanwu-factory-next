@@ -45,7 +45,7 @@ export async function POST(
       return NextResponse.json({ error: '项目缺少编号，无法部署' }, { status: 400 })
     }
 
-    const typedService = serviceWithoutProject as unknown as Service
+    const typedService = JSON.parse(JSON.stringify(serviceWithoutProject)) as Service
 
     try {
       await prisma.service.update({
