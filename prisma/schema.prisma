@@ -87,7 +87,6 @@ model ServiceImage {
 
   @@index([service_id])
   @@index([build_status])
-  @@unique([service_id, full_image])
   @@map("service_images")
 }
 

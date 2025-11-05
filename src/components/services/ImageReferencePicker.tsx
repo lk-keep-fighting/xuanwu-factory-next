@@ -69,6 +69,8 @@ export function ImageReferencePicker({
   onChange
 }: ImageReferencePickerProps) {
   const hasOptions = options.length > 0
+  const inputsDisabled = disabled || (!allowCustom && hasOptions)
+  const showInputs = allowCustom || !hasOptions
 
   const optionEntries = useMemo(
     () =>
@@ -185,26 +187,28 @@ export function ImageReferencePicker({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2 space-y-2">
-          <Label className="text-sm font-medium text-gray-700">镜像仓库</Label>
-          <Input
-            value={value.image}
-            onChange={(event) => handleImageChange(event.target.value)}
-            placeholder={imagePlaceholder ?? 'registry/project/service'}
-            disabled={disabled}
-          />
+      {showInputs ? (
+        <div className="grid grid-cols-3 gap-4">
+          <div className="col-span-2 space-y-2">
+            <Label className="text-sm font-medium text-gray-700">镜像仓库</Label>
+            <Input
+              value={value.image}
+              onChange={(event) => handleImageChange(event.target.value)}
+              placeholder={imagePlaceholder ?? 'registry/project/service'}
+              disabled={inputsDisabled}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
+            <Input
+              value={value.tag ?? ''}
+              onChange={(event) => handleTagChange(event.target.value)}
+              placeholder={tagPlaceholder ?? 'latest'}
+              disabled={inputsDisabled}
+            />
+          </div>
         </div>
-        <div className="space-y-2">
-          <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
-          <Input
-            value={value.tag ?? ''}
-            onChange={(event) => handleTagChange(event.target.value)}
-            placeholder={tagPlaceholder ?? 'latest'}
-            disabled={disabled}
-          />
-        </div>
-      </div>
+      ) : null}
     </div>
   )
 }
