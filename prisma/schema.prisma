@@ -21,29 +21,29 @@ model Project {
 }
 
 model Service {
-  id                      String      @id @default(uuid()) @db.Char(36)
-  project_id              String      @db.Char(36)
-  project                 Project     @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  id                      String        @id @default(uuid()) @db.Char(36)
+  project_id              String        @db.Char(36)
+  project                 Project       @relation(fields: [project_id], references: [id], onDelete: Cascade)
   name                    String
-  type                    String      @db.VarChar(32)
-  status                  String      @default("pending") @db.VarChar(32)
+  type                    String        @db.VarChar(32)
+  status                  String        @default("pending") @db.VarChar(32)
   env_vars                Json?
   resource_limits         Json?
   volumes                 Json?
   network_config          Json?
-  git_provider            String?     @db.VarChar(32)
+  git_provider            String?       @db.VarChar(32)
   git_repository          String?
   git_branch              String?
   git_path                String?
-  build_type              String?     @db.VarChar(32)
+  build_type              String?       @db.VarChar(32)
   dockerfile_path         String?
   build_args              Json?
   port                    Int?
   replicas                Int?
   command                 String?
-  auto_deploy             Boolean     @default(false)
+  auto_deploy             Boolean       @default(false)
   built_image             String?
-  database_type           String?     @db.VarChar(32)
+  database_type           String?       @db.VarChar(32)
   version                 String?
   external_port           Int?
   username                String?
@@ -56,9 +56,10 @@ model Service {
   image                   String?
   tag                     String?
   health_check            Json?
-  created_at              DateTime    @default(now()) @db.Timestamp(3)
-  updated_at              DateTime    @updatedAt @db.Timestamp(3)
+  created_at              DateTime      @default(now()) @db.Timestamp(3)
+  updated_at              DateTime      @updatedAt @db.Timestamp(3)
   deployments             Deployment[]
+  images                  ServiceImage[]
 
   @@index([project_id])
   @@index([type])
@@ -66,17 +67,44 @@ model Service {
   @@map("services")
 }
 
-model Deployment {
-  id           String    @id @default(uuid()) @db.Char(36)
-  service_id   String    @db.Char(36)
-  service      Service   @relation(fields: [service_id], references: [id], onDelete: Cascade)
-  status       String    @db.VarChar(32)
-  build_logs   String?   @db.LongText
-  image_tag    String?
-  created_at   DateTime  @default(now()) @db.Timestamp(3)
-  completed_at DateTime? @db.Timestamp(3)
+model ServiceImage {
+  id             String      @id @default(uuid()) @db.Char(36)
+  service_id     String      @db.Char(36)
+  service        Service     @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  image          String      @db.VarChar(512)
+  tag            String      @default("latest") @db.VarChar(191)
+  full_image     String      @db.VarChar(512)
+  digest         String?     @db.VarChar(255)
+  build_number   Int?
+  build_status   String      @default("building") @db.VarChar(32)
+  build_source   String      @default("jenkins") @db.VarChar(32)
+  build_logs     String?     @db.LongText
+  metadata       Json?
+  is_active      Boolean     @default(false)
+  created_at     DateTime    @default(now()) @db.Timestamp(3)
+  updated_at     DateTime    @updatedAt @db.Timestamp(3)
+  deployments    Deployment[]
 
   @@index([service_id])
+  @@index([build_status])
+  @@unique([service_id, full_image])
+  @@map("service_images")
+}
+
+model Deployment {
+  id               String        @id @default(uuid()) @db.Char(36)
+  service_id       String        @db.Char(36)
+  service          Service       @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  service_image_id String?       @db.Char(36)
+  service_image    ServiceImage? @relation(fields: [service_image_id], references: [id], onDelete: SetNull)
+  status           String        @db.VarChar(32)
+  build_logs       String?       @db.LongText
+  image_tag        String?
+  created_at       DateTime      @default(now()) @db.Timestamp(3)
+  completed_at     DateTime?     @db.Timestamp(3)
+
+  @@index([service_id])
+  @@index([service_image_id])
   @@index([status])
   @@map("deployments")
 }

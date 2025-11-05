@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode } from 'lucide-react'
+import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,12 +12,15 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
+import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { serviceSvc } from '@/service/serviceSvc'
 import { projectSvc } from '@/service/projectSvc'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 import { findVolumeTemplate, generateNFSSubpath, type VolumeTemplate } from '@/lib/volume-templates'
+import { cn } from '@/lib/utils'
+import { parseImageReference, formatImageReference } from '@/lib/service-image'
 import { ServiceType } from '@/types/project'
-import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig } from '@/types/project'
+import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus } from '@/types/project'
 
 const STATUS_COLORS: Record<string, string> = {
   running: 'bg-green-500',

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { k8sService } from '@/lib/k8s'
-import type { Service } from '@/types/project'
+import { ServiceType, type Service } from '@/types/project'
 
 const resolveDeploymentTag = (service: Service): string | null => {
   switch (service.type) {
@@ -17,11 +17,29 @@ const resolveDeploymentTag = (service: Service): string | null => {
   }
 }
 
+type DeployRequestPayload = {
+  service_image_id?: string
+}
+
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+
+  let requestedServiceImageId: string | null = null
+
+  try {
+    const rawBody = await request.json()
+    if (rawBody && typeof rawBody === 'object') {
+      const candidate = (rawBody as DeployRequestPayload).service_image_id
+      if (typeof candidate === 'string' && candidate.trim()) {
+        requestedServiceImageId = candidate.trim()
+      }
+    }
+  } catch {
+    // ignore non-JSON payloads
+  }
 
   try {
     const serviceRecord = await prisma.service.findUnique({
@@ -38,14 +56,100 @@ export async function POST(
     }
 
     const { project: projectMeta, ...serviceWithoutProject } = serviceRecord
-
     const namespace = projectMeta?.identifier?.trim()
 
     if (!namespace) {
       return NextResponse.json({ error: '项目缺少编号，无法部署' }, { status: 400 })
     }
 
+    let serviceImageId = requestedServiceImageId
+    let selectedServiceImage: Awaited<ReturnType<typeof prisma.serviceImage.findUnique>> | null = null
+
+    const isApplicationService = (serviceRecord.type ?? '').toLowerCase() === ServiceType.APPLICATION
+
+    if (isApplicationService) {
+      if (serviceImageId) {
+        selectedServiceImage = await prisma.serviceImage.findUnique({ where: { id: serviceImageId } })
+
+        if (!selectedServiceImage || selectedServiceImage.service_id !== id) {
+          return NextResponse.json({ error: '镜像不存在' }, { status: 404 })
+        }
+
+        if ((selectedServiceImage.build_status ?? '').toLowerCase() !== 'success') {
+          return NextResponse.json({ error: '仅可部署构建成功的镜像版本' }, { status: 400 })
+        }
+      } else if (!serviceWithoutProject.built_image) {
+        selectedServiceImage = await prisma.serviceImage.findFirst({
+          where: {
+            service_id: id,
+            build_status: 'success',
+            is_active: true
+          },
+          orderBy: { updated_at: 'desc' }
+        })
+
+        if (!selectedServiceImage) {
+          return NextResponse.json({ error: '请先构建镜像并选择要部署的版本。' }, { status: 400 })
+        }
+
+        serviceImageId = selectedServiceImage.id
+      } else {
+        selectedServiceImage = await prisma.serviceImage.findFirst({
+          where: {
+            service_id: id,
+            full_image: serviceWithoutProject.built_image
+          }
+        })
+
+        if (selectedServiceImage) {
+          serviceImageId = selectedServiceImage.id
+        }
+      }
+
+      if (selectedServiceImage) {
+        const needsBuiltImageSync = serviceWithoutProject.built_image !== selectedServiceImage.full_image
+        const needsActivation = !selectedServiceImage.is_active
+
+        if (needsBuiltImageSync || needsActivation) {
+          try {
+            await prisma.$transaction([
+              prisma.serviceImage.updateMany({
+                where: { service_id: id, id: { not: selectedServiceImage.id } },
+                data: { is_active: false }
+              }),
+              prisma.serviceImage.update({
+                where: { id: selectedServiceImage.id },
+                data: { is_active: true }
+              }),
+              prisma.service.update({
+                where: { id },
+                data: { built_image: selectedServiceImage.full_image }
+              })
+            ])
+
+            selectedServiceImage = {
+              ...selectedServiceImage,
+              is_active: true
+            }
+
+            serviceWithoutProject.built_image = selectedServiceImage.full_image
+          } catch (syncError) {
+            console.error('[Services][Deploy] 同步镜像状态失败:', syncError)
+            return NextResponse.json({ error: '同步镜像状态失败，请稍后重试。' }, { status: 500 })
+          }
+        } else {
+          serviceWithoutProject.built_image = selectedServiceImage.full_image
+        }
+      } else if (!serviceWithoutProject.built_image) {
+        return NextResponse.json({ error: '请先构建镜像后再部署。' }, { status: 400 })
+      }
+    }
+
     const typedService = JSON.parse(JSON.stringify(serviceWithoutProject)) as Service
+
+    if (isApplicationService && !typedService.built_image) {
+      return NextResponse.json({ error: '请先构建镜像后再部署。' }, { status: 400 })
+    }
 
     try {
       await prisma.service.update({
@@ -63,6 +167,7 @@ export async function POST(
       return NextResponse.json({ error: message }, { status: 500 })
     }
 
+    const deploymentImageTag = resolveDeploymentTag(typedService)
     let deploymentRecordId: string | null = null
 
     try {
@@ -70,7 +175,8 @@ export async function POST(
         data: {
           service_id: id,
           status: 'building',
-          image_tag: resolveDeploymentTag(typedService)
+          image_tag: deploymentImageTag ?? undefined,
+          ...(serviceImageId ? { service_image_id: serviceImageId } : {})
         }
       })
 
