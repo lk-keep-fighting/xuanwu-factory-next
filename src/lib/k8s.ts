@@ -13,16 +13,27 @@ import {
 import type { K8sImportCandidate, K8sWorkloadKind } from '@/types/k8s'
 import * as yaml from 'js-yaml'
 
+type NormalizedPortDomain = {
+  host: string
+  prefix?: string
+}
+
 type NormalizedPortConfig = {
   containerPort: number
   servicePort: number
   protocol: 'TCP' | 'UDP'
   nodePort?: number
+  domain?: NormalizedPortDomain
 }
 
 type NormalizedNetworkConfig = {
   serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
   ports: NormalizedPortConfig[]
+}
+
+type IngressRuleConfig = {
+  host: string
+  servicePort: number
 }
 
 type ImageInfo = {
@@ -34,6 +45,7 @@ class K8sService {
   private kc: k8s.KubeConfig
   private appsApi: k8s.AppsV1Api
   private coreApi: k8s.CoreV1Api
+  private networkingApi: k8s.NetworkingV1Api
   private rbacApi: k8s.RbacAuthorizationV1Api
   private namespaceAccessCache = new Set<string>()
   private clusterAccessCache = new Set<string>()
@@ -46,6 +58,7 @@ class K8sService {
 
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api)
+    this.networkingApi = this.kc.makeApiClient(k8s.NetworkingV1Api)
     this.rbacApi = this.kc.makeApiClient(k8s.RbacAuthorizationV1Api)
   }
 
@@ -670,6 +683,44 @@ class K8sService {
       }
 
       yamlDocs.push(yaml.dump(k8sService, { indent: 2, lineWidth: -1 }))
+
+      const ingressRules = this.getIngressRules(normalizedNetwork)
+
+      if (ingressRules.length) {
+        const ingress: k8s.V1Ingress = {
+          apiVersion: 'networking.k8s.io/v1',
+          kind: 'Ingress',
+          metadata: {
+            name: `${service.name}-ingress`,
+            namespace: targetNamespace,
+            labels: {
+              app: service.name,
+              'managed-by': 'xuanwu-platform'
+            }
+          },
+          spec: {
+            rules: ingressRules.map(({ host, servicePort }) => ({
+              host,
+              http: {
+                paths: [
+                  {
+                    path: '/',
+                    pathType: 'Prefix',
+                    backend: {
+                      service: {
+                        name: service.name,
+                        port: { number: servicePort }
+                      }
+                    }
+                  }
+                ]
+              }
+            }))
+          }
+        }
+
+        yamlDocs.push(yaml.dump(ingress, { indent: 2, lineWidth: -1 }))
+      }
     }
 
     // 使用 --- 分隔符连接多个 YAML 文档
@@ -1626,6 +1677,30 @@ class K8sService {
         normalized.nodePort = nodePort
       }
 
+      const domainValue = portRecord['domain']
+      if (domainValue && typeof domainValue === 'object') {
+        const domainRecord = domainValue as Record<string, unknown>
+        const enabledValue = domainRecord['enabled']
+        const enabled = enabledValue === undefined ? true : Boolean(enabledValue)
+        const hostValue = domainRecord['host'] ?? domainRecord['hostname']
+        if (enabled && typeof hostValue === 'string') {
+          const host = hostValue.trim().toLowerCase()
+          if (host) {
+            const prefixValue = domainRecord['prefix']
+            const prefix =
+              typeof prefixValue === 'string' && prefixValue.trim().length
+                ? prefixValue.trim().toLowerCase()
+                : undefined
+            normalized.domain = prefix ? { host, prefix } : { host }
+          }
+        }
+      } else if (typeof domainValue === 'string') {
+        const host = domainValue.trim().toLowerCase()
+        if (host) {
+          normalized.domain = { host }
+        }
+      }
+
       return normalized
     }
 
@@ -2179,12 +2254,161 @@ class K8sService {
     }
   }
 
+  private getIngressRules(config: NormalizedNetworkConfig): IngressRuleConfig[] {
+    const rules: IngressRuleConfig[] = []
+    const seenHosts = new Set<string>()
+
+    for (const port of config.ports) {
+      const host = port.domain?.host?.trim()
+      if (!host) {
+        continue
+      }
+
+      const normalizedHost = host.toLowerCase()
+      if (seenHosts.has(normalizedHost)) {
+        continue
+      }
+
+      seenHosts.add(normalizedHost)
+      rules.push({
+        host: normalizedHost,
+        servicePort: port.servicePort
+      })
+    }
+
+    return rules
+  }
+
+  private async deleteK8sServiceIfExists(name: string, namespace: string): Promise<void> {
+    try {
+      await this.coreApi.deleteNamespacedService({ name, namespace })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        throw error
+      }
+    }
+  }
+
+  private async deleteIngressIfExists(name: string, namespace: string): Promise<void> {
+    try {
+      await this.networkingApi.deleteNamespacedIngress({ name, namespace })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        throw error
+      }
+    }
+  }
+
+  private async syncIngressResources(
+    service: Service,
+    namespace: string,
+    config: NormalizedNetworkConfig
+  ): Promise<void> {
+    const serviceName = service.name?.trim()
+    const targetNamespace = namespace?.trim()
+
+    if (!serviceName || !targetNamespace) {
+      return
+    }
+
+    const ingressName = `${serviceName}-ingress`
+    const rules = this.getIngressRules(config)
+
+    if (!rules.length) {
+      await this.deleteIngressIfExists(ingressName, targetNamespace)
+      return
+    }
+
+    const desiredIngress: k8s.V1Ingress = {
+      apiVersion: 'networking.k8s.io/v1',
+      kind: 'Ingress',
+      metadata: {
+        name: ingressName,
+        namespace: targetNamespace,
+        labels: {
+          app: serviceName,
+          'managed-by': 'xuanwu-platform'
+        }
+      },
+      spec: {
+        rules: rules.map(({ host, servicePort }) => ({
+          host,
+          http: {
+            paths: [
+              {
+                path: '/',
+                pathType: 'Prefix',
+                backend: {
+                  service: {
+                    name: serviceName,
+                    port: { number: servicePort }
+                  }
+                }
+              }
+            ]
+          }
+        }))
+      }
+    }
+
+    let existingIngress: k8s.V1Ingress | null = null
+    try {
+      existingIngress = await this.networkingApi.readNamespacedIngress({
+        name: ingressName,
+        namespace: targetNamespace
+      })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        throw error
+      }
+    }
+
+    if (!existingIngress) {
+      await this.networkingApi.createNamespacedIngress({ namespace: targetNamespace, body: desiredIngress })
+      return
+    }
+
+    const updatedIngress: k8s.V1Ingress = {
+      ...existingIngress,
+      apiVersion: desiredIngress.apiVersion,
+      kind: desiredIngress.kind,
+      metadata: {
+        ...existingIngress.metadata,
+        name: ingressName,
+        namespace: targetNamespace,
+        labels: {
+          ...(existingIngress.metadata?.labels ?? {}),
+          ...(desiredIngress.metadata?.labels ?? {})
+        }
+      },
+      spec: {
+        ...(existingIngress.spec ?? {}),
+        rules: desiredIngress.spec?.rules ?? []
+      }
+    }
+
+    await this.networkingApi.replaceNamespacedIngress({
+      name: ingressName,
+      namespace: targetNamespace,
+      body: updatedIngress
+    })
+  }
+
   private async createServiceFromConfig(
     service: Service,
     namespace: string,
     config: NormalizedNetworkConfig
   ) {
+    const serviceName = service.name?.trim()
+    const targetNamespace = namespace?.trim()
+
+    if (!serviceName || !targetNamespace) {
+      return
+    }
+
     if (!config.ports.length) {
+      await this.deleteK8sServiceIfExists(serviceName, targetNamespace)
+      await this.syncIngressResources(service, targetNamespace, config)
       return
     }
 
@@ -2203,29 +2427,103 @@ class K8sService {
       return servicePort
     })
 
-    const k8sService: k8s.V1Service = {
+    const desiredService: k8s.V1Service = {
+      apiVersion: 'v1',
+      kind: 'Service',
       metadata: {
-        name: service.name,
-        labels: { app: service.name }
+        name: serviceName,
+        namespace: targetNamespace,
+        labels: {
+          app: serviceName,
+          'managed-by': 'xuanwu-platform'
+        }
       },
       spec: {
-        selector: { app: service.name },
+        selector: { app: serviceName },
         ports,
         type: config.serviceType
       }
     }
 
+    let existingService: k8s.V1Service | null = null
     try {
-      await this.coreApi.createNamespacedService({ namespace, body: k8sService })
+      existingService = await this.coreApi.readNamespacedService({
+        name: serviceName,
+        namespace: targetNamespace
+      })
     } catch (error: unknown) {
-      if (this.getStatusCode(error) === 409) {
-        await this.coreApi.replaceNamespacedService({ 
-          name: service.name, 
-          namespace, 
-          body: k8sService 
-        })
+      if (this.getStatusCode(error) !== 404) {
+        throw error
       }
     }
+
+    if (!existingService) {
+      await this.coreApi.createNamespacedService({ namespace: targetNamespace, body: desiredService })
+      await this.syncIngressResources(service, targetNamespace, config)
+      return
+    }
+
+    if (config.serviceType === 'NodePort') {
+      for (const existingPort of existingService.spec?.ports ?? []) {
+        const existingTarget = existingPort.targetPort
+        const matchedPort = ports.find((portDef) => {
+          if (typeof existingTarget === 'number' && typeof portDef.targetPort === 'number') {
+            return existingTarget === portDef.targetPort
+          }
+
+          if (typeof existingPort.port === 'number') {
+            return portDef.port === existingPort.port
+          }
+
+          return false
+        })
+
+        if (matchedPort && matchedPort.nodePort === undefined && typeof existingPort.nodePort === 'number') {
+          matchedPort.nodePort = existingPort.nodePort
+        }
+      }
+    }
+
+    const updatedService: k8s.V1Service = {
+      ...existingService,
+      apiVersion: desiredService.apiVersion,
+      kind: desiredService.kind,
+      metadata: {
+        ...existingService.metadata,
+        name: serviceName,
+        namespace: targetNamespace,
+        labels: {
+          ...(existingService.metadata?.labels ?? {}),
+          ...(desiredService.metadata?.labels ?? {})
+        }
+      },
+      spec: {
+        ...existingService.spec,
+        selector: desiredService.spec?.selector,
+        type: desiredService.spec?.type,
+        ports,
+        clusterIP: existingService.spec?.clusterIP,
+        clusterIPs: existingService.spec?.clusterIPs,
+        ipFamilies: existingService.spec?.ipFamilies,
+        ipFamilyPolicy: existingService.spec?.ipFamilyPolicy,
+        sessionAffinity: existingService.spec?.sessionAffinity,
+        externalIPs: existingService.spec?.externalIPs,
+        externalName: existingService.spec?.externalName,
+        externalTrafficPolicy: existingService.spec?.externalTrafficPolicy,
+        internalTrafficPolicy: existingService.spec?.internalTrafficPolicy,
+        loadBalancerIP: existingService.spec?.loadBalancerIP,
+        loadBalancerSourceRanges: existingService.spec?.loadBalancerSourceRanges,
+        healthCheckNodePort: existingService.spec?.healthCheckNodePort
+      }
+    }
+
+    await this.coreApi.replaceNamespacedService({
+      name: serviceName,
+      namespace: targetNamespace,
+      body: updatedService
+    })
+
+    await this.syncIngressResources(service, targetNamespace, config)
   }
 }
 
