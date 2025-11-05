@@ -102,7 +102,7 @@ export default function ServiceCreateForm({
   onCancel
 }: ServiceCreateFormProps) {
   const [loading, setLoading] = useState(false)
-  const { register, handleSubmit, setValue, watch } = useForm<ServiceFormValues>()
+  const { register, handleSubmit, setValue, watch, unregister } = useForm<ServiceFormValues>()
   const [selectedGitProvider, setSelectedGitProvider] = useState<GitProvider>(GitProvider.GITHUB)
   const [selectedDatabaseType, setSelectedDatabaseType] = useState<DatabaseType>(DatabaseType.MYSQL)
   
@@ -119,9 +119,20 @@ export default function ServiceCreateForm({
   const serviceNameValue = watch('name') as string | undefined
   
   useEffect(() => {
+    if (serviceType !== ServiceType.IMAGE) {
+      unregister('image')
+      unregister('tag')
+      return
+    }
+
     register('image', { required: true })
     register('tag')
-  }, [register])
+
+    return () => {
+      unregister('image')
+      unregister('tag')
+    }
+  }, [register, unregister, serviceType])
   
   useEffect(() => {
     if (serviceType !== ServiceType.IMAGE) {
