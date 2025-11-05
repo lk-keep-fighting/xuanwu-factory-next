@@ -168,6 +168,25 @@ export interface ImageService extends BaseService {
   }
 }
 
+export type ServiceImageStatus = 'pending' | 'building' | 'success' | 'failed'
+
+export interface ServiceImageRecord {
+  id?: string
+  service_id: string
+  image: string
+  tag: string
+  full_image: string
+  digest?: string
+  build_number?: number
+  build_status: ServiceImageStatus
+  build_source?: string
+  build_logs?: string
+  metadata?: Record<string, unknown>
+  is_active?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
 // 统一服务类型
 export type Service = ApplicationService | DatabaseService | ImageService
 
@@ -181,6 +200,8 @@ export type UpdateServiceRequest = Partial<CreateServiceRequest> & { id: string 
 export interface Deployment {
   id?: string
   service_id: string
+  service_image_id?: string
+  service_image?: ServiceImageRecord
   status: 'pending' | 'building' | 'success' | 'failed'
   build_logs?: string
   image_tag?: string

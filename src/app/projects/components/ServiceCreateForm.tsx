@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,10 +15,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent } from '@/components/ui/card'
 import { toast } from 'sonner'
+import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType, DatabaseType, GitProvider, BuildType, Service } from '@/types/project'
-import { Github, Gitlab, Box, Database as DatabaseIcon, Plus, Trash2 } from 'lucide-react'
-import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
+import { Github, Gitlab, Database as DatabaseIcon, Plus, Trash2 } from 'lucide-react'
 
 const extractImageBaseName = (image?: string) => {
   if (!image) return ''
@@ -111,10 +111,41 @@ export default function ServiceCreateForm({
   // 网络配置（镜像服务）
   const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
+  const [imageReference, setImageReference] = useState<ImageReferenceValue>({ optionId: null, image: '', tag: 'latest' })
   
   const imageValue = watch('image') as string | undefined
+  const tagValue = watch('tag') as string | undefined
   const serviceNameValue = watch('name') as string | undefined
   
+  useEffect(() => {
+    register('image', { required: true })
+    register('tag')
+  }, [register])
+  
+  useEffect(() => {
+    if (serviceType !== ServiceType.IMAGE) {
+      return
+    }
+
+    const normalizedTag = tagValue === undefined ? 'latest' : tagValue
+    const nextImage = imageValue ?? ''
+
+    if (tagValue === undefined) {
+      setValue('tag', 'latest')
+    }
+    if (imageValue === undefined) {
+      setValue('image', nextImage)
+    }
+
+    setImageReference((prev) => {
+      const nextTag = normalizedTag ?? ''
+      if (prev.image === nextImage && (prev.tag ?? '') === (nextTag ?? '')) {
+        return prev
+      }
+      return { optionId: null, image: nextImage, tag: nextTag }
+    })
+  }, [imageValue, tagValue, serviceType, setValue])
+
   const getDefaultDomainPrefix = () => {
     if (serviceType === ServiceType.IMAGE) {
       const fromImage = sanitizeDomainLabel(extractImageBaseName(imageValue))
@@ -190,6 +221,12 @@ export default function ServiceCreateForm({
       default:
         return ''
     }
+  }
+
+  const handleImageReferenceChange = (next: ImageReferenceValue) => {
+    setImageReference(next)
+    setValue('image', next.image, { shouldValidate: true })
+    setValue('tag', next.tag ?? '', { shouldValidate: true })
   }
 
   const onSubmit = async (data: ServiceFormValues) => {
@@ -721,25 +758,14 @@ export default function ServiceCreateForm({
           <div className="space-y-4">
             <h3 className="text-sm font-medium text-gray-900">基本配置</h3>
             
-            <div className="grid grid-cols-3 gap-4">
-              <div className="col-span-2 space-y-2">
-                <Label htmlFor="image">镜像名称 *</Label>
-                <Input
-                  id="image"
-                  {...register('image', { required: true })}
-                  placeholder="nginx"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="tag">标签</Label>
-                <Input
-                  id="tag"
-                  {...register('tag')}
-                  placeholder="latest"
-                  defaultValue="latest"
-                />
-              </div>
-            </div>
+            <ImageReferencePicker
+              value={imageReference}
+              onChange={handleImageReferenceChange}
+              label="镜像信息 *"
+              description="输入镜像仓库与标签，例如 nginx:latest 或 registry.local/app:1.0.0"
+              imagePlaceholder="nginx"
+              tagPlaceholder="latest"
+            />
 
             <div className="space-y-2">
               <Label htmlFor="command">启动命令（可选）</Label>

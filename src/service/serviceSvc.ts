@@ -1,4 +1,4 @@
-import type { Service, CreateServiceRequest, UpdateServiceRequest, Deployment } from '@/types/project'
+import type { Service, CreateServiceRequest, UpdateServiceRequest, Deployment, ServiceImageRecord } from '@/types/project'
 
 const API_BASE = '/api/services'
 
@@ -6,6 +6,16 @@ type DeleteServiceResult = {
   success: boolean
   message?: string
   warning?: string
+}
+
+type BuildServiceResponse = {
+  success?: boolean
+  image?: ServiceImageRecord
+  service?: Service
+  build?: {
+    buildNumber?: number
+    durationMs?: number
+  }
 }
 
 /**
@@ -176,15 +186,19 @@ export const serviceSvc = {
   /**
    * 部署服务
    */
-  async deployService(id: string): Promise<{ success: boolean; message?: string }> {
-    const response = await fetch(`${API_BASE}/${id}/deploy`, {
-      method: 'POST'
-    })
+  async deployService(id: string, options?: { serviceImageId?: string }): Promise<{ success: boolean; message?: string }> {
+    const init: RequestInit = { method: 'POST' }
 
+    if (options?.serviceImageId) {
+      init.headers = { 'Content-Type': 'application/json' }
+      init.body = JSON.stringify({ service_image_id: options.serviceImageId })
+    }
+
+    const response = await fetch(`${API_BASE}/${id}/deploy`, init)
     const result = await response.json().catch(() => ({}))
 
     if (!response.ok) {
-      throw new Error((result as { error?: string }).error || 'Failed to deploy service')
+      throw new Error((result as { error?: string }).error || '部署失败')
     }
 
     return result as { success: boolean; message?: string }
@@ -268,6 +282,62 @@ export const serviceSvc = {
     }
 
     return result as Deployment[]
+  },
+
+  /**
+   * 获取服务镜像列表
+   */
+  async getServiceImages(id: string): Promise<ServiceImageRecord[]> {
+    const response = await fetch(`${API_BASE}/${id}/images`)
+    const result = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      const message =
+        result && typeof result === 'object' && 'error' in (result as Record<string, unknown>)
+          ? ((result as { error?: string }).error || '获取镜像列表失败')
+          : '获取镜像列表失败'
+      throw new Error(message)
+    }
+
+    return Array.isArray(result) ? (result as ServiceImageRecord[]) : []
+  },
+
+  /**
+   * 构建应用服务镜像
+   */
+  async buildApplicationService(id: string, payload?: { branch?: string; tag?: string }): Promise<BuildServiceResponse> {
+    const init: RequestInit = { method: 'POST' }
+
+    if (payload && Object.keys(payload).length > 0) {
+      init.headers = { 'Content-Type': 'application/json' }
+      init.body = JSON.stringify(payload)
+    }
+
+    const response = await fetch(`${API_BASE}/${id}/build`, init)
+    const result = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      throw new Error((result as { error?: string }).error || '镜像构建失败')
+    }
+
+    return result as BuildServiceResponse
+  },
+
+  /**
+   * 激活指定镜像
+   */
+  async activateServiceImage(serviceId: string, imageId: string): Promise<{ success: boolean; image?: ServiceImageRecord; service?: Service }> {
+    const response = await fetch(`${API_BASE}/${serviceId}/images/${imageId}/activate`, {
+      method: 'POST'
+    })
+
+    const result = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      throw new Error((result as { error?: string }).error || '镜像选择失败')
+    }
+
+    return result as { success: boolean; image?: ServiceImageRecord; service?: Service }
   },
 
   /**
