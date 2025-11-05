@@ -18,7 +18,8 @@ import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType, DatabaseType, GitProvider, BuildType, Service } from '@/types/project'
-import { Github, Gitlab, Database as DatabaseIcon, Plus, Trash2 } from 'lucide-react'
+import { Github, Gitlab, Database as DatabaseIcon, Plus, Trash2, Box } from 'lucide-react'
+import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 
 const extractImageBaseName = (image?: string) => {
   if (!image) return ''
