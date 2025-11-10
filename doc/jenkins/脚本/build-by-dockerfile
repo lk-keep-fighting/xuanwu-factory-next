@@ -1,0 +1,152 @@
+pipeline {
+  agent any
+  options { timestamps() }
+
+  // 严格使用 Jenkins配置.md 中的字段（参数名与文档一致）
+  parameters {
+    string(name: 'SERVICE_ID', defaultValue: '', description: '平台内部服务 ID（可选）')
+    string(name: 'SERVICE_NAME', defaultValue: '', description: '服务名称（可选）')
+    string(name: 'PROJECT_ID', defaultValue: '', description: '所属项目 ID（可选）')
+    string(name: 'PROJECT_IDENTIFIER', defaultValue: '', description: '项目标识（可选）')
+
+    string(name: 'GIT_REPOSITORY', defaultValue: '', description: 'Git 仓库地址（必填）')
+    string(name: 'GIT_BRANCH', defaultValue: 'main', description: '构建分支')
+    string(name: 'GIT_PATH', defaultValue: '', description: '仓库内相对子路径（可选）')
+    string(name: 'GIT_PROVIDER', defaultValue: '', description: 'Git 提供商标识（可选）')
+
+    string(name: 'DOCKERFILE_PATH', defaultValue: 'Dockerfile', description: 'Dockerfile 路径（可选）')
+    string(name: 'BUILD_TYPE', defaultValue: '', description: '构建方式（dockerfile / nixpacks / buildpacks）（可选）')
+    text(name: 'BUILD_ARGS', defaultValue: '', description: 'JSON 字符串，描述额外的 build-arg（可选）')
+
+    string(name: 'IMAGE_REPOSITORY', defaultValue: '', description: '镜像仓库路径（不含标签）')
+    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: '镜像标签')
+    string(name: 'FULL_IMAGE', defaultValue: '', description: '完整镜像名（{repository}:{tag}，优先）')
+  }
+
+  environment {
+    GIT_CREDENTIALS = 'jenkins-gitlab'
+    // nexus 凭证与镜像仓库地址（可由运维在 Job 配置中覆盖）
+    NEXUS_CREDENTIALS = 'nexus-admin'
+    NEXUS_IMAGE_REPO = 'nexus.aimstek.cn'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        script {
+          def repo = params.GIT_REPOSITORY?.trim()
+          def branch = params.GIT_BRANCH?.trim() ?: 'main'
+          def subpath = params.GIT_PATH?.trim()
+
+          if (!repo) {
+            error 'Missing GIT_REPOSITORY parameter'
+          }
+
+          echo "Checking out ${repo} @ ${branch}"
+          checkout([$class: 'GitSCM', branches: [[name: branch]], userRemoteConfigs: [[url: repo, credentialsId: env.GIT_CREDENTIALS]]])
+
+          if (subpath) {
+            echo "Detected subpath: ${subpath}"
+            dir(subpath) { stash name: 'source' }
+            unstash 'source'
+          }
+        }
+      }
+    }
+
+    stage('Build Image') {
+      steps {
+        script {
+          def image = params.FULL_IMAGE?.trim()
+          if (!image) {
+            def imageRepo = params.IMAGE_REPOSITORY?.trim()
+            if (imageRepo) {
+              // 如果配置了 NEXUS_IMAGE_REPO 且 IMAGE_REPOSITORY 未以其为前缀，则自动追加，默认推送到私有 Nexus
+              if (env.NEXUS_IMAGE_REPO?.trim()) {
+                def firstSeg = imageRepo.tokenize('/').first()
+                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
+                if (firstSeg != nexusHost) {
+                  imageRepo = "${nexusHost}/${imageRepo}"
+                }
+              }
+              image = "${imageRepo}:${params.IMAGE_TAG.trim()}"
+              echo "Constructed FULL_IMAGE: ${image}"
+            } else if (env.NEXUS_IMAGE_REPO?.trim()) {
+              // try to infer image name from SERVICE_NAME, PROJECT_IDENTIFIER or git repo
+              def name = params.SERVICE_NAME?.trim() ?: params.PROJECT_IDENTIFIER?.trim()
+              if (!name) {
+                def git = params.GIT_REPOSITORY?.trim()
+                if (git) { name = git.tokenize('/').last().replace('.git','') }
+              }
+              if (!name) { error 'Cannot infer image name: set IMAGE_REPOSITORY or SERVICE_NAME/PROJECT_IDENTIFIER' }
+              image = "${env.NEXUS_IMAGE_REPO}/${name}:${params.IMAGE_TAG.trim()}"
+              echo "Constructed FULL_IMAGE from NEXUS_IMAGE_REPO: ${image}"
+            } else {
+              error 'IMAGE_REPOSITORY or FULL_IMAGE or NEXUS_IMAGE_REPO is required'
+            }
+          } else {
+            echo "Using FULL_IMAGE: ${image}"
+          }
+
+          // 解析 BUILD_ARGS
+          def buildArgFlags = ''
+          if (params.BUILD_ARGS?.trim()) {
+            try {
+              def parsed = readJSON text: params.BUILD_ARGS
+              parsed.each { k, v -> if (v != null) { def safe = v.toString().replace("'","'\\''"); buildArgFlags += " --build-arg ${k}='${safe}'" } }
+            } catch (e) {
+              echo "BUILD_ARGS invalid JSON, ignoring: ${params.BUILD_ARGS}"
+            }
+          }
+
+          sh "set -euo pipefail; docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
+          env.COMPUTED_IMAGE = image
+        }
+      }
+    }
+
+    stage('Push Image') {
+      when { expression { return env.COMPUTED_IMAGE || params.FULL_IMAGE } }
+      steps {
+        script {
+          def imageToPush = env.COMPUTED_IMAGE ?: params.FULL_IMAGE
+          if (!imageToPush) { error 'No image to push' }
+            // choose credentials: use NEXUS_CREDENTIALS when pushing to configured Nexus repo
+            def registryHost = imageToPush.tokenize('/').first()
+            def credsId = env.NEXUS_CREDENTIALS
+
+            // parse image into registry, repository/name and tag
+            def lastColon = imageToPush.lastIndexOf(':')
+            def lastSlash = imageToPush.lastIndexOf('/')
+            def tag = 'latest'
+            def imageNoTag = imageToPush
+            if (lastColon > -1 && lastColon > lastSlash) {
+              tag = imageToPush.substring(lastColon + 1)
+              imageNoTag = imageToPush.substring(0, lastColon)
+            }
+            def registryAddr = imageNoTag.tokenize('/').first()
+            def dockerName = imageNoTag.contains('/') ? imageNoTag.substring(imageNoTag.indexOf('/') + 1) : imageNoTag
+
+            // use helper function to push
+            PushDockerImage(registryAddr, credsId, dockerName, tag)
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      sh 'docker image prune -f || true'
+    }
+  }
+}
+
+def PushDockerImage(registry_addr,registry_credentials_id,docker_image_name,version){
+    withCredentials([usernamePassword(credentialsId: registry_credentials_id, passwordVariable: 'password', usernameVariable: 'username')]) {
+      sh """
+      docker login -u ${username} -p ${password} ${registry_addr}
+      docker push ${docker_image_name}:${version}
+      docker rmi ${docker_image_name}:${version}
+      """
+    }
+}

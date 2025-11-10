@@ -1,0 +1,823 @@
+pipeline{
+  agent any
+    parameters{
+      string(
+        name: 'PROJECT_NAME', 
+        defaultValue: 'logic-test',
+        description: '项目名称，研发项目名称或交付项目名称'
+      )
+      string(
+        name: 'APP_NAME', 
+        defaultValue: 'logic-ide-0-9', 
+        description: '应用名称，单个应用名称，如果为空则取GIT_URL的最后一个目录名'
+      )
+      string(
+        name: 'SERVICE_PORT', 
+        description: '默认服务端口'
+      )
+      string(
+        name: 'MAIN_MODULE',
+        description: '主模块名称'
+      )
+      string(
+        name: 'JAVA_OPTIONS',
+        description: 'jvm启动参数'
+      )
+      string(
+        name: 'JAVA_CONFIGS',
+        description: 'Spring配置参数'
+      )
+      string(
+        name: 'GIT_URL',
+        defaultValue: 'https://gitlab.aimstek.cn/xuanwu/biz-simulation/logic-test-group/logic-test-jdk17.git',
+        description: 'git仓库地址'
+      )
+      string(
+        name: 'BRANCH',
+        defaultValue: 'master',
+        description: '部署分支,一般为master'
+      )
+      choice(
+        name: 'BUILD_TYPE',
+        choices: ['image', 'jar'],
+        description: '构建模式选择'
+      )
+      string(
+        name: 'MAVEN_BUILD_IMAGE',
+        defaultValue: 'maven:3-openjdk-17-slim',
+        description: 'maven编译镜像'
+      )
+      string(
+        name: 'RUNTIME_IMAGE',
+        defaultValue: 'openjdk:17.0.2-slim',
+        description: '运行时镜像'
+      )
+
+      string(
+        name: 'DEPLOY_PATH',
+        defaultValue: '',
+        description: 'DEPLOY_MODEL为image时,填写为空;为jar时,填写jar包路径'
+      )
+
+      string(
+        name: 'DEPLOY_HOST',
+        defaultValue: '192.168.44.201',
+        description: '部署主机，image模式填写k8s主机IP，jar模式填写jar包所在主机IP，默认值为192.168.44.201'
+      )
+
+      booleanParam(
+        name: 'IS_PRO', 
+        defaultValue: false, 
+        description: '是否为生产版本?'
+      )
+      booleanParam(
+        name: 'ENFORCE_BUILD', 
+        defaultValue: true, 
+        description: '无论是否有修改，都强制构建项目和镜像?'
+      )
+
+      booleanParam(
+        name: 'IS_INIT', 
+        defaultValue: false, 
+        description: '是否初始化项目'
+      )
+
+      booleanParam(
+        name: 'IS_REMOVE', 
+        defaultValue: false, 
+        description: '是否删除项目'
+      )
+
+      extendedChoice( 
+        defaultValue: '上传制品', 
+        description: '', 
+        multiSelectDelimiter: ',', 
+        name: 'OPEN_THE_FUNCTION', 
+        quoteValue: false, 
+        saveJSONParameterToFile: false, 
+        type: 'PT_CHECKBOX', 
+        value:'审查代码,上传制品', 
+        visibleItemCount: 10
+      )
+      string(
+        name: 'ENV_ID', 
+        defaultValue: '0',
+        description: '玄武工厂中配置的环境ID'
+      )
+  }
+  environment{
+      //nexus凭证
+      NEXUS_CREDENTIALS = "nexus-admin"
+      //nexus查询界面地址
+      NEXUS_WEB = "https://nexus.aimstek.cn"
+      //nexus镜像仓库地址
+      NEXUS_IMAGE_REPO = "nexus.aimstek.cn"
+      //nexus二进制仓库地址
+      NEXUS_RAW_REPO = "https://nexus.aimstek.cn/repository/raw-hosted"
+
+      //sanor服务端地址：
+      SANOR_SERVER = "http://192.168.51.250:9000"
+      
+      //飞书通知群webhook地址
+      FEI_SHU_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/d01350c4-4f39-45dd-a9be-a8291fd722bc"
+      // 玄武工厂部署记录
+      XUANWU_SAVE_DEPLOY_LOG_URL = "http://api.xuanwu-factory.dev.aimstek.cn/api/logic/run/saveDeployLog"
+      //源码仓库地址
+      GIT_URL = "${params.GIT_URL}"
+      //应用名称
+      APP_NAME = "${params.APP_NAME ? params.APP_NAME : params.GIT_URL.tokenize('/').last().replace('.git', '')}"
+      //构建环境名称
+      MAVEN_BUILD_IMAGE = "${params.MAVEN_BUILD_IMAGE}"
+      //运行时环境名称
+      RUNTIME_IMAGE = "${params.RUNTIME_IMAGE}"
+      //玄武工厂中配置的环境ID，用于回调更新
+      ENV_ID = "${params.ENV_ID}"
+      //项目名称：
+      PROJECT_NAME = "${params.PROJECT_NAME ? params.PROJECT_NAME : params.GIT_URL.tokenize('/').last().replace('.git', '')}"
+      //项目中源码路径
+      SOURCE_DIR="${params.MAIN_MODULE ? './' + params.MAIN_MODULE : '.'}"
+      //仓库访问凭证，请将gitlab用户名jenkins添加到仓库访问者中，或开发者
+      CREDENTIALS_ID = "jenkins-gitlab"
+      //代码分支
+      BRANCH = "${params.BRANCH}"
+	    //项目版本号：入参为空时，以源码中指定版本为准
+      PROJECT_VERSION = "0.0.1.1"
+      //构建版本号
+      BUILD_VERSION = "0"
+      //项目构建版本号
+      PROJECT_BUILD_VERSION = "0.0.1.1.1"
+
+      IS_PRO = "${params.IS_PRO}"
+      //是否强制构建
+      ENFORCE_BUILD = "${params.ENFORCE_BUILD}"
+      //代码变更提交记录
+      CHANGE_LOGS = "* No new changes"
+      //最新的提交记录ID
+      LAST_COMMIT_ID="无"
+      //镜像名称，构建时拼接
+      PROJECT_SERVICES_IMAGES = "无"
+
+      ERROR_MSG = "无"
+  }
+
+  stages{
+    stage("判断是否删除") {
+      steps{
+        script{
+          def is_remove = params.IS_REMOVE
+          if(is_remove){
+            Log('IS_REMOVE为true，开始删除项目')
+            RemoveK8sResources(params.DEPLOY_HOST,params.PROJECT_NAME,params.APP_NAME,is_remove)
+            Log('删除项目完成')
+            currentBuild.result = 'SUCCESS'
+            return
+          }
+        }
+      }
+    }
+    stage("拉取源码") {
+      when {
+        expression { 
+          IS_CONTINUE() 
+        } 
+      }
+      steps{
+        git branch: "${BRANCH}",  credentialsId: "${CREDENTIALS_ID}", url: "${GIT_URL}"
+        script{
+          def passedBuilds = []
+          LastSuccessfulBuild(passedBuilds, currentBuild);
+          def logs = GetChangeLog(passedBuilds)
+          CHANGE_LOGS = "${logs}"
+          def timeStamp = Calendar.getInstance().getTime().format('yyMMdd',TimeZone.getTimeZone('Asia/Shanghai'))
+          def commitId = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          LAST_COMMIT_ID = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+          BUILD_VERSION = "${timeStamp}-${commitId}"
+          Log("BUILD_VERSION:${BUILD_VERSION}")
+        }
+      }
+    }
+    
+    stage("准备环境") {
+      when {
+        expression { 
+          IS_CONTINUE() 
+        } 
+      }
+      steps{
+        Log("==================================================================\n"+
+          "运行环境: BUILD_TAG[${BUILD_TAG}]  WORKSPACE[${WORKSPACE}] \n"+
+          "项目名称：${PROJECT_NAME} \n"+
+          "应用名称：${APP_NAME} \n"+
+          "变革日志${CHANGE_LOGS} \n"+
+          "仓库地址：${GIT_URL} \n"+
+          "分支名称：${BRANCH} \n"+
+          "版本号：${PROJECT_VERSION} \n"+
+          "凭证Id: ${CREDENTIALS_ID} \n"+
+          "制品库地址: ${NEXUS_RAW_REPO} \n"+
+          "是否强制构建：${ENFORCE_BUILD} \n" +
+          "构建步骤选择：${params.OPEN_THE_FUNCTION} \n"+
+          "=================================================================="
+        )
+      }
+    }
+
+    stage("构建项目") {
+      when {
+        expression { 
+          HaveBuilt() && IS_CONTINUE()
+        } 
+      }
+      steps {
+        BuildMavenProject()
+        ReadMavenProjectVersion()
+      }
+    }
+
+    stage("审查代码"){
+      when { 
+        expression { 
+         HaveBuilt() && params.OPEN_THE_FUNCTION.contains("审查代码") && IS_CONTINUE()
+        } 
+      }
+      steps{
+        DetectionJavaCodeBySonar()
+      }
+    }
+
+    stage("上传制品"){
+      when { 
+        expression { 
+          HaveBuilt() && params.OPEN_THE_FUNCTION.contains("上传制品") && IS_CONTINUE() 
+        } 
+      }
+      steps{
+        script {
+          if (params.BUILD_TYPE == 'jar') {
+            PushRawJar()
+          } else {
+            BuildPushDockerImageForJava()
+          }
+        }
+      }
+    }
+
+    stage('Deploy') {
+      when {
+        expression { 
+          IS_CONTINUE() 
+        } 
+      }
+      steps {
+        script{
+          def project_name = params.PROJECT_NAME
+          def app_name = params.APP_NAME
+          def deploy_model = params.BUILD_TYPE
+          def deploy_resource_url = "${PROJECT_SERVICES_IMAGES}"
+          def deploy_path = params.DEPLOY_PATH
+          def deploy_host = params.DEPLOY_HOST
+          def service_port = params.SERVICE_PORT
+          def is_init= params.IS_INIT
+          if(deploy_model == 'image'){
+            DeployImageToK8s(deploy_host,project_name,app_name,deploy_resource_url,is_init,service_port)
+          }else if(deploy_model == 'jar'){
+            DeployJarToK8s(deploy_host,project_name,app_name,deploy_resource_url,deploy_path)
+          }else{
+            Log("不支持的部署模型：${deploy_model}")
+          }
+        }
+      }
+    }
+  }
+  post{
+      always{
+        script{
+          def userName = GetUserName()
+          //构建名称 
+          currentBuild.displayName = "#${BUILD_NUMBER}-${BRANCH}-${userName}"
+          if(IS_PRO=='true'){
+            currentBuild.displayName = "PRO-"+currentBuild.displayName
+          }
+          //构建描述
+          currentBuild.description = "${PROJECT_BUILD_VERSION}"
+
+          def remark="发布步骤包含：${ params.OPEN_THE_FUNCTION}"
+          SendToFeiShu(FEI_SHU_URL,remark)
+          SendLogToXuanwu(PROJECT_BUILD_VERSION)
+        }
+      }
+      success {
+        cleanWs()
+      }
+  }
+}
+
+def HaveBuilt(){
+  return ENFORCE_BUILD =='true'  || CHANGE_LOGS != "* No new changes"
+}
+def IS_CONTINUE(){
+  Log('是否为删除')
+  Log(params.IS_REMOVE)
+  return params.IS_REMOVE != true
+}
+
+// JAVA Begin =================================================================
+def ReadMavenProjectVersion(){
+  script{
+    def props = readProperties  file:"${SOURCE_DIR}/target/maven-archiver/pom.properties"
+    def module_version = props['version']
+    def module_artifactId = props['artifactId']
+    Log("源码中读取[pom.artifactId]:${module_artifactId},[pom.version]：${module_version}")
+    //PROJECT_NAME = "${pom.artifactId}"
+    PROJECT_VERSION = "${module_version}"
+    PROJECT_BUILD_VERSION = "${module_version}.${BUILD_VERSION}"
+  }
+}
+def BuildMavenProject(){
+  script {
+    def mavenImage = params.MAVEN_BUILD_IMAGE ?: 'maven:3-openjdk-17-slim'
+    docker.image(mavenImage).inside('-u root -v /root/.m2:/root/.m2')
+    {
+      // Log("源码编译打包 ${SOURCE_DIR}")
+      Log("更目录触发打包 ./")
+      sh '''
+        pwd
+        java -version
+        mvn -version
+        cd ./
+        mvn clean compile package -Dmaven.test.skip=true
+      '''
+    }
+  }
+}
+
+def DetectionJavaCodeBySonar(){
+  script{
+    withSonarQubeEnv('sonarqube') {
+      docker.image('sonarsource/sonar-scanner-cli').inside('-v /var/run/docker.sock:/var/run/docker.sock --entrypoint="" --net bridge'){
+        sh """
+        echo sonar.projectKey=${APP_NAME}-${PROJECT_NAME} > sonar-project.properties
+        echo sonar.projectName=${APP_NAME}/${PROJECT_NAME} >> sonar-project.properties
+        echo sonar.projectVersion=${PROJECT_VERSION} >> sonar-project.properties
+        echo sonar.language=java >> sonar-project.properties
+        echo sonar.sourceEncoding=UTF-8 >> sonar-project.properties
+        echo sonar.sources=${SOURCE_DIR} >> sonar-project.properties
+        echo sonar.java.binaries=${SOURCE_DIR}/target/classes >> sonar-project.properties
+        echo sonar.exclusions=*.pb >> sonar-project.properties
+        echo sonar.branch.name=${BRANCH} >> sonar-project.properties
+
+        sonar-scanner
+        """
+      }
+    }
+  }
+}
+
+def PushRawJar(){
+  docker.image('curlimages/curl:latest').inside(''){
+    def props = readProperties  file:"${SOURCE_DIR}/target/maven-archiver/pom.properties"
+    def module_version = props['version']
+    def module_artifactId = props['artifactId']
+    def jar_filePath="${SOURCE_DIR}/target/${module_artifactId}-${module_version}.jar"
+    PushRawArtifactsByApi(NEXUS_RAW_REPO,NEXUS_CREDENTIALS,jar_filePath,"${PROJECT_NAME}/${APP_NAME}/${APP_NAME}-${PROJECT_BUILD_VERSION}.jar")
+    Log("IS_PRO:${IS_PRO}")
+    if(IS_PRO=='true'){
+      PushRawArtifactsByApi(NEXUS_RAW_REPO,NEXUS_CREDENTIALS,jar_filePath,"${PROJECT_NAME}/${APP_NAME}/${APP_NAME}-${PROJECT_VERSION}.jar")
+    }
+  }
+}
+
+def CreateDockerfileForJava(dockerfile_path, mainModule="", javaOptions = "", javaConfigs = ""){
+  // 使用""" 而不用 ''' 是为了在cat << EOF中使用变量
+  // openjdk:8-jre-alpine               84.9MB
+  // openjdk:11.0.7-jre-slim            204MB
+  // openjdk:17.0.2-slim                408MB
+  // joengenduvel/jre17:alpine3.14      60.7MB
+  sh """
+  rm -f ${dockerfile_path}
+(
+cat << EOF
+FROM ${RUNTIME_IMAGE}
+ARG JAR_FILE="target/*.jar"
+ADD \$``{JAR_FILE} /opt/application.jar
+ARG CONF_FILE="src/main/resources/application*"
+ADD \$``{CONF_FILE} /opt/config/
+ENV JAVA_OPTIONS="${javaOptions}"
+ENV JAVA_CONFIGS="${javaConfigs}"
+ENTRYPOINT ["sh","-c","java  \$``{JAVA_OPTIONS} --add-opens=java.base/java.lang=ALL-UNNAMED -Djava.security.egd=file:/dev/./urandom -jar /opt/application.jar --spring.config.location=/opt/config/ \$``{JAVA_CONFIGS}"]
+EOF
+) > ${dockerfile_path}
+cat ${dockerfile_path}
+  """
+}
+
+def BuildDockerImageForJava(docker_file,docker_image,version){
+  sh "docker build -f ${docker_file} -t ${docker_image}:${version} ${SOURCE_DIR}"
+}
+
+def BuildPushDockerImageForJava(){
+  script{
+    def dockerfile_path="${SOURCE_DIR}/Dockerfile"
+    CreateDockerfileForJava(dockerfile_path,params.MAIN_MODULE,params.JAVA_OPTIONS,params.JAVA_CONFIGS)
+    def dockerignore_path="${SOURCE_DIR}/.dockerignore"
+    CreateDockerIgnore(dockerignore_path)
+    def docker_image_name = "${NEXUS_IMAGE_REPO}/${PROJECT_NAME}/${APP_NAME}"
+    def props = readProperties  file:"${SOURCE_DIR}/target/maven-archiver/pom.properties"
+    def module_version = props['version']
+    def module_artifactId = props['artifactId']
+    BuildDockerImageForJava(dockerfile_path,docker_image_name,PROJECT_BUILD_VERSION)
+    
+    if(IS_PRO=='true'){
+      def docker_image_name_pro = "${NEXUS_IMAGE_REPO}/${PROJECT_NAME}/${APP_NAME}"
+      BuildDockerImageForJava(dockerfile_path,docker_image_name_pro,module_version)
+      PushDockerImage(NEXUS_IMAGE_REPO,NEXUS_CREDENTIALS,docker_image_name_pro,PROJECT_VERSION)
+      PROJECT_SERVICES_IMAGES = "${docker_image_name_pro}:${PROJECT_VERSION}"
+    }
+    PushDockerImage(NEXUS_IMAGE_REPO,NEXUS_CREDENTIALS,docker_image_name,PROJECT_BUILD_VERSION)
+    PROJECT_SERVICES_IMAGES = "${docker_image_name}:${PROJECT_BUILD_VERSION}"
+  }
+}
+
+// JAVA End =================================================================
+
+
+
+
+def Log(level,message) {
+  echo "[${level}] ${message}"
+}
+
+def Log(message) {
+  Log("INFO",message)
+}
+
+def PushRawArtifactsByApi(registry_raw_addr,registry_credentials_id,source_filename,target_filename){
+  withCredentials([usernamePassword(credentialsId: registry_credentials_id, passwordVariable: 'password', usernameVariable: 'username')]) {
+        sh "curl -v -u ${username}:${password} --upload-file ${source_filename} ${registry_raw_addr}/${target_filename}"
+    }
+}
+
+def PushDockerImage(registry_addr,registry_credentials_id,docker_image_name,version){
+    withCredentials([usernamePassword(credentialsId: registry_credentials_id, passwordVariable: 'password', usernameVariable: 'username')]) {
+      sh """
+      docker login -u ${username} -p ${password} ${registry_addr}
+      docker push ${docker_image_name}:${version}
+      docker rmi ${docker_image_name}:${version}
+      """
+    }
+}
+
+def GetServer(ip){
+    def remote = [:]
+    remote.name = "server-${ip}"
+    remote.host = ip
+    remote.port = 22
+    remote.allowAnyHosts = true
+    withCredentials([usernamePassword(credentialsId: ip, passwordVariable: 'password', usernameVariable: 'username')]) {
+        remote.user = "${username}"
+        remote.password = "${password}"
+    }
+    return remote
+}
+
+def CreateDockerIgnore(dockerignore_path)
+{
+  sh """
+  rm -f ${dockerignore_path}
+(
+cat << EOF
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+
+# macOS (optional)
+.DS_Store
+
+# Visual Studio Code (optional)
+.vscode
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+
+# Node.js Tools for Visual Studio
+.ntvs_analysis.dat
+node_modules/
+/.pnp
+.pnp.js
+.pnp.cjs
+.yarn/cache
+.yarn/unplugged
+.yarn/install-state.gz
+EOF
+) > ${dockerignore_path}
+    """
+}
+
+def SendToFeiShu(feiShuUrl,remark){
+    script{
+      def color="green"
+      def buildResult="成功 ✅"
+      if(currentBuild.result != 'SUCCESS'){
+          color="red"
+          buildResult= "失败 ❌"+ ERROR_MSG
+      }
+      def timeStamp = Calendar.getInstance().getTime().format('yyyy-MM-dd HH:mm:ss',TimeZone.getTimeZone('Asia/Shanghai'))
+      def userName = GetUserName()
+      def message = "- **完成时间**：${timeStamp}\\n- **任务名称**：${JOB_NAME}\\n- **构建版本号**：${BUILD_VERSION}\\n- **任务版本**：${PROJECT_VERSION}\\n- **项目名称**：${PROJECT_NAME}\\n- **应用名称**：${APP_NAME}\\n- **源码分支**：${BRANCH}\\n- **构建类型**：${BUILD_TYPE}\\n- **定版发布**：${IS_PRO}\\n- **构建发起**：${userName}\\n- **持续时间**：${currentBuild.durationString}\\n- **完整镜像**：${PROJECT_SERVICES_IMAGES}\\n- **更新记录**：\\r${CHANGE_LOGS}\\n- **备注**：\\r${remark}\\n- **构建结果**：\\r${buildResult}"
+      docker.image('curlimages/curl:latest').inside(''){
+        sh """
+            curl -X POST -H "Content-Type: application/json" \\
+            -d '{
+                    "msg_type": "interactive",
+                    "card": {
+                        "config": {
+                            "wide_screen_mode": true
+                        },
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "${message}"
+                            },
+                            {
+                                "tag": "hr"
+                            },
+                            {
+                                "actions": [
+                                  {
+                                        "tag": "button",
+                                        "text": {
+                                            "content": "镜像地址",
+                                            "tag": "plain_text"
+                                        },
+                                        "type": "primary",
+                                        "url": "${NEXUS_WEB}/#browse/browse:docker-hosted:v2%2F${PROJECT_NAME}%2F${APP_NAME}%2Ftags"
+                                    },
+                                    {
+                                        "tag": "button",
+                                        "text": {
+                                            "content": "打包制品",
+                                            "tag": "plain_text"
+                                        },
+                                        "type": "primary",
+                                        "url": "${NEXUS_WEB}/#browse/browse:raw-hosted:${PROJECT_NAME}%2F${APP_NAME}"
+                                    },
+                                    {
+                                        "tag": "button",
+                                        "text": {
+                                            "content": "代码审核结果",
+                                            "tag": "plain_text"
+                                        },
+                                        "type": "primary",
+                                        "url": "${SANOR_SERVER}/dashboard?id=${APP_NAME}-${PROJECT_NAME}"
+                                    },
+                                    {
+                                        "tag": "button",
+                                        "text": {
+                                          "content": "查看日志",
+                                          "tag": "plain_text"
+                                        },
+                                        "type": "primary",
+                                        "url": "${BUILD_URL}console"
+                                    }
+                                ],
+                                "tag": "action"
+                            }
+                        ],
+                        "header": {
+                            "template": "${color}",
+                            "title": {
+                            "content": "【${PROJECT_NAME}】${BUILD_NUMBER} 构建${buildResult}",
+                            "tag": "plain_text"
+                            }
+                        }
+                    }
+                }' \\
+                ${feiShuUrl}
+        """
+      }
+  }
+}
+
+def SendLogToXuanwu(buildVersion){
+    script{
+      def userName = GetUserName()
+      def duration = currentBuild.durationString
+      def buildResult="成功"
+      if(currentBuild.result != 'SUCCESS'){
+          buildResult= "失败:"+ ERROR_MSG
+      }
+      docker.image('curlimages/curl:latest').inside(''){
+        sh """
+            curl -X POST -H "Content-Type: application/json" \\
+            -d '{
+                    "buildVersion": "${buildVersion}",
+                    "JOB_NAME":"${JOB_NAME}",
+                    "changeLogs":"${CHANGE_LOGS}",
+                    "branchName":"${BRANCH}",
+                    "userName":"${userName}",
+                    "duration":"${duration}",
+                    "lastCommitId":"${LAST_COMMIT_ID}",
+                    "result":"${buildResult}",
+                    "buildLog":"${BUILD_URL}console",
+                    "imageName":"${PROJECT_SERVICES_IMAGES}",
+                    "isRemove":"${IS_REMOVE}",
+                    "envId":"${ENV_ID}"
+                }' \\
+                ${XUANWU_SAVE_DEPLOY_LOG_URL}
+        """
+      }
+  }
+}
+
+
+def LastSuccessfulBuild(passedBuilds, build) {
+    if ((build != null) && (build.result != 'SUCCESS')) {
+        passedBuilds.add(build)
+        LastSuccessfulBuild(passedBuilds, build.getPreviousBuild())
+    }
+}
+
+def GetChangeLog(passedBuilds) {
+    def log = ""
+    for (int x = 0; x < passedBuilds.size(); x++) {
+        def currentBuild = passedBuilds[x];
+        def changeLogSets = currentBuild.rawBuild.changeSets
+        for (int i = 0; i < changeLogSets.size(); i++) {
+            def entries = changeLogSets[i].items
+            for (int j = 0; j < entries.length; j++) {
+                def entry = entries[j]
+                def commitTime = new Date(entry.timestamp).format("yyyy-MM-dd HH:mm:ss",TimeZone.getTimeZone('Asia/Shanghai'))
+                log += "[${commitTime} by ${entry.author}] : ${entry.msg}\\r"
+            }
+        }
+    }
+    if (!log) 
+    {        
+      log = "* No new changes"
+    }
+    return log;
+}
+
+def GetUserName(){
+  def specificCause = currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')
+  if (specificCause) {
+    return specificCause.userName
+  }
+  return "unknown"
+}
+
+def DeployImageToK8s(k8s_serverIp,k8s_namespace,app_name,image_name,is_init,service_port){
+  script{
+    def remote = GetServer(k8s_serverIp)
+    Log('开始部署镜像 '+image_name)
+    if(is_init){
+      Log('初始化部署')
+      def dploy_script = "kubectl create deployment ${app_name} --image=${image_name} -n ${k8s_namespace}"
+      Log(dploy_script)
+      try{
+        sshCommand remote: remote, command: dploy_script
+      }catch(e){
+        ERROR_MSG = e.toString()
+        Log('初始化部署失败:'+ERROR_MSG)
+        throw e
+      }
+      // 如果SERVICE_PORT有值，则创建同名的K8s服务，使用集群ip模式
+      if(service_port?.trim()){
+        Log('SERVICE_PORT有值，开始创建服务')
+        def service_script = "kubectl create service clusterip ${app_name} --tcp=${service_port}:${service_port} -n ${k8s_namespace}"
+        Log(service_script)
+        try{
+          sshCommand remote: remote, command: service_script
+          Log('服务创建成功')
+        }catch(e){
+          def errorMsg = e.toString()
+          // 服务可能已经存在，此时忽略错误继续
+          if(errorMsg.contains('already exists')){
+            Log('服务已存在，跳过创建')
+          }else{
+            ERROR_MSG = errorMsg
+            Log('服务创建失败:'+ERROR_MSG)
+            throw e
+          }
+        }
+        // 创建独立Ingress资源
+          Log('开始创建独立Ingress资源')
+          def ingress_namespace = "${k8s_namespace}"
+          def ingress_name = "${app_name}-ingress"
+          def ingress_host = "${app_name}.${k8s_namespace}.dev.aimstek.cn"
+          def ingress_script = """kubectl create ingress ${ingress_name} \\
+            --namespace ${ingress_namespace} \\
+            --class nginx \\
+            --rule=${ingress_host}/*=${app_name}:${service_port}"""
+          Log(ingress_script)
+          try{
+            sshCommand remote: remote, command: ingress_script
+            Log('独立Ingress创建成功')
+          }catch(e){
+            def errorMsg = e.toString()
+            if(errorMsg.contains('already exists')){
+              Log('Ingress已存在，跳过创建')
+            }else{
+              ERROR_MSG = errorMsg
+              Log('Ingress创建失败:'+ERROR_MSG)
+              throw e
+            }
+          }
+      }
+    }else{
+      // 修改逻辑：当更新失败时重启部署，而不是创建新部署
+      def dploy_or_restart_script = "(kubectl set image deploy ${app_name} ${app_name}=${image_name} -n ${k8s_namespace} | grep updated) || kubectl rollout restart deployment ${app_name} -n ${k8s_namespace}"
+      Log(dploy_or_restart_script)
+      try{
+        sshCommand remote: remote, command: dploy_or_restart_script
+      }catch(e){
+        ERROR_MSG = e.toString()
+        Log('更新部署失败:'+ERROR_MSG)
+        throw e
+      }
+    }
+    Log('部署镜像完成')
+    def rollout_script = "kubectl rollout status deployment ${app_name} -n ${k8s_namespace}"
+    Log(rollout_script)
+    sshCommand remote: remote, command: rollout_script
+    Log('滚动更新完成')
+  }
+}
+
+// 在DeployImageToK8s函数后添加以下删除脚本函数
+def RemoveK8sResources(k8s_serverIp,k8s_namespace,app_name,is_remove){
+  script{
+    if(is_remove){
+      Log('IS_REMOVE为true，开始清理Kubernetes资源')
+      def remote = GetServer(k8s_serverIp)
+      // 先删除关联的Ingress资源（如果存在）
+      try{
+        def delete_ingress_script = "kubectl delete ingress ${app_name}-ingress -n ${k8s_namespace} --ignore-not-found=true"
+        Log(delete_ingress_script)
+        sshCommand remote: remote, command: delete_ingress_script
+        Log('关联Ingress删除完成')
+      }catch(e){
+        Log('Ingress删除过程中出现错误，但继续执行删除服务: '+e.toString())
+      }
+      
+      // 先删除服务（如果存在）
+      try{
+        def delete_service_script = "kubectl delete service ${app_name} -n ${k8s_namespace} --ignore-not-found=true"
+        Log(delete_service_script)
+        sshCommand remote: remote, command: delete_service_script
+        Log('服务删除完成')
+      }catch(e){
+        Log('服务删除过程中出现错误，但继续执行删除部署: '+e.toString())
+      }
+      
+      // 再删除部署
+      try{
+        def delete_deployment_script = "kubectl delete deployment ${app_name} -n ${k8s_namespace} --ignore-not-found=true"
+        Log(delete_deployment_script)
+        sshCommand remote: remote, command: delete_deployment_script
+        Log('部署删除完成')
+      }catch(e){
+        ERROR_MSG = e.toString()
+        Log('部署删除失败:'+ERROR_MSG)
+        throw e
+      }
+      
+      Log('Kubernetes资源清理完成')
+    }else{
+      Log('IS_REMOVE不为true，跳过资源清理')
+    }
+  }
+}
+
+def DeployJarToK8s(k8s_serverIp,k8s_namespace,app_name,jar_url,jar_path){
+  script{
+    // def remote = GetServer(k8s_serverIp)
+    // def dploy_script = "kubectl set image deployment ${app_name} ${app_name}=${jar_url} --image-pull-policy=IfNotPresent -n ${k8s_namespace}"
+    // Log(dploy_script)
+    // sshCommand remote: remote, command: dploy_script
+    Log('todo: 部署jar包')
+  }
+}
+// Common end   =================================================================
