@@ -498,7 +498,8 @@ export default function ServiceDetailPage() {
         const parsedBuiltImage = parseImageReference(data.built_image)
         setImagePickerValue({ optionId: null, image: parsedBuiltImage.image, tag: parsedBuiltImage.tag })
         setSelectedServiceImageId(null)
-        loadServiceImages()
+        // 直接调用 loadServiceImages 而不依赖它，避免循环依赖
+        void loadServiceImages()
       } else {
         setServiceImages([])
         setSuccessfulServiceImages([])
@@ -521,7 +522,7 @@ export default function ServiceDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [initializeNetworkState, loadServiceImages, projectId, router, serviceId])
+  }, [initializeNetworkState, projectId, router, serviceId])
 
   const loadDeployments = useCallback(async (showToast = false) => {
     if (!serviceId) return
@@ -596,8 +597,9 @@ export default function ServiceDetailPage() {
   }, [serviceId])
 
   useEffect(() => {
-    loadService()
-  }, [loadService])
+    void loadService()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceId])
 
   useEffect(() => {
     if (service?.type === ServiceType.APPLICATION) {
@@ -616,22 +618,24 @@ export default function ServiceDetailPage() {
     setLogs('')
     setLogsError(null)
     setDeploymentsLoading(true)
-    loadDeployments()
-  }, [loadDeployments, serviceId])
+    void loadDeployments()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceId])
 
   useEffect(() => {
     if (activeTab === 'deployments') {
-      loadDeployments()
+      void loadDeployments()
     }
 
     if (activeTab === 'logs' && !hasLoadedLogs) {
-      loadLogs()
+      void loadLogs()
     }
     
     if (activeTab === 'yaml' && !yamlContent) {
-      loadYAML()
+      void loadYAML()
     }
-  }, [activeTab, hasLoadedLogs, loadDeployments, loadLogs, loadYAML, yamlContent])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, hasLoadedLogs, yamlContent])
 
   // 启动服务
   const handleStart = async () => {
