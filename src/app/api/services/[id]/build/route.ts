@@ -172,8 +172,12 @@ export async function POST(
     FULL_IMAGE: fullImage
   }
 
+  // only pass GIT_PATH when it's a meaningful subpath (avoid passing '/' or empty defaults)
   if (serviceRecord.git_path) {
-    parameters.GIT_PATH = serviceRecord.git_path
+    const rawGitPath = String(serviceRecord.git_path).trim()
+    if (rawGitPath && rawGitPath !== '/' && rawGitPath !== '.' && rawGitPath !== './') {
+      parameters.GIT_PATH = rawGitPath
+    }
   }
   if (serviceRecord.git_provider) {
     parameters.GIT_PROVIDER = serviceRecord.git_provider

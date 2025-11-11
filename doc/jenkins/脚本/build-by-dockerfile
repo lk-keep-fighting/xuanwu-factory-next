@@ -36,7 +36,9 @@ pipeline {
         script {
           def repo = params.GIT_REPOSITORY?.trim()
           def branch = params.GIT_BRANCH?.trim() ?: 'main'
-          def subpath = params.GIT_PATH?.trim()
+          // persist normalized subpath into env.BUILD_SUBPATH so it's visible across stages
+          env.BUILD_SUBPATH = ''
+          def rawSubpath = params.GIT_PATH?.trim()
 
           if (!repo) {
             error 'Missing GIT_REPOSITORY parameter'
@@ -45,10 +47,18 @@ pipeline {
           echo "Checking out ${repo} @ ${branch}"
           checkout([$class: 'GitSCM', branches: [[name: branch]], userRemoteConfigs: [[url: repo, credentialsId: env.GIT_CREDENTIALS]]])
 
-          if (subpath) {
-            echo "Detected subpath: ${subpath}"
-            dir(subpath) { stash name: 'source' }
-            unstash 'source'
+          if (rawSubpath) {
+            // normalize subpath: remove leading/trailing slashes and ignore current-dir indicators
+            // so we avoid scanning the entire filesystem (which can cause OOM during archiving).
+            def normalized = rawSubpath.replaceFirst('^/','').replaceFirst('/$','').trim()
+            if (normalized == '' || normalized == '.' || normalized == './') {
+              // treat root or invalid indicators as no subpath (build repo root)
+              echo "Using repository root (ignoring subpath: ${rawSubpath})"
+              env.BUILD_SUBPATH = ''
+            } else {
+              env.BUILD_SUBPATH = normalized
+              echo "Detected subpath: ${env.BUILD_SUBPATH}"
+            }
           }
         }
       }
@@ -57,22 +67,66 @@ pipeline {
     stage('Build Image') {
       steps {
         script {
+          // 打印参数用于调试
+          echo "=== Build Parameters ==="
+          echo "FULL_IMAGE: ${params.FULL_IMAGE}"
+          echo "IMAGE_REPOSITORY: ${params.IMAGE_REPOSITORY}"
+          echo "IMAGE_TAG: ${params.IMAGE_TAG}"
+          echo "NEXUS_IMAGE_REPO: ${env.NEXUS_IMAGE_REPO}"
+          echo "========================"
+          
           def image = params.FULL_IMAGE?.trim()
-          if (!image) {
+          
+          // 如果传入了 FULL_IMAGE，也要检查是否需要追加前缀
+          if (image) {
+            echo "FULL_IMAGE provided: ${image}"
+            // 解析镜像名（去掉 tag）
+            def lastColon = image.lastIndexOf(':')
+            def imageNoTag = lastColon > 0 ? image.substring(0, lastColon) : image
+            def tag = lastColon > 0 ? image.substring(lastColon + 1) : params.IMAGE_TAG.trim()
+            
+            // 检查是否需要追加 Nexus 前缀
+            if (env.NEXUS_IMAGE_REPO?.trim()) {
+              def firstSlashIdx = imageNoTag.indexOf('/')
+              def firstPart = firstSlashIdx > 0 ? imageNoTag.substring(0, firstSlashIdx) : imageNoTag
+              def hasDomain = firstPart.contains('.') || firstPart.contains(':')
+              
+              if (!hasDomain) {
+                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
+                imageNoTag = "${nexusHost}/${imageNoTag}"
+                echo "Auto-prepended Nexus registry to FULL_IMAGE: ${imageNoTag}"
+              } else {
+                echo "FULL_IMAGE already has registry prefix: ${imageNoTag}"
+              }
+            }
+            image = "${imageNoTag}:${tag}"
+            echo "Final FULL_IMAGE: ${image}"
+          } else {
+            // 如果没有 FULL_IMAGE，使用 IMAGE_REPOSITORY
             def imageRepo = params.IMAGE_REPOSITORY?.trim()
             if (imageRepo) {
-              // 如果配置了 NEXUS_IMAGE_REPO 且 IMAGE_REPOSITORY 未以其为前缀，则自动追加，默认推送到私有 Nexus
+              echo "IMAGE_REPOSITORY provided: ${imageRepo}"
+              // 如果配置了 NEXUS_IMAGE_REPO 且 IMAGE_REPOSITORY 未以域名开头，则自动追加 Nexus 前缀
               if (env.NEXUS_IMAGE_REPO?.trim()) {
-                def firstSeg = imageRepo.tokenize('/').first()
                 def nexusHost = env.NEXUS_IMAGE_REPO.trim()
-                if (firstSeg != nexusHost) {
+                // 检查 imageRepo 是否已经包含域名（含有点号或冒号，且在第一个斜杠之前）
+                def firstSlashIdx = imageRepo.indexOf('/')
+                def firstPart = firstSlashIdx > 0 ? imageRepo.substring(0, firstSlashIdx) : imageRepo
+                def hasDomain = firstPart.contains('.') || firstPart.contains(':')
+                
+                if (!hasDomain) {
+                  // 如果没有域名前缀，追加 Nexus 地址
                   imageRepo = "${nexusHost}/${imageRepo}"
+                  echo "Auto-prepended Nexus registry: ${imageRepo}"
+                } else {
+                  echo "Registry already present in IMAGE_REPOSITORY: ${imageRepo}"
                 }
               }
               image = "${imageRepo}:${params.IMAGE_TAG.trim()}"
               echo "Constructed FULL_IMAGE: ${image}"
             } else if (env.NEXUS_IMAGE_REPO?.trim()) {
               // try to infer image name from SERVICE_NAME, PROJECT_IDENTIFIER or git repo
+              echo "No IMAGE_REPOSITORY, trying to infer from other parameters"
               def name = params.SERVICE_NAME?.trim() ?: params.PROJECT_IDENTIFIER?.trim()
               if (!name) {
                 def git = params.GIT_REPOSITORY?.trim()
@@ -84,8 +138,6 @@ pipeline {
             } else {
               error 'IMAGE_REPOSITORY or FULL_IMAGE or NEXUS_IMAGE_REPO is required'
             }
-          } else {
-            echo "Using FULL_IMAGE: ${image}"
           }
 
           // 解析 BUILD_ARGS
@@ -99,8 +151,21 @@ pipeline {
             }
           }
 
-          sh "set -euo pipefail; docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
+          // run docker build inside subpath if provided to limit filesystem scanning
+          def subpath = env.BUILD_SUBPATH?.trim()
+          if (subpath) {
+            dir(subpath) {
+              // use set -eu to be compatible with /bin/sh on some agents (dash doesn't support pipefail)
+              sh "set -eu; docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
+            }
+          } else {
+            // use set -eu for maximum POSIX compatibility (avoids 'Illegal option -o pipefail' on some agents)
+            sh "set -eu; docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
+          }
           env.COMPUTED_IMAGE = image
+          echo "=== Final Image Tag ==="
+          echo "COMPUTED_IMAGE: ${env.COMPUTED_IMAGE}"
+          echo "========================"
         }
       }
     }
@@ -111,8 +176,6 @@ pipeline {
         script {
           def imageToPush = env.COMPUTED_IMAGE ?: params.FULL_IMAGE
           if (!imageToPush) { error 'No image to push' }
-            // choose credentials: use NEXUS_CREDENTIALS when pushing to configured Nexus repo
-            def registryHost = imageToPush.tokenize('/').first()
             def credsId = env.NEXUS_CREDENTIALS
 
             // parse image into registry, repository/name and tag
@@ -124,8 +187,26 @@ pipeline {
               tag = imageToPush.substring(lastColon + 1)
               imageNoTag = imageToPush.substring(0, lastColon)
             }
-            def registryAddr = imageNoTag.tokenize('/').first()
-            def dockerName = imageNoTag.contains('/') ? imageNoTag.substring(imageNoTag.indexOf('/') + 1) : imageNoTag
+            
+            // 正确解析 registry 地址：registry 应该包含点号（域名）
+            def firstSlashIdx = imageNoTag.indexOf('/')
+            def registryAddr = ''
+            def dockerName = imageNoTag
+            
+            if (firstSlashIdx > 0) {
+              def firstPart = imageNoTag.substring(0, firstSlashIdx)
+              // 如果第一部分包含点号或冒号（端口），则认为是 registry 地址
+              if (firstPart.contains('.') || firstPart.contains(':')) {
+                registryAddr = firstPart
+                dockerName = imageNoTag.substring(firstSlashIdx + 1)
+                echo "Detected registry: ${registryAddr}, image: ${dockerName}:${tag}"
+              } else {
+                // 如果没有 registry 前缀，使用 Docker Hub
+                registryAddr = ''
+                dockerName = imageNoTag
+                echo "No registry detected, using Docker Hub for image: ${dockerName}:${tag}"
+              }
+            }
 
             // use helper function to push
             PushDockerImage(registryAddr, credsId, dockerName, tag)
@@ -143,10 +224,26 @@ pipeline {
 
 def PushDockerImage(registry_addr,registry_credentials_id,docker_image_name,version){
     withCredentials([usernamePassword(credentialsId: registry_credentials_id, passwordVariable: 'password', usernameVariable: 'username')]) {
-      sh """
-      docker login -u ${username} -p ${password} ${registry_addr}
-      docker push ${docker_image_name}:${version}
-      docker rmi ${docker_image_name}:${version}
-      """
+      // 构建完整镜像名
+      def fullImageName = registry_addr ? "${registry_addr}/${docker_image_name}" : docker_image_name
+      def fullImageTag = "${fullImageName}:${version}"
+      
+      // 如果有 registry 地址，则先登录
+      if (registry_addr) {
+        sh '''
+        set -eu
+        echo "$password" | docker login -u "$username" --password-stdin "''' + registry_addr + '''"
+        docker push "''' + fullImageTag + '''"
+        docker rmi "''' + fullImageTag + '''"
+        '''
+      } else {
+        // Docker Hub 登录不需要指定地址
+        sh '''
+        set -eu
+        echo "$password" | docker login -u "$username" --password-stdin
+        docker push "''' + fullImageTag + '''"
+        docker rmi "''' + fullImageTag + '''"
+        '''
+      }
     }
 }
