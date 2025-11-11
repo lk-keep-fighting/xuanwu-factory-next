@@ -108,3 +108,13 @@ model Deployment {
   @@map("deployments")
 
 }
+
+model SystemConfig {
+  id         String   @id @default(uuid()) @db.Char(36)
+  key        String   @unique @db.VarChar(191)
+  value      Json?
+  created_at DateTime @default(now()) @db.Timestamp(3)
+  updated_at DateTime @updatedAt @db.Timestamp(3)
+
+  @@map("system_configs")
+}

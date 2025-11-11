@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -64,6 +65,9 @@ const formatDate = (dateString?: string) => {
   return `创建于 ${Math.floor(diffInHours / 24)} 天前`
 }
 
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error && error.message ? error.message : '未知错误'
+
 export default function ProjectsPage() {
   const router = useRouter()
   const [projects, setProjects] = useState<Project[]>([])
@@ -84,8 +88,8 @@ export default function ProjectsPage() {
       if (!res.ok) throw new Error('Failed to fetch projects')
       const data = await res.json()
       setProjects(data)
-    } catch (error: any) {
-      toast.error('加载项目失败：' + (error.message || '未知错误'))
+    } catch (error: unknown) {
+      toast.error(`加载项目失败：${getErrorMessage(error)}`)
     } finally {
       setLoading(false)
     }
@@ -139,8 +143,8 @@ export default function ProjectsPage() {
       setIsCreateDialogOpen(false)
       resetForm('create')
       await loadProjects()
-    } catch (error: any) {
-      toast.error('创建失败：' + (error.message || '未知错误'))
+    } catch (error: unknown) {
+      toast.error(`创建失败：${getErrorMessage(error)}`)
     } finally {
       setCreating(false)
     }
@@ -188,8 +192,8 @@ export default function ProjectsPage() {
       setIsEditDialogOpen(false)
       resetForm('edit')
       await loadProjects()
-    } catch (error: any) {
-      toast.error('更新失败：' + (error.message || '未知错误'))
+    } catch (error: unknown) {
+      toast.error(`更新失败：${getErrorMessage(error)}`)
     } finally {
       setUpdating(false)
     }
@@ -212,8 +216,8 @@ export default function ProjectsPage() {
 
       toast.success('项目已删除')
       await loadProjects()
-    } catch (error: any) {
-      toast.error('删除失败：' + (error.message || '未知错误'))
+    } catch (error: unknown) {
+      toast.error(`删除失败：${getErrorMessage(error)}`)
     } finally {
       setDeletingId(null)
     }
@@ -224,13 +228,21 @@ export default function ProjectsPage() {
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold text-gray-900">项目管理</h1>
-          <Button onClick={() => {
-            resetForm('create')
-            setIsCreateDialogOpen(true)
-          }} className="gap-2">
-            <Plus className="w-4 h-4" />
-            新建项目
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="outline">
+              <Link href="/settings">系统配置</Link>
+            </Button>
+            <Button
+              onClick={() => {
+                resetForm('create')
+                setIsCreateDialogOpen(true)
+              }}
+              className="gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              新建项目
+            </Button>
+          </div>
         </div>
 
         {loading ? (

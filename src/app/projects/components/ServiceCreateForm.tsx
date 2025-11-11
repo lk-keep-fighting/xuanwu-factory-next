@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useForm } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,11 +14,23 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger
+} from '@/components/ui/shadcn-io/combobox'
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { serviceSvc } from '@/service/serviceSvc'
+import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { ServiceType, DatabaseType, GitProvider, BuildType, Service } from '@/types/project'
-import { Github, Gitlab, Database as DatabaseIcon, Plus, Trash2, Box } from 'lucide-react'
+import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
+import { Github, Gitlab, Database as DatabaseIcon, Plus, Trash2, Box, Loader2, RefreshCcw } from 'lucide-react'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 
 const extractImageBaseName = (image?: string) => {
@@ -86,8 +98,14 @@ const createEmptyPort = (): NetworkPortFormState => ({
   domainPrefix: ''
 })
 
+type GitRepositoryOption = {
+  value: string
+  label: string
+  repo: GitRepositoryInfo
+}
+
 interface ServiceCreateFormProps {
-  projectId: string
+
   projectIdentifier?: string
   serviceType: ServiceType
   onSuccess: () => void
@@ -113,10 +131,45 @@ export default function ServiceCreateForm({
   const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [imageReference, setImageReference] = useState<ImageReferenceValue>({ optionId: null, image: '', tag: 'latest' })
+
+  const [gitProviderConfig, setGitProviderConfig] = useState<GitProviderConfig | null>(null)
+  const [gitConfigLoaded, setGitConfigLoaded] = useState(false)
+  const [repositoryOptions, setRepositoryOptions] = useState<GitRepositoryOption[]>([])
+  const [repositorySearch, setRepositorySearch] = useState('')
+  const [repositoryLoading, setRepositoryLoading] = useState(false)
+  const [repositoryError, setRepositoryError] = useState<string | null>(null)
+  const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false)
+  const [selectedRepository, setSelectedRepository] = useState<GitRepositoryInfo | null>(null)
   
   const imageValue = watch('image') as string | undefined
   const tagValue = watch('tag') as string | undefined
   const serviceNameValue = watch('name') as string | undefined
+  const gitRepositoryValue = watch('git_repository') as string | undefined
+  const gitBranchValue = watch('git_branch') as string | undefined
+  
+  useEffect(() => {
+    const loadGitProviderConfig = async () => {
+      try {
+        const config = await systemConfigSvc.getGitProviderConfig()
+
+        if (config?.provider === GitProvider.GITLAB) {
+          setGitProviderConfig(config)
+          setSelectedGitProvider((prev) =>
+            prev === GitProvider.GITHUB ? GitProvider.GITLAB : prev
+          )
+        } else {
+          setGitProviderConfig(null)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Git 提供商配置加载失败'
+        toast.error(message)
+      } finally {
+        setGitConfigLoaded(true)
+      }
+    }
+
+    void loadGitProviderConfig()
+  }, [])
   
   useEffect(() => {
     if (serviceType !== ServiceType.IMAGE) {
@@ -133,6 +186,156 @@ export default function ServiceCreateForm({
       unregister('tag')
     }
   }, [register, unregister, serviceType])
+  
+  const selectedRepositoryValue = selectedRepository?.httpUrlToRepo ?? ''
+
+  const repositoryOptionMap = useMemo(() => {
+    return new Map(repositoryOptions.map((option) => [option.value, option]))
+  }, [repositoryOptions])
+
+  const repositoryComboboxData = useMemo(() => {
+    return repositoryOptions.map((option) => ({ value: option.value, label: option.label }))
+  }, [repositoryOptions])
+
+  const manualRepositoryDisplay = useMemo(() => {
+    const normalized = gitRepositoryValue?.trim()
+
+    if (!normalized) {
+      return null
+    }
+
+    if (selectedRepository && selectedRepository.httpUrlToRepo === normalized) {
+      return null
+    }
+
+    return normalized
+  }, [gitRepositoryValue, selectedRepository])
+
+  const fetchRepositories = useCallback(
+    async (keyword?: string) => {
+      if (!gitProviderConfig || !gitProviderConfig.enabled || !gitProviderConfig.hasToken) {
+        setRepositoryOptions([])
+        return
+      }
+
+      setRepositoryLoading(true)
+      setRepositoryError(null)
+
+      try {
+        const result = await systemConfigSvc.searchGitRepositories({
+          search: keyword?.trim() || undefined
+        })
+
+        const options = result.items.map<GitRepositoryOption>((repo) => ({
+          value: repo.httpUrlToRepo,
+          label: repo.fullName || repo.pathWithNamespace,
+          repo
+        }))
+
+        if (selectedRepository) {
+          const exists = options.some((option) => option.value === selectedRepository.httpUrlToRepo)
+          if (!exists) {
+            options.unshift({
+              value: selectedRepository.httpUrlToRepo,
+              label: selectedRepository.fullName || selectedRepository.pathWithNamespace,
+              repo: selectedRepository
+            })
+          }
+        }
+
+        setRepositoryOptions(options)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '仓库搜索失败'
+        setRepositoryError(message)
+        setRepositoryOptions([])
+      } finally {
+        setRepositoryLoading(false)
+      }
+    },
+    [gitProviderConfig, selectedRepository]
+  )
+
+  const handleRepositorySelect = useCallback(
+    (value: string) => {
+      const option = repositoryOptionMap.get(value)
+
+      if (option) {
+        setSelectedRepository(option.repo)
+        setValue('git_repository', option.repo.httpUrlToRepo, { shouldValidate: true, shouldDirty: true })
+
+        if (!gitBranchValue && option.repo.defaultBranch) {
+          setValue('git_branch', option.repo.defaultBranch, { shouldDirty: true })
+        }
+      } else {
+        setSelectedRepository(null)
+        setValue('git_repository', value, { shouldValidate: true, shouldDirty: true })
+      }
+
+      setRepositorySearch('')
+    },
+    [repositoryOptionMap, setValue, gitBranchValue]
+  )
+  
+  useEffect(() => {
+    if (selectedGitProvider !== GitProvider.GITLAB) {
+      setRepositoryPickerOpen(false)
+      setRepositoryOptions([])
+      setRepositoryError(null)
+      setSelectedRepository(null)
+      return
+    }
+
+    if (!gitProviderConfig || !gitProviderConfig.enabled || !gitProviderConfig.hasToken) {
+      setRepositoryPickerOpen(false)
+      setRepositoryOptions([])
+      setRepositoryError(null)
+      setSelectedRepository(null)
+    }
+  }, [selectedGitProvider, gitProviderConfig])
+  
+  useEffect(() => {
+    if (!repositoryPickerOpen) {
+      return
+    }
+
+    if (selectedGitProvider !== GitProvider.GITLAB) {
+      return
+    }
+
+    if (!gitProviderConfig || !gitProviderConfig.enabled || !gitProviderConfig.hasToken) {
+      return
+    }
+
+    const handler = window.setTimeout(() => {
+      void fetchRepositories(repositorySearch)
+    }, 350)
+
+    return () => {
+      window.clearTimeout(handler)
+    }
+  }, [repositoryPickerOpen, repositorySearch, selectedGitProvider, gitProviderConfig, fetchRepositories])
+  
+  useEffect(() => {
+    const normalized = (gitRepositoryValue ?? '').trim()
+
+    if (!normalized) {
+      if (selectedRepository) {
+        setSelectedRepository(null)
+      }
+      return
+    }
+
+    if (selectedRepository && selectedRepository.httpUrlToRepo === normalized) {
+      return
+    }
+
+    const matched = repositoryOptions.find((option) => option.value === normalized)
+    if (matched) {
+      setSelectedRepository(matched.repo)
+    } else if (selectedRepository) {
+      setSelectedRepository(null)
+    }
+  }, [gitRepositoryValue, repositoryOptions, selectedRepository])
   
   useEffect(() => {
     if (serviceType !== ServiceType.IMAGE) {
@@ -255,11 +458,11 @@ export default function ServiceCreateForm({
       // Application - 基于源码构建
       if (serviceType === ServiceType.APPLICATION) {
         serviceData.git_provider = selectedGitProvider
-        serviceData.git_repository = data.git_repository
-        serviceData.git_branch = data.git_branch || 'main'
-        serviceData.git_path = data.git_path || '/'
+        serviceData.git_repository = data.git_repository?.trim()
+        serviceData.git_branch = data.git_branch?.trim() || 'main'
+        serviceData.git_path = data.git_path?.trim() || '/'
         serviceData.build_type = data.build_type || BuildType.DOCKERFILE
-        serviceData.dockerfile_path = data.dockerfile_path || 'Dockerfile'
+        serviceData.dockerfile_path = data.dockerfile_path?.trim() || 'Dockerfile'
         serviceData.port = data.port ? parseInt(data.port) : 3000
         serviceData.replicas = data.replicas ? parseInt(data.replicas) : 1
         serviceData.command = data.command
@@ -484,12 +687,132 @@ export default function ServiceCreateForm({
               </div>
             </div>
 
+            {selectedGitProvider === GitProvider.GITLAB && (
+              <div className="space-y-3">
+                {!gitConfigLoaded ? (
+                  <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    正在加载 GitLab 配置...
+                  </div>
+                ) : !gitProviderConfig ? (
+                  <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
+                    尚未配置 GitLab 全局信息，请前往系统配置页面完成设置。
+                  </div>
+                ) : !gitProviderConfig.enabled ? (
+                  <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
+                    GitLab 全局配置已禁用，无法搜索仓库。
+                  </div>
+                ) : !gitProviderConfig.hasToken ? (
+                  <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
+                    GitLab 配置缺少 API Token，请前往系统配置页面添加。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>选择仓库</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => void fetchRepositories(repositorySearch)}
+                        disabled={repositoryLoading}
+                      >
+                        {repositoryLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCcw className="h-3.5 w-3.5" />
+                        )}
+                        刷新
+                      </Button>
+                    </div>
+                    <Combobox
+                      data={repositoryComboboxData}
+                      type="仓库"
+                      value={selectedRepositoryValue}
+                      onValueChange={handleRepositorySelect}
+                      open={repositoryPickerOpen}
+                      onOpenChange={(open) => {
+                        setRepositoryPickerOpen(open)
+                        if (
+                          open &&
+                          gitProviderConfig &&
+                          gitProviderConfig.enabled &&
+                          gitProviderConfig.hasToken &&
+                          !repositoryLoading
+                        ) {
+                          void fetchRepositories(repositorySearch)
+                        } else if (!open) {
+                          setRepositorySearch('')
+                        }
+                      }}
+                    >
+                      <ComboboxTrigger className="w-full justify-between">
+                        <div className="flex flex-col items-start gap-0.5 text-left">
+                          <span className="text-sm font-medium text-gray-900 truncate">
+                            {selectedRepository
+                              ? selectedRepository.name
+                              : manualRepositoryDisplay || '选择仓库'}
+                          </span>
+                          <span className="text-xs text-gray-500 truncate">
+                            {selectedRepository
+                              ? selectedRepository.pathWithNamespace
+                              : '支持关键词搜索，选择后自动填充仓库 URL'}
+                          </span>
+                        </div>
+                      </ComboboxTrigger>
+                      <ComboboxContent>
+                        <ComboboxInput
+                          placeholder="搜索仓库..."
+                          onValueChange={(value) => setRepositorySearch(value)}
+                        />
+                        <ComboboxList>
+                          {repositoryLoading ? (
+                            <div className="flex items-center justify-center py-6 text-sm text-gray-500">
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              正在搜索仓库...
+                            </div>
+                          ) : (
+                            <>
+                              <ComboboxEmpty>未找到匹配的仓库</ComboboxEmpty>
+                              <ComboboxGroup>
+                                {repositoryOptions.map((option) => (
+                                  <ComboboxItem key={option.value} value={option.value}>
+                                    <div className="flex flex-col">
+                                      <span className="text-sm font-medium text-gray-900">{option.repo.name}</span>
+                                      <span className="text-xs text-gray-500">{option.repo.pathWithNamespace}</span>
+                                      {option.repo.defaultBranch ? (
+                                        <span className="text-xs text-gray-400">默认分支：{option.repo.defaultBranch}</span>
+                                      ) : null}
+                                    </div>
+                                  </ComboboxItem>
+                                ))}
+                              </ComboboxGroup>
+                            </>
+                          )}
+                        </ComboboxList>
+                      </ComboboxContent>
+                    </Combobox>
+                    {repositoryError ? (
+                      <p className="text-xs text-red-500">{repositoryError}</p>
+                    ) : (
+                      <p className="text-xs text-gray-500">选择仓库后会自动填充 URL，下方输入框可继续调整。</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="git_repository">仓库 URL *</Label>
               <Input
                 id="git_repository"
                 {...register('git_repository', { required: true })}
-                placeholder="https://github.com/user/repo.git"
+                placeholder={
+                  selectedGitProvider === GitProvider.GITLAB
+                    ? `${gitProviderConfig?.baseUrl ?? 'https://gitlab.example.com'}/group/project.git`
+                    : 'https://github.com/user/repo.git'
+                }
               />
             </div>
 
