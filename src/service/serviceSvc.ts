@@ -1,4 +1,11 @@
-import type { Service, CreateServiceRequest, UpdateServiceRequest, Deployment, ServiceImageRecord } from '@/types/project'
+import type {
+  Service,
+  CreateServiceRequest,
+  UpdateServiceRequest,
+  Deployment,
+  ServiceImageRecord,
+  ServiceImageStatus
+} from '@/types/project'
 
 const API_BASE = '/api/services'
 
@@ -16,6 +23,22 @@ type BuildServiceResponse = {
     buildNumber?: number
     durationMs?: number
   }
+}
+
+type GetServiceImagesOptions = {
+  page?: number
+  pageSize?: number
+  status?: ServiceImageStatus
+}
+
+type ServiceImagesListResponse = {
+  items: ServiceImageRecord[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+  hasNext: boolean
+  hasPrevious: boolean
 }
 
 /**
@@ -287,8 +310,28 @@ export const serviceSvc = {
   /**
    * 获取服务镜像列表
    */
-  async getServiceImages(id: string): Promise<ServiceImageRecord[]> {
-    const response = await fetch(`${API_BASE}/${id}/images`)
+  async getServiceImages(
+    id: string,
+    options: GetServiceImagesOptions = {}
+  ): Promise<ServiceImagesListResponse> {
+    const params = new URLSearchParams()
+
+    if (typeof options.page === 'number' && Number.isFinite(options.page)) {
+      params.set('page', String(options.page))
+    }
+
+    if (typeof options.pageSize === 'number' && Number.isFinite(options.pageSize)) {
+      params.set('page_size', String(options.pageSize))
+    }
+
+    if (options.status) {
+      params.set('status', options.status)
+    }
+
+    const query = params.toString()
+    const url = `${API_BASE}/${id}/images${query ? `?${query}` : ''}`
+
+    const response = await fetch(url)
     const result = await response.json().catch(() => null)
 
     if (!response.ok) {
@@ -299,7 +342,43 @@ export const serviceSvc = {
       throw new Error(message)
     }
 
-    return Array.isArray(result) ? (result as ServiceImageRecord[]) : []
+    if (result && typeof result === 'object' && Array.isArray((result as { items?: unknown }).items)) {
+      const payload = result as Partial<ServiceImagesListResponse>
+      const items = Array.isArray(payload.items) ? payload.items : []
+      const total = typeof payload.total === 'number' ? payload.total : items.length
+      const page = typeof payload.page === 'number' ? payload.page : options.page ?? 1
+      const pageSize = typeof payload.pageSize === 'number' ? payload.pageSize : options.pageSize ?? items.length
+      const totalPages = typeof payload.totalPages === 'number'
+        ? payload.totalPages
+        : pageSize > 0
+          ? Math.ceil(total / pageSize)
+          : 0
+      const hasNext = typeof payload.hasNext === 'boolean' ? payload.hasNext : page * pageSize < total
+      const hasPrevious = typeof payload.hasPrevious === 'boolean' ? payload.hasPrevious : page > 1
+
+      return {
+        items,
+        total,
+        page,
+        pageSize,
+        totalPages,
+        hasNext,
+        hasPrevious
+      }
+    }
+
+    const fallbackItems = Array.isArray(result) ? (result as ServiceImageRecord[]) : []
+    const fallbackPageSize = options.pageSize ?? fallbackItems.length
+
+    return {
+      items: fallbackItems,
+      total: fallbackItems.length,
+      page: options.page ?? 1,
+      pageSize: fallbackPageSize,
+      totalPages: fallbackPageSize > 0 ? Math.ceil(fallbackItems.length / fallbackPageSize) : 0,
+      hasNext: false,
+      hasPrevious: (options.page ?? 1) > 1
+    }
   },
 
   /**

@@ -63,6 +63,8 @@ const DEPLOYMENT_STATUS_META: Record<Deployment['status'], { label: string; clas
 }
 
 const LOGS_LINE_COUNT = 200
+const IMAGE_HISTORY_PAGE_SIZE = 10
+const SUCCESS_IMAGE_OPTIONS_LIMIT = 100
 
 const IMAGE_STATUS_META: Record<ServiceImageStatus, { label: string; badgeClass: string; textClass: string }> = {
   pending: { label: '等待构建', badgeClass: 'bg-gray-100 text-gray-600', textClass: 'text-gray-500' },
@@ -173,6 +175,15 @@ export default function ServiceDetailPage() {
   const [yamlLoading, setYamlLoading] = useState(false)
   const [yamlError, setYamlError] = useState<string | null>(null)
   const [serviceImages, setServiceImages] = useState<ServiceImageRecord[]>([])
+  const [successfulServiceImages, setSuccessfulServiceImages] = useState<ServiceImageRecord[]>([])
+  const [imagePagination, setImagePagination] = useState({
+    total: 0,
+    totalPages: 0,
+    page: 1,
+    pageSize: IMAGE_HISTORY_PAGE_SIZE,
+    hasNext: false,
+    hasPrevious: false
+  })
   const [imagesLoading, setImagesLoading] = useState(false)
   const [imagesError, setImagesError] = useState<string | null>(null)
   const [imagePickerValue, setImagePickerValue] = useState<ImageReferenceValue>({ optionId: null, image: '', tag: undefined })
@@ -184,29 +195,51 @@ export default function ServiceDetailPage() {
 
   const builtImageRef = useMemo(() => parseImageReference(service?.built_image), [service?.built_image])
   const builtImageDisplay = builtImageRef.image ? formatImageReference(builtImageRef.image, builtImageRef.tag) : ''
-  const activeServiceImage = serviceImages.find((img) => img.is_active) ?? null
+  const activeServiceImage = useMemo(
+    () =>
+      successfulServiceImages.find((img) => img.is_active) ??
+      serviceImages.find((img) => img.is_active) ??
+      null,
+    [serviceImages, successfulServiceImages]
+  )
   const activeServiceImageId = activeServiceImage?.id ?? null
-  const applicationImageOptions = useMemo(() =>
-    serviceImages.map((image) => {
-      const status = (image.build_status ?? 'pending') as ServiceImageStatus
-      const infoParts = [
-        image.build_number ? `构建号 #${image.build_number}` : null,
-        image.created_at ? `创建于 ${formatDateTime(image.created_at)}` : null
-      ].filter(Boolean)
+  const applicationImageOptions = useMemo(
+    () =>
+      successfulServiceImages.map((image) => {
+        const status = (image.build_status ?? 'pending') as ServiceImageStatus
+        const infoParts = [
+          image.build_number ? `构建号 #${image.build_number}` : null,
+          image.created_at ? `创建于 ${formatDateTime(image.created_at)}` : null
+        ].filter(Boolean)
 
-      return {
-        id: image.id,
-        image: image.image,
-        tag: image.tag,
-        status,
-        label: formatImageReference(image.image, image.tag),
-        description: infoParts.join(' · ') || undefined,
-        disabled: (image.build_status ?? '').toLowerCase() !== 'success'
-      }
-    }),
-    [serviceImages]
+        return {
+          id: image.id,
+          image: image.image,
+          tag: image.tag,
+          status,
+          label: formatImageReference(image.image, image.tag),
+          description: infoParts.join(' · ') || undefined
+        }
+      }),
+    [successfulServiceImages]
   )
   const isSelectionActive = selectedServiceImageId !== null && selectedServiceImageId === activeServiceImageId
+  const imageHistoryStats = useMemo(() => {
+    if (serviceImages.length === 0) {
+      return null
+    }
+
+    const page = imagePagination.page > 0 ? imagePagination.page : 1
+    const pageSize = imagePagination.pageSize > 0 ? imagePagination.pageSize : IMAGE_HISTORY_PAGE_SIZE
+    const total = imagePagination.total > 0 ? imagePagination.total : serviceImages.length
+    const totalPages = imagePagination.totalPages > 0 ? imagePagination.totalPages : Math.max(Math.ceil(total / pageSize), 1)
+    const rawStart = (page - 1) * pageSize + 1
+    const hasTotal = total > 0
+    const start = hasTotal ? Math.min(rawStart, total) : 0
+    const end = hasTotal ? Math.min(start + serviceImages.length - 1, total) : 0
+
+    return { page, pageSize, total, totalPages, start, end }
+  }, [imagePagination.page, imagePagination.pageSize, imagePagination.total, imagePagination.totalPages, serviceImages.length])
   const imageServicePickerValue = useMemo<ImageReferenceValue>(() => {
     if (!service || service.type !== ServiceType.IMAGE) {
       return { optionId: null, image: '', tag: undefined }
@@ -283,39 +316,111 @@ export default function ServiceDetailPage() {
     setNetworkPorts([createEmptyPort()])
   }, [])
 
-  const loadServiceImages = useCallback(async (showToast = false) => {
-    if (!serviceId) return
+  const loadServiceImages = useCallback(
+    async ({ showToast = false, page }: { showToast?: boolean; page?: number } = {}) => {
+      if (!serviceId) return
 
-    try {
-      setImagesLoading(true)
-      setImagesError(null)
-      const images = await serviceSvc.getServiceImages(serviceId)
-      setServiceImages(images)
+      const targetPage = typeof page === 'number' && page > 0 ? page : 1
+      const isApplicationService = (service?.type ?? '').toLowerCase() === ServiceType.APPLICATION
 
-      if ((service?.type ?? '').toLowerCase() === ServiceType.APPLICATION) {
-        if (selectedServiceImageId && images.some((img) => img.id === selectedServiceImageId)) {
-          const selected = images.find((img) => img.id === selectedServiceImageId)
-          if (selected) {
-            const nextValue: ImageReferenceValue = {
-              optionId: selected.id ?? null,
-              image: selected.image,
-              tag: selected.tag
-            }
-            setImagePickerValue((prev) =>
-              prev.optionId === nextValue.optionId && isImageReferenceEqual(prev, nextValue)
-                ? prev
-                : nextValue
-            )
+      try {
+        setImagesLoading(true)
+        setImagesError(null)
+
+        const historyPromise = serviceSvc.getServiceImages(serviceId, {
+          page: targetPage,
+          pageSize: IMAGE_HISTORY_PAGE_SIZE
+        })
+
+        const successPromise = isApplicationService
+          ? serviceSvc.getServiceImages(serviceId, {
+              page: 1,
+              pageSize: SUCCESS_IMAGE_OPTIONS_LIMIT,
+              status: 'success'
+            })
+          : null
+
+        const historyResponse = await historyPromise
+        const successResponse = successPromise ? await successPromise : null
+
+        if (
+          historyResponse.items.length === 0 &&
+          historyResponse.total > 0 &&
+          historyResponse.totalPages > 0 &&
+          historyResponse.page > historyResponse.totalPages
+        ) {
+          await loadServiceImages({ showToast, page: historyResponse.totalPages })
+          return
+        }
+
+        setServiceImages(historyResponse.items)
+        setImagePagination({
+          total: historyResponse.total,
+          totalPages: historyResponse.totalPages,
+          page: historyResponse.page,
+          pageSize: historyResponse.pageSize,
+          hasNext: historyResponse.hasNext,
+          hasPrevious: historyResponse.hasPrevious
+        })
+
+        if (isApplicationService) {
+          const successItems: ServiceImageRecord[] = []
+          const seen = new Set<string>()
+          const append = (item?: ServiceImageRecord) => {
+            if (!item) return
+            const id = item.id ?? ''
+            if (!id || seen.has(id)) return
+            seen.add(id)
+            successItems.push(item)
           }
-        } else {
-          const successfulImages = images.filter((img) => (img.build_status ?? '').toLowerCase() === 'success')
-          const activeImage = images.find((img) => img.is_active) ?? successfulImages[0]
+
+          successResponse?.items.forEach((item) => append(item))
+          historyResponse.items.forEach((item) => {
+            if ((item.build_status ?? '').toLowerCase() === 'success') {
+              append(item)
+            }
+          })
+
+          if (selectedServiceImageId) {
+            const selectedFromHistory = historyResponse.items.find((img) => img.id === selectedServiceImageId)
+            if ((selectedFromHistory?.build_status ?? '').toLowerCase() === 'success') {
+              append(selectedFromHistory)
+            }
+          }
+
+          const activeFromHistory = historyResponse.items.find((img) => img.is_active)
+          if ((activeFromHistory?.build_status ?? '').toLowerCase() === 'success') {
+            append(activeFromHistory)
+          }
+
+          successItems.sort((a, b) => {
+            const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+            const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+            return bTime - aTime
+          })
+
+          setSuccessfulServiceImages(successItems)
+
+          const selectedImage = selectedServiceImageId
+            ? successItems.find((img) => img.id === selectedServiceImageId) ?? null
+            : null
+
+          if (selectedServiceImageId && !selectedImage) {
+            setSelectedServiceImageId(null)
+          }
+
+          const fallbackImage =
+            selectedImage ??
+            successItems.find((img) => img.is_active) ??
+            successItems[0] ??
+            null
+
           const parsed = parseImageReference(service?.built_image)
-          const nextValue: ImageReferenceValue = activeImage
+          const nextValue: ImageReferenceValue = fallbackImage
             ? {
-                optionId: activeImage.id ?? null,
-                image: activeImage.image,
-                tag: activeImage.tag
+                optionId: fallbackImage.id ?? null,
+                image: fallbackImage.image,
+                tag: fallbackImage.tag
               }
             : {
                 optionId: null,
@@ -323,24 +428,28 @@ export default function ServiceDetailPage() {
                 tag: parsed.tag
               }
 
-          setSelectedServiceImageId(activeImage?.id ?? null)
+          if (!selectedImage) {
+            setSelectedServiceImageId(fallbackImage?.id ?? null)
+          }
+
           setImagePickerValue((prev) =>
-            prev.optionId === nextValue.optionId && isImageReferenceEqual(prev, nextValue)
-              ? prev
-              : nextValue
+            prev.optionId === nextValue.optionId && isImageReferenceEqual(prev, nextValue) ? prev : nextValue
           )
+        } else {
+          setSuccessfulServiceImages([])
         }
+      } catch (error: any) {
+        const message = error?.message || '加载镜像列表失败'
+        setImagesError(message)
+        if (showToast) {
+          toast.error(message)
+        }
+      } finally {
+        setImagesLoading(false)
       }
-    } catch (error: any) {
-      const message = error?.message || '加载镜像列表失败'
-      setImagesError(message)
-      if (showToast) {
-        toast.error(message)
-      }
-    } finally {
-      setImagesLoading(false)
-    }
-  }, [selectedServiceImageId, service?.built_image, service?.type, serviceId])
+    },
+    [selectedServiceImageId, service?.built_image, service?.type, serviceId]
+  )
 
   // 加载服务详情
   const loadService = useCallback(async () => {
@@ -389,9 +498,19 @@ export default function ServiceDetailPage() {
         const parsedBuiltImage = parseImageReference(data.built_image)
         setImagePickerValue({ optionId: null, image: parsedBuiltImage.image, tag: parsedBuiltImage.tag })
         setSelectedServiceImageId(null)
-        loadServiceImages()
+        // 直接调用 loadServiceImages 而不依赖它，避免循环依赖
+        void loadServiceImages()
       } else {
         setServiceImages([])
+        setSuccessfulServiceImages([])
+        setImagePagination({
+          total: 0,
+          totalPages: 0,
+          page: 1,
+          pageSize: IMAGE_HISTORY_PAGE_SIZE,
+          hasNext: false,
+          hasPrevious: false
+        })
         setImagesError(null)
         setSelectedServiceImageId(null)
         setImagesLoading(false)
@@ -403,7 +522,7 @@ export default function ServiceDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [initializeNetworkState, loadServiceImages, projectId, router, serviceId])
+  }, [initializeNetworkState, projectId, router, serviceId])
 
   const loadDeployments = useCallback(async (showToast = false) => {
     if (!serviceId) return
@@ -478,8 +597,9 @@ export default function ServiceDetailPage() {
   }, [serviceId])
 
   useEffect(() => {
-    loadService()
-  }, [loadService])
+    void loadService()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceId])
 
   useEffect(() => {
     if (service?.type === ServiceType.APPLICATION) {
@@ -498,22 +618,24 @@ export default function ServiceDetailPage() {
     setLogs('')
     setLogsError(null)
     setDeploymentsLoading(true)
-    loadDeployments()
-  }, [loadDeployments, serviceId])
+    void loadDeployments()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceId])
 
   useEffect(() => {
     if (activeTab === 'deployments') {
-      loadDeployments()
+      void loadDeployments()
     }
 
     if (activeTab === 'logs' && !hasLoadedLogs) {
-      loadLogs()
+      void loadLogs()
     }
     
     if (activeTab === 'yaml' && !yamlContent) {
-      loadYAML()
+      void loadYAML()
     }
-  }, [activeTab, hasLoadedLogs, loadDeployments, loadLogs, loadYAML, yamlContent])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, hasLoadedLogs, yamlContent])
 
   // 启动服务
   const handleStart = async () => {
@@ -580,7 +702,7 @@ export default function ServiceDetailPage() {
         return
       }
 
-      if (!selectedServiceImageId && !serviceImages.some((img) => (img.build_status ?? '').toLowerCase() === 'success')) {
+      if (!selectedServiceImageId && !imagesLoading && successfulServiceImages.length === 0) {
         toast.error('当前没有可部署的镜像版本，请先构建成功的镜像。')
         return
       }
@@ -604,7 +726,7 @@ export default function ServiceDetailPage() {
       toast.success(result?.message || '部署成功，服务正在启动')
       await loadService()
       if (service.type === ServiceType.APPLICATION) {
-        await loadServiceImages()
+        await loadServiceImages({ page: 1 })
       }
       await loadDeployments()
       if (activeTab === 'logs') {
@@ -628,7 +750,8 @@ export default function ServiceDetailPage() {
 
   const handleRefreshImages = () => {
     if (service?.type === ServiceType.APPLICATION) {
-      loadServiceImages(true)
+      const currentPage = imagePagination.page > 0 ? imagePagination.page : 1
+      void loadServiceImages({ showToast: true, page: currentPage })
     }
   }
 
@@ -653,7 +776,8 @@ export default function ServiceDetailPage() {
         setService(result.service)
         setEditedService(result.service)
       }
-      await loadServiceImages()
+      const currentPage = imagePagination.page > 0 ? imagePagination.page : 1
+      await loadServiceImages({ page: currentPage })
     } catch (error: any) {
       toast.error('镜像选择失败：' + (error.message || '未知错误'))
     } finally {
@@ -685,7 +809,7 @@ export default function ServiceDetailPage() {
         setEditedService(result.service)
       }
       setBuildTag('')
-      await loadServiceImages(true)
+      await loadServiceImages({ showToast: true, page: 1 })
       setActiveTab((prev) => (prev === 'deployments' ? prev : 'deployments'))
     } catch (error: any) {
       toast.error('镜像构建失败：' + (error.message || '未知错误'))
@@ -1128,7 +1252,7 @@ export default function ServiceDetailPage() {
                           ) : null}
                         </div>
                         <div className="space-y-3">
-                          {serviceImages.length > 0 ? (
+                          {successfulServiceImages.length > 0 ? (
                             <ImageReferencePicker
                               value={imagePickerValue}
                               options={applicationImageOptions}
@@ -1216,83 +1340,118 @@ export default function ServiceDetailPage() {
                       ) : serviceImages.length === 0 ? (
                         <p className="text-sm text-gray-500">暂无镜像历史记录。</p>
                       ) : (
-                        <div className="space-y-2">
-                          {serviceImages.map((image) => {
-                            const status = (image.build_status ?? 'pending') as ServiceImageStatus
-                            const meta = IMAGE_STATUS_META[status]
-                            const isActive = image.id === activeServiceImageId
-                            const isSelected = image.id === selectedServiceImageId
-                            const isSelectable = status === 'success'
-                            const metadata =
-                              image.metadata && typeof image.metadata === 'object'
-                                ? (image.metadata as Record<string, unknown>)
-                                : null
-                            const metadataBranch = metadata && typeof metadata['branch'] === 'string' ? (metadata['branch'] as string) : null
-                            return (
-                              <div
-                                key={image.id}
-                                className={cn(
-                                  'rounded-lg border bg-white p-4 transition-shadow',
-                                  isSelected ? 'border-indigo-300 shadow-sm' : 'border-gray-200'
-                                )}
-                              >
-                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                  <div className="space-y-1">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="text-sm font-semibold text-gray-900">
-                                        {formatImageReference(image.image, image.tag)}
-                                      </span>
-                                      <span
-                                        className={cn(
-                                          'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
-                                          meta.badgeClass
-                                        )}
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            {serviceImages.map((image) => {
+                              const status = (image.build_status ?? 'pending') as ServiceImageStatus
+                              const meta = IMAGE_STATUS_META[status]
+                              const isActive = image.id === activeServiceImageId
+                              const isSelected = image.id === selectedServiceImageId
+                              const isSelectable = status === 'success'
+                              const metadata =
+                                image.metadata && typeof image.metadata === 'object'
+                                  ? (image.metadata as Record<string, unknown>)
+                                  : null
+                              const metadataBranch = metadata && typeof metadata['branch'] === 'string' ? (metadata['branch'] as string) : null
+                              return (
+                                <div
+                                  key={image.id}
+                                  className={cn(
+                                    'rounded-lg border bg-white p-4 transition-shadow',
+                                    isSelected ? 'border-indigo-300 shadow-sm' : 'border-gray-200'
+                                  )}
+                                >
+                                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                    <div className="space-y-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-semibold text-gray-900">
+                                          {formatImageReference(image.image, image.tag)}
+                                        </span>
+                                        <span
+                                          className={cn(
+                                            'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+                                            meta.badgeClass
+                                          )}
+                                        >
+                                          {meta.label}
+                                        </span>
+                                        {isActive ? (
+                                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+                                            <Check className="h-3 w-3" />
+                                            当前部署
+                                          </span>
+                                        ) : null}
+                                        {isSelected && !isActive ? (
+                                          <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+                                            <Check className="h-3 w-3" />
+                                            待部署
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                                        {image.build_number ? <span>构建号 #{image.build_number}</span> : null}
+                                        <span>创建于 {formatDateTime(image.created_at)}</span>
+                                        {metadataBranch ? <span>分支 {metadataBranch}</span> : null}
+                                      </div>
+                                      {image.build_logs && status === 'failed' ? (
+                                        <p className="text-xs text-red-600 line-clamp-2">{image.build_logs}</p>
+                                      ) : null}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="gap-2"
+                                        onClick={() =>
+                                          handleImagePickerChange({
+                                            optionId: image.id ?? null,
+                                            image: image.image,
+                                            tag: image.tag
+                                          })
+                                        }
+                                        disabled={imagesLoading || !isSelectable}
                                       >
-                                        {meta.label}
-                                      </span>
-                                      {isActive ? (
-                                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-                                          <Check className="h-3 w-3" />
-                                          当前部署
-                                        </span>
-                                      ) : null}
-                                      {isSelected && !isActive ? (
-                                        <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-                                          <Check className="h-3 w-3" />
-                                          待部署
-                                        </span>
-                                      ) : null}
+                                        选择
+                                      </Button>
                                     </div>
-                                    <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                                      {image.build_number ? <span>构建号 #{image.build_number}</span> : null}
-                                      <span>创建于 {formatDateTime(image.created_at)}</span>
-                                      {metadataBranch ? <span>分支 {metadataBranch}</span> : null}
-                                    </div>
-                                    {image.build_logs && status === 'failed' ? (
-                                      <p className="text-xs text-red-600 line-clamp-2">{image.build_logs}</p>
-                                    ) : null}
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="gap-2"
-                                      onClick={() =>
-                                        handleImagePickerChange({
-                                          optionId: image.id ?? null,
-                                          image: image.image,
-                                          tag: image.tag
-                                        })
-                                      }
-                                      disabled={imagesLoading || !isSelectable}
-                                    >
-                                      选择
-                                    </Button>
                                   </div>
                                 </div>
-                              </div>
-                            )
-                          })}
+                              )
+                            })}
+                          </div>
+                          <div className="flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="text-xs text-gray-500">
+                              {imageHistoryStats ? (
+                                <>
+                                  第 {imageHistoryStats.page} / {imageHistoryStats.totalPages} 页 · 显示第 {imageHistoryStats.start}-{imageHistoryStats.end} 条 · 共 {imageHistoryStats.total} 条
+                                </>
+                              ) : (
+                                '暂无镜像历史记录'
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  void loadServiceImages({ page: Math.max((imageHistoryStats?.page ?? 1) - 1, 1) })
+                                }
+                                disabled={!imagePagination.hasPrevious || imagesLoading}
+                              >
+                                上一页
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  void loadServiceImages({ page: (imageHistoryStats?.page ?? 1) + 1 })
+                                }
+                                disabled={!imagePagination.hasNext || imagesLoading}
+                              >
+                                下一页
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
