@@ -13,9 +13,10 @@ const parsePerPageParam = (value: string | null): number | undefined => {
 
 export async function GET(
   request: NextRequest,
-  context: { params: { repositoryId: string } }
+  context: { params: { repositoryId: string } | Promise<{ repositoryId: string }> }
 ) {
-  const rawRepositoryId = context.params.repositoryId
+  const params = await context.params
+  const rawRepositoryId = params.repositoryId
   const repositoryId = (() => {
     try {
       return decodeURIComponent(rawRepositoryId)

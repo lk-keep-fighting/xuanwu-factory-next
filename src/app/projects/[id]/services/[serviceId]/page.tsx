@@ -28,7 +28,7 @@ import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { projectSvc } from '@/service/projectSvc'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
-import { findVolumeTemplate, generateNFSSubpath, type VolumeTemplate } from '@/lib/volume-templates'
+import { findVolumeTemplate, generateNFSSubpath } from '@/lib/volume-templates'
 import { cn } from '@/lib/utils'
 import { parseImageReference, formatImageReference, isImageReferenceEqual } from '@/lib/service-image'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
@@ -214,6 +214,7 @@ export default function ServiceDetailPage() {
   const [buildBranch, setBuildBranch] = useState('')
   const [buildTag, setBuildTag] = useState('')
   const [gitProviderConfig, setGitProviderConfig] = useState<GitProviderConfig | null>(null)
+  const [gitProviderConfigLoaded, setGitProviderConfigLoaded] = useState(false)
   const [branchOptions, setBranchOptions] = useState<GitBranchOption[]>([])
   const [branchLoading, setBranchLoading] = useState(false)
   const [branchError, setBranchError] = useState<string | null>(null)
@@ -221,6 +222,252 @@ export default function ServiceDetailPage() {
   const [branchSearch, setBranchSearch] = useState('')
   const branchInitialLoadRef = useRef(false)
   const gitBranchRef = useRef<string>('')
+  const serviceType = service?.type
+
+  useEffect(() => {
+    if (!serviceType || serviceType.toLowerCase() !== ServiceType.APPLICATION) {
+      setGitProviderConfig(null)
+      setGitProviderConfigLoaded(true)
+      return
+    }
+
+    let cancelled = false
+
+    const loadConfig = async () => {
+      try {
+        const config = await systemConfigSvc.getGitProviderConfig()
+        if (cancelled) return
+
+        if (config?.provider === GitProvider.GITLAB) {
+          setGitProviderConfig(config)
+        } else {
+          setGitProviderConfig(null)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[ServiceDetailPage] Failed to load git provider config:', error)
+          setGitProviderConfig(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setGitProviderConfigLoaded(true)
+        }
+      }
+    }
+
+    setGitProviderConfigLoaded(false)
+    void loadConfig()
+
+    return () => {
+      cancelled = true
+    }
+  }, [serviceType])
+
+  const isGitLabProvider = useMemo(() => (service?.git_provider ?? '').toLowerCase() === GitProvider.GITLAB, [service?.git_provider])
+
+  const effectiveGitRepository = useMemo(() => {
+    if (!service) {
+      return ''
+    }
+
+    if (isEditing && typeof editedService.git_repository === 'string') {
+      return editedService.git_repository.trim()
+    }
+
+    return (service.git_repository ?? '').trim()
+  }, [editedService.git_repository, isEditing, service])
+
+  const gitlabIntegrationReady = useMemo(() => {
+    if (!isGitLabProvider) {
+      return false
+    }
+
+    if (!gitProviderConfigLoaded || !gitProviderConfig) {
+      return false
+    }
+
+    return gitProviderConfig.enabled && gitProviderConfig.hasToken
+  }, [gitProviderConfig, gitProviderConfigLoaded, isGitLabProvider])
+
+  const repositoryIdentifier = useMemo(() => {
+    if (!gitlabIntegrationReady) {
+      return null
+    }
+
+    if (!effectiveGitRepository) {
+      return null
+    }
+
+    const extracted = extractGitLabProjectPath(effectiveGitRepository, gitProviderConfig?.baseUrl)
+    if (extracted) {
+      return extracted
+    }
+
+    const fallback = effectiveGitRepository.replace(/\.git$/i, '')
+    if (fallback.includes('://')) {
+      return null
+    }
+
+    return fallback
+  }, [effectiveGitRepository, gitProviderConfig?.baseUrl, gitlabIntegrationReady])
+
+  const normalizedBranchValue = useMemo(() => {
+    const raw = (editedService?.git_branch ?? service?.git_branch ?? '').trim()
+    return raw
+  }, [editedService?.git_branch, service?.git_branch])
+
+  useEffect(() => {
+    gitBranchRef.current = normalizedBranchValue
+  }, [normalizedBranchValue])
+
+  const branchOptionMap = useMemo(() => new Map(branchOptions.map((option) => [option.value, option])), [branchOptions])
+  const branchComboboxData = useMemo(() => branchOptions.map((option) => ({ value: option.value, label: option.label })), [branchOptions])
+  const selectedBranchOption = useMemo(() => {
+    if (!normalizedBranchValue) {
+      return null
+    }
+
+    return branchOptionMap.get(normalizedBranchValue) ?? null
+  }, [branchOptionMap, normalizedBranchValue])
+
+  const branchDisplayLabel = selectedBranchOption?.label || normalizedBranchValue || '选择分支'
+  const branchDisplayDescription = useMemo(() => {
+    if (selectedBranchOption?.description) {
+      return selectedBranchOption.description
+    }
+
+    if (selectedBranchOption?.isDefault) {
+      return '默认分支'
+    }
+
+    if (normalizedBranchValue) {
+      return '自定义分支'
+    }
+
+    return branchLoading ? '分支列表加载中…' : '请选择分支'
+  }, [branchLoading, normalizedBranchValue, selectedBranchOption])
+
+  const branchSelectorAvailable = gitlabIntegrationReady && Boolean(repositoryIdentifier)
+  const branchSelectorDisabled = !isEditing || !branchSelectorAvailable
+  const isGitConfigLoading = isGitLabProvider && !gitProviderConfigLoaded
+  const showGitlabConfigWarning = isGitLabProvider && gitProviderConfigLoaded && (!gitProviderConfig || !gitProviderConfig.enabled || !gitProviderConfig.hasToken)
+
+  const fetchBranches = useCallback(
+    async (
+      keyword?: string,
+      options: { useDefaultBranch?: boolean } = {}
+    ) => {
+      if (!branchSelectorAvailable || !repositoryIdentifier) {
+        if (options.useDefaultBranch) {
+          branchInitialLoadRef.current = false
+        }
+        return
+      }
+
+      setBranchLoading(true)
+      setBranchError(null)
+
+      try {
+        const result = await systemConfigSvc.getGitRepositoryBranches(repositoryIdentifier, {
+          search: keyword?.trim() || undefined,
+          perPage: 100
+        })
+
+        const optionsMapped = result.items.map<GitBranchOption>((branch) => {
+          const descriptionParts: string[] = []
+
+          if (branch.commit?.shortId) {
+            descriptionParts.push(`#${branch.commit.shortId}`)
+          }
+
+          if (branch.commit?.title) {
+            descriptionParts.push(branch.commit.title)
+          }
+
+          return {
+            value: branch.name,
+            label: branch.name,
+            isDefault: branch.default,
+            description: descriptionParts.join(' · ') || null
+          }
+        })
+
+        const currentBranch = gitBranchRef.current.trim()
+        if (currentBranch && !optionsMapped.some((item) => item.value === currentBranch)) {
+          optionsMapped.unshift({
+            value: currentBranch,
+            label: currentBranch,
+            isDefault: false,
+            description: null
+          })
+        }
+
+        setBranchOptions(optionsMapped)
+
+        if (options.useDefaultBranch) {
+          const matched = optionsMapped.find((item) => item.value === currentBranch)
+
+          if (!matched) {
+            const fallback = optionsMapped.find((item) => item.isDefault) ?? optionsMapped[0]
+            if (fallback) {
+              gitBranchRef.current = fallback.value
+              setEditedService((prev: any) => ({ ...prev, git_branch: fallback.value }))
+              setBuildBranch((prev) => (prev.trim() ? prev : fallback.value))
+            }
+          }
+
+          branchInitialLoadRef.current = true
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '仓库分支加载失败'
+        setBranchError(message)
+        setBranchOptions([])
+      } finally {
+        setBranchLoading(false)
+      }
+    },
+    [branchSelectorAvailable, repositoryIdentifier, setEditedService]
+  )
+
+  useEffect(() => {
+    if (!branchSelectorAvailable) {
+      setBranchPickerOpen(false)
+      setBranchOptions([])
+      setBranchError(null)
+      setBranchSearch('')
+      branchInitialLoadRef.current = false
+      setBranchLoading(false)
+      return
+    }
+
+    branchInitialLoadRef.current = false
+    void fetchBranches(undefined, { useDefaultBranch: true })
+  }, [branchSelectorAvailable, fetchBranches])
+
+  useEffect(() => {
+    if (!branchSelectorAvailable || !branchPickerOpen) {
+      return
+    }
+
+    const keyword = branchSearch.trim()
+    if (!keyword) {
+      return
+    }
+
+    const handler = window.setTimeout(() => {
+      void fetchBranches(keyword, { useDefaultBranch: false })
+    }, 350)
+
+    return () => {
+      window.clearTimeout(handler)
+    }
+  }, [branchPickerOpen, branchSearch, branchSelectorAvailable, fetchBranches])
+
+  useEffect(() => {
+    if (branchSelectorDisabled && branchPickerOpen) {
+      setBranchPickerOpen(false)
+    }
+  }, [branchPickerOpen, branchSelectorDisabled])
 
   const builtImageRef = useMemo(() => parseImageReference(service?.built_image), [service?.built_image])
   const builtImageDisplay = builtImageRef.image ? formatImageReference(builtImageRef.image, builtImageRef.tag) : ''
@@ -551,7 +798,7 @@ export default function ServiceDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [initializeNetworkState, projectId, router, serviceId])
+  }, [initializeNetworkState, loadServiceImages, projectId, router, serviceId])
 
   const loadDeployments = useCallback(async (showToast = false) => {
     if (!serviceId) return
@@ -632,12 +879,24 @@ export default function ServiceDetailPage() {
 
   useEffect(() => {
     if (service?.type === ServiceType.APPLICATION) {
-      setBuildBranch((prev) => prev || service.git_branch || 'main')
+      setBuildBranch((prev) => (prev.trim() ? prev : service?.git_branch || 'main'))
     } else {
       setBuildBranch('')
       setBuildTag('')
     }
   }, [service?.git_branch, service?.type])
+
+  useEffect(() => {
+    if (service?.type !== ServiceType.APPLICATION) {
+      return
+    }
+
+    if (!normalizedBranchValue) {
+      return
+    }
+
+    setBuildBranch((prev) => (prev.trim() ? prev : normalizedBranchValue))
+  }, [normalizedBranchValue, service?.type])
 
   useEffect(() => {
     if (!serviceId) return
@@ -1213,12 +1472,167 @@ export default function ServiceDetailPage() {
                         <Input value={service.git_provider || '-'} disabled />
                       </div>
                       <div className="space-y-2">
-                        <Label>分支</Label>
-                        <Input 
-                          value={isEditing ? (editedService.git_branch || 'main') : (service.git_branch || 'main')}
-                          onChange={(e) => setEditedService({ ...editedService, git_branch: e.target.value })}
-                          disabled={!isEditing}
-                        />
+                        <div className="flex items-center justify-between">
+                          <Label>分支</Label>
+                          {branchSelectorAvailable ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => void fetchBranches(undefined, { useDefaultBranch: false })}
+                              disabled={branchSelectorDisabled || branchLoading}
+                            >
+                              {branchLoading ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              )}
+                              刷新
+                            </Button>
+                          ) : null}
+                        </div>
+                        {branchSelectorAvailable ? (
+                          <>
+                            <Combobox
+                              data={branchComboboxData}
+                              type="分支"
+                              value={normalizedBranchValue}
+                              onValueChange={(value) => {
+                                if (!isEditing) {
+                                  return
+                                }
+                                const trimmed = value.trim()
+                                gitBranchRef.current = trimmed
+                                setEditedService((prev: any) => ({ ...prev, git_branch: trimmed }))
+                                setBuildBranch((prev) => (prev.trim() ? prev : trimmed))
+                                branchInitialLoadRef.current = true
+                                setBranchSearch('')
+                              }}
+                              open={branchPickerOpen}
+                              onOpenChange={(open) => {
+                                if (branchSelectorDisabled) {
+                                  setBranchPickerOpen(false)
+                                  return
+                                }
+
+                                setBranchPickerOpen(open)
+
+                                if (!open) {
+                                  setBranchSearch('')
+                                  return
+                                }
+
+                                if (!branchOptions.length) {
+                                  void fetchBranches(undefined, { useDefaultBranch: !branchInitialLoadRef.current })
+                                }
+                              }}
+                            >
+                              <ComboboxTrigger
+                                className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[44px]"
+                                disabled={branchSelectorDisabled}
+                              >
+                                <div className="flex w-full flex-col items-start gap-1 text-left">
+                                  <span className="w-full truncate text-sm font-medium text-gray-900">
+                                    {branchDisplayLabel}
+                                  </span>
+                                  <span className="w-full truncate text-xs text-gray-500">
+                                    {repositoryIdentifier ? branchDisplayDescription : '请先确认仓库 URL'}
+                                  </span>
+                                </div>
+                              </ComboboxTrigger>
+                              <ComboboxContent
+                                className="max-h-72"
+                                popoverOptions={{ className: 'w-[320px] sm:w-[360px] max-h-72 p-0' }}
+                              >
+                                <ComboboxInput
+                                  placeholder="搜索分支..."
+                                  value={branchSearch}
+                                  disabled={branchSelectorDisabled}
+                                  onValueChange={(value) => setBranchSearch(value)}
+                                />
+                                <ComboboxList className="max-h-60 overflow-y-auto py-1">
+                                  {branchLoading ? (
+                                    <div className="flex items-center justify-center py-6 text-sm text-gray-500">
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      正在加载分支...
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <ComboboxEmpty>未找到匹配的分支</ComboboxEmpty>
+                                      <ComboboxGroup className="space-y-1">
+                                        {branchOptions.map((option) => (
+                                          <ComboboxItem
+                                            key={option.value}
+                                            value={option.value}
+                                            className="flex flex-col gap-1 px-3 py-2"
+                                          >
+                                            <span className="text-sm font-medium text-gray-900">
+                                              {option.label}
+                                              {option.isDefault ? (
+                                                <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                                                  默认
+                                                </span>
+                                              ) : null}
+                                            </span>
+                                            {option.description ? (
+                                              <span className="text-xs text-gray-500">{option.description}</span>
+                                            ) : null}
+                                          </ComboboxItem>
+                                        ))}
+                                      </ComboboxGroup>
+                                    </>
+                                  )}
+                                </ComboboxList>
+                                <ComboboxCreateNew
+                                  onCreateNew={(value) => {
+                                    if (!isEditing) {
+                                      return
+                                    }
+                                    const trimmed = value.trim()
+                                    if (!trimmed) {
+                                      return
+                                    }
+                                    gitBranchRef.current = trimmed
+                                    setEditedService((prev: any) => ({ ...prev, git_branch: trimmed }))
+                                    setBuildBranch((prev) => (prev.trim() ? prev : trimmed))
+                                    branchInitialLoadRef.current = true
+                                    setBranchSearch('')
+                                  }}
+                                >
+                                  {(value) => <span>使用自定义分支 “{value}”</span>}
+                                </ComboboxCreateNew>
+                              </ComboboxContent>
+                            </Combobox>
+                            {branchError ? (
+                              <p className="text-xs text-red-500">{branchError}</p>
+                            ) : (
+                              <p className="text-xs text-gray-500">
+                                {branchSelectorDisabled
+                                  ? '开启编辑后可选择分支。'
+                                  : '可搜索 GitLab 分支，或输入自定义分支名。'}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <Input
+                              value={isEditing ? (editedService.git_branch || 'main') : (service?.git_branch || 'main')}
+                              onChange={(e) =>
+                                setEditedService((prev: any) => ({ ...prev, git_branch: e.target.value }))
+                              }
+                              disabled={!isEditing}
+                              placeholder="main"
+                            />
+                            {isGitConfigLoading ? (
+                              <p className="text-xs text-gray-500">正在加载 Git 配置...</p>
+                            ) : showGitlabConfigWarning ? (
+                              <p className="text-xs text-yellow-600">
+                                GitLab 配置不可用，当前无法搜索分支，请手动输入分支名称。
+                              </p>
+                            ) : null}
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="space-y-2">
@@ -2112,7 +2526,7 @@ export default function ServiceDetailPage() {
                         <li>此 YAML 基于当前保存的服务配置自动生成</li>
                         <li>可复制此配置用于其他 Kubernetes 环境</li>
                         <li>包含 Deployment 和 Service（如有网络配置）资源定义</li>
-                        <li>修改配置后需点击"刷新"重新生成 YAML</li>
+                        <li>修改配置后需点击“刷新”重新生成 YAML</li>
                       </ul>
                     </div>
                     <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-xs min-h-[400px] max-h-[600px] overflow-auto">

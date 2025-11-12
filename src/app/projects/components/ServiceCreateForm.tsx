@@ -13,7 +13,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Combobox,
   ComboboxContent,
@@ -142,8 +141,8 @@ export default function ServiceCreateForm({
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
   
   // 网络配置（镜像服务）
-  const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
-  const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
+  const networkServiceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer' = 'ClusterIP'
+  const networkPorts = useMemo<NetworkPortFormState[]>(() => [createEmptyPort()], [])
   const [imageReference, setImageReference] = useState<ImageReferenceValue>({ optionId: null, image: '', tag: 'latest' })
 
   const [gitProviderConfig, setGitProviderConfig] = useState<GitProviderConfig | null>(null)
@@ -284,7 +283,18 @@ export default function ServiceCreateForm({
     }
 
     if (selectedRepository) {
-      return selectedRepository.id ?? selectedRepository.pathWithNamespace
+      const path = selectedRepository.pathWithNamespace?.trim()
+      if (path) {
+        return path
+      }
+
+      if (typeof selectedRepository.id === 'number') {
+        return String(selectedRepository.id)
+      }
+
+      if (selectedRepository.id) {
+        return String(selectedRepository.id)
+      }
     }
 
     const normalizedUrl = (gitRepositoryValue ?? '').trim()
@@ -292,7 +302,17 @@ export default function ServiceCreateForm({
       return null
     }
 
-    return extractGitLabProjectPath(normalizedUrl, gitProviderConfig?.baseUrl ?? '')
+    const extracted = extractGitLabProjectPath(normalizedUrl, gitProviderConfig?.baseUrl ?? '')
+    if (extracted) {
+      return extracted
+    }
+
+    const fallback = normalizedUrl.replace(/\.git$/i, '')
+    if (fallback.includes('://')) {
+      return null
+    }
+
+    return fallback
   }, [canUseBranchSelector, gitProviderConfig?.baseUrl, gitRepositoryValue, selectedRepository])
 
   const fetchRepositories = useCallback(
@@ -380,10 +400,19 @@ export default function ServiceCreateForm({
           }
         })
 
+        const currentBranch = (gitBranchRef.current ?? '').trim()
+        if (currentBranch && !optionsMapped.some((item) => item.value === currentBranch)) {
+          optionsMapped.unshift({
+            value: currentBranch,
+            label: currentBranch,
+            isDefault: false,
+            description: null
+          })
+        }
+
         setBranchOptions(optionsMapped)
 
         if (options.useDefaultBranch) {
-          const currentBranch = (gitBranchRef.current ?? '').trim()
           const matched = optionsMapped.find((item) => item.value === currentBranch)
 
           if (!matched) {
@@ -437,6 +466,7 @@ export default function ServiceCreateForm({
   useEffect(() => {
     if (!canUseBranchSelector) {
       branchInitialLoadRef.current = false
+      setBranchPickerOpen(false)
       setBranchOptions([])
       setBranchError(null)
       setBranchSearch('')
@@ -579,38 +609,13 @@ export default function ServiceCreateForm({
     return fromName || 'service'
   }
 
-  const addNetworkPort = () => {
-    setNetworkPorts((ports) => [...ports, createEmptyPort()])
-  }
 
-  const removeNetworkPort = (id: string) => {
-    setNetworkPorts((ports) => (ports.length > 1 ? ports.filter((port) => port.id !== id) : ports))
-  }
-
-  const updatePortField = <K extends keyof NetworkPortFormState>(
-    id: string,
-    field: K,
-    value: NetworkPortFormState[K]
-  ) => {
-    setNetworkPorts((ports) =>
-      ports.map((port) => (port.id === id ? { ...port, [field]: value } : port))
-    )
-  }
-
-  const handleDomainPrefixChange = (id: string, value: string) => {
-    updatePortField(id, 'domainPrefix', sanitizeDomainLabel(value))
-  }
-
-  const handleToggleDomain = (id: string, enabled: boolean) => {
-    updatePortField(id, 'enableDomain', enabled)
-  }
-  
-  const domainSuffixText = projectIdentifier
-    ? `${projectIdentifier}.${DEFAULT_DOMAIN_ROOT}`
-    : `项目编号.${DEFAULT_DOMAIN_ROOT}`
   
   // 卷挂载管理
-  const [volumes, setVolumes] = useState<Array<{ container_path: string; host_path: string; read_only: boolean }>>([{ container_path: '', host_path: '', read_only: false }])
+  const volumes = useMemo<Array<{ container_path: string; host_path: string; read_only: boolean }>>(
+    () => [{ container_path: '', host_path: '', read_only: false }],
+    []
+  )
   
   // 构建参数管理
   const [buildArgs, setBuildArgs] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
