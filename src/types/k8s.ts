@@ -1,4 +1,4 @@
-import type { NetworkConfig } from './project'
+import type { NetworkConfig, BaseService } from './project'
 
 export type K8sWorkloadKind = 'Deployment' | 'StatefulSet'
 
@@ -53,4 +53,17 @@ export interface K8sImportRequest {
     name: string
     kind: K8sWorkloadKind
   }
+}
+
+export interface K8sServiceStatus {
+  status: 'running' | 'pending' | 'stopped' | 'error'
+  replicas?: number
+  availableReplicas?: number
+  readyReplicas?: number
+  updatedReplicas?: number
+  conditions?: Array<Record<string, unknown>>
+  namespace?: string
+  serviceName?: string
+  dbStatus?: BaseService['status']
+  error?: string
 }
