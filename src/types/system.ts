@@ -39,3 +39,24 @@ export interface GitRepositorySearchResult {
   totalPages?: number
   perPage?: number
 }
+
+export interface GitBranchInfo {
+  name: string
+  default: boolean
+  merged: boolean
+  protected: boolean
+  webUrl?: string | null
+  commit?: {
+    id: string
+    shortId: string
+    title?: string | null
+    message?: string | null
+    authorName?: string | null
+    committedDate?: string | null
+  }
+}
+
+export interface GitBranchListResult {
+  items: GitBranchInfo[]
+  defaultBranch?: string | null
+}

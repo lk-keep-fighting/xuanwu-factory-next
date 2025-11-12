@@ -1,4 +1,5 @@
 import type {
+  GitBranchListResult,
   GitProviderConfigResponse,
   GitRepositorySearchResult,
   UpdateGitProviderConfigPayload
@@ -71,5 +72,55 @@ export const systemConfigSvc = {
     }
 
     return (await response.json()) as GitRepositorySearchResult
+  },
+
+  async getGitRepositoryBranches(
+    identifier: number | string,
+    options: { search?: string; perPage?: number } = {}
+  ): Promise<GitBranchListResult> {
+    let normalizedIdentifier: string
+
+    if (typeof identifier === 'number') {
+      normalizedIdentifier = String(identifier)
+    } else {
+      const trimmed = identifier.trim()
+      if (!trimmed) {
+        throw new Error('仓库标识不能为空')
+      }
+
+      try {
+        normalizedIdentifier = decodeURIComponent(trimmed)
+      } catch {
+        normalizedIdentifier = trimmed
+      }
+    }
+
+    normalizedIdentifier = normalizedIdentifier.trim()
+    if (!normalizedIdentifier) {
+      throw new Error('仓库标识不能为空')
+    }
+
+    const encodedIdentifier = typeof identifier === 'number' ? normalizedIdentifier : encodeURIComponent(normalizedIdentifier)
+    const params = new URLSearchParams()
+
+    if (options.search && options.search.trim()) {
+      params.set('search', options.search.trim())
+    }
+
+    if (typeof options.perPage === 'number' && Number.isFinite(options.perPage) && options.perPage > 0) {
+      params.set('per_page', String(options.perPage))
+    }
+
+    const query = params.size ? `?${params.toString()}` : ''
+
+    const response = await fetch(`${API_BASE}/repositories/${encodedIdentifier}/branches${query}`, {
+      cache: 'no-store'
+    })
+
+    if (!response.ok) {
+      throw await parseErrorResponse(response, '仓库分支加载失败')
+    }
+
+    return (await response.json()) as GitBranchListResult
   }
 }

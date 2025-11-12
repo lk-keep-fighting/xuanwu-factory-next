@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,7 +22,8 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
-  ComboboxTrigger
+  ComboboxTrigger,
+  ComboboxCreateNew
 } from '@/components/ui/shadcn-io/combobox'
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
@@ -31,6 +32,7 @@ import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { ServiceType, DatabaseType, GitProvider, BuildType, Service } from '@/types/project'
 import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Github, Gitlab, Database as DatabaseIcon, Plus, Trash2, Box, Loader2, RefreshCcw } from 'lucide-react'
+import { extractGitLabProjectPath } from '@/lib/gitlab'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 
 const extractImageBaseName = (image?: string) => {
@@ -104,6 +106,13 @@ type GitRepositoryOption = {
   repo: GitRepositoryInfo
 }
 
+type GitBranchOption = {
+  value: string
+  label: string
+  isDefault: boolean
+  description?: string | null
+}
+
 interface ServiceCreateFormProps {
 
   projectIdentifier?: string
@@ -120,7 +129,12 @@ export default function ServiceCreateForm({
   onCancel
 }: ServiceCreateFormProps) {
   const [loading, setLoading] = useState(false)
-  const { register, handleSubmit, setValue, watch, unregister } = useForm<ServiceFormValues>()
+  const { register, handleSubmit, setValue, watch, unregister } = useForm<ServiceFormValues>({
+    defaultValues: {
+      git_branch: 'main',
+      git_path: '/'
+    }
+  })
   const [selectedGitProvider, setSelectedGitProvider] = useState<GitProvider>(GitProvider.GITHUB)
   const [selectedDatabaseType, setSelectedDatabaseType] = useState<DatabaseType>(DatabaseType.MYSQL)
   
@@ -140,12 +154,23 @@ export default function ServiceCreateForm({
   const [repositoryError, setRepositoryError] = useState<string | null>(null)
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false)
   const [selectedRepository, setSelectedRepository] = useState<GitRepositoryInfo | null>(null)
+  const [branchOptions, setBranchOptions] = useState<GitBranchOption[]>([])
+  const [branchLoading, setBranchLoading] = useState(false)
+  const [branchError, setBranchError] = useState<string | null>(null)
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false)
+  const [branchSearch, setBranchSearch] = useState('')
+  const branchInitialLoadRef = useRef(false)
   
   const imageValue = watch('image') as string | undefined
   const tagValue = watch('tag') as string | undefined
   const serviceNameValue = watch('name') as string | undefined
   const gitRepositoryValue = watch('git_repository') as string | undefined
   const gitBranchValue = watch('git_branch') as string | undefined
+  const gitBranchRef = useRef(gitBranchValue)
+  
+  useEffect(() => {
+    gitBranchRef.current = gitBranchValue
+  }, [gitBranchValue])
   
   useEffect(() => {
     const loadGitProviderConfig = async () => {
@@ -197,6 +222,36 @@ export default function ServiceCreateForm({
     return repositoryOptions.map((option) => ({ value: option.value, label: option.label }))
   }, [repositoryOptions])
 
+  const branchOptionMap = useMemo(() => {
+    return new Map(branchOptions.map((option) => [option.value, option]))
+  }, [branchOptions])
+
+  const branchComboboxData = useMemo(() => {
+    return branchOptions.map((option) => ({ value: option.value, label: option.label }))
+  }, [branchOptions])
+
+  const normalizedBranchValue = useMemo(() => (gitBranchValue ?? '').trim(), [gitBranchValue])
+  const selectedBranchOption = useMemo(() => {
+    if (!normalizedBranchValue) {
+      return null
+    }
+    return branchOptionMap.get(normalizedBranchValue) ?? null
+  }, [branchOptionMap, normalizedBranchValue])
+
+  const branchDisplayLabel = selectedBranchOption?.label || normalizedBranchValue || '选择分支'
+
+  const branchDisplayDescription = useMemo(() => {
+    if (selectedBranchOption?.description) {
+      return selectedBranchOption.description
+    }
+
+    if (selectedBranchOption?.isDefault) {
+      return '默认分支'
+    }
+
+    return normalizedBranchValue ? '自定义分支' : '请选择分支'
+  }, [normalizedBranchValue, selectedBranchOption])
+
   const manualRepositoryDisplay = useMemo(() => {
     const normalized = gitRepositoryValue?.trim()
 
@@ -210,6 +265,35 @@ export default function ServiceCreateForm({
 
     return normalized
   }, [gitRepositoryValue, selectedRepository])
+
+  const canUseBranchSelector = useMemo(() => {
+    if (selectedGitProvider !== GitProvider.GITLAB) {
+      return false
+    }
+
+    if (!gitProviderConfig) {
+      return false
+    }
+
+    return gitProviderConfig.enabled && gitProviderConfig.hasToken
+  }, [gitProviderConfig, selectedGitProvider])
+
+  const repositoryIdentifier = useMemo(() => {
+    if (!canUseBranchSelector) {
+      return null
+    }
+
+    if (selectedRepository) {
+      return selectedRepository.id ?? selectedRepository.pathWithNamespace
+    }
+
+    const normalizedUrl = (gitRepositoryValue ?? '').trim()
+    if (!normalizedUrl) {
+      return null
+    }
+
+    return extractGitLabProjectPath(normalizedUrl, gitProviderConfig?.baseUrl ?? '')
+  }, [canUseBranchSelector, gitProviderConfig?.baseUrl, gitRepositoryValue, selectedRepository])
 
   const fetchRepositories = useCallback(
     async (keyword?: string) => {
@@ -255,16 +339,90 @@ export default function ServiceCreateForm({
     [gitProviderConfig, selectedRepository]
   )
 
+  const fetchBranches = useCallback(
+    async (
+      keyword?: string,
+      options: { useDefaultBranch?: boolean } = {}
+    ) => {
+      if (!repositoryIdentifier) {
+        setBranchOptions([])
+        if (options.useDefaultBranch) {
+          branchInitialLoadRef.current = false
+        }
+        return
+      }
+
+      setBranchLoading(true)
+      setBranchError(null)
+
+      try {
+        const result = await systemConfigSvc.getGitRepositoryBranches(repositoryIdentifier, {
+          search: keyword?.trim() || undefined,
+          perPage: 100
+        })
+
+        const optionsMapped = result.items.map<GitBranchOption>((branch) => {
+          const descriptionParts: string[] = []
+
+          if (branch.commit?.shortId) {
+            descriptionParts.push(`#${branch.commit.shortId}`)
+          }
+
+          if (branch.commit?.title) {
+            descriptionParts.push(branch.commit.title)
+          }
+
+          return {
+            value: branch.name,
+            label: branch.name,
+            isDefault: branch.default,
+            description: descriptionParts.join(' · ') || null
+          }
+        })
+
+        setBranchOptions(optionsMapped)
+
+        if (options.useDefaultBranch) {
+          const currentBranch = (gitBranchRef.current ?? '').trim()
+          const matched = optionsMapped.find((item) => item.value === currentBranch)
+
+          if (!matched) {
+            const fallback = optionsMapped.find((item) => item.isDefault) ?? optionsMapped[0]
+            if (fallback) {
+              setValue('git_branch', fallback.value, { shouldValidate: true, shouldDirty: false })
+              gitBranchRef.current = fallback.value
+            }
+          }
+
+          branchInitialLoadRef.current = true
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '仓库分支加载失败'
+        setBranchError(message)
+        setBranchOptions([])
+      } finally {
+        setBranchLoading(false)
+      }
+    },
+    [gitBranchRef, repositoryIdentifier, setValue]
+  )
+
   const handleRepositorySelect = useCallback(
     (value: string) => {
       const option = repositoryOptionMap.get(value)
+
+      branchInitialLoadRef.current = false
+      setBranchOptions([])
+      setBranchError(null)
+      setBranchSearch('')
 
       if (option) {
         setSelectedRepository(option.repo)
         setValue('git_repository', option.repo.httpUrlToRepo, { shouldValidate: true, shouldDirty: true })
 
-        if (!gitBranchValue && option.repo.defaultBranch) {
-          setValue('git_branch', option.repo.defaultBranch, { shouldDirty: true })
+        if (option.repo.defaultBranch) {
+          setValue('git_branch', option.repo.defaultBranch, { shouldValidate: true, shouldDirty: false })
+          gitBranchRef.current = option.repo.defaultBranch
         }
       } else {
         setSelectedRepository(null)
@@ -273,8 +431,52 @@ export default function ServiceCreateForm({
 
       setRepositorySearch('')
     },
-    [repositoryOptionMap, setValue, gitBranchValue]
+    [gitBranchRef, repositoryOptionMap, setValue]
   )
+  
+  useEffect(() => {
+    if (!canUseBranchSelector) {
+      branchInitialLoadRef.current = false
+      setBranchOptions([])
+      setBranchError(null)
+      setBranchSearch('')
+      setBranchLoading(false)
+      return
+    }
+
+    branchInitialLoadRef.current = false
+
+    if (!repositoryIdentifier) {
+      setBranchOptions([])
+      setBranchError(null)
+      return
+    }
+
+    void fetchBranches(undefined, { useDefaultBranch: true })
+  }, [canUseBranchSelector, fetchBranches, repositoryIdentifier])
+  
+  useEffect(() => {
+    if (!branchPickerOpen) {
+      return
+    }
+
+    if (!repositoryIdentifier) {
+      return
+    }
+
+    const keyword = branchSearch.trim()
+    if (!keyword) {
+      return
+    }
+
+    const handler = window.setTimeout(() => {
+      void fetchBranches(keyword, { useDefaultBranch: false })
+    }, 350)
+
+    return () => {
+      window.clearTimeout(handler)
+    }
+  }, [branchPickerOpen, branchSearch, fetchBranches, repositoryIdentifier])
   
   useEffect(() => {
     if (selectedGitProvider !== GitProvider.GITLAB) {
@@ -322,6 +524,10 @@ export default function ServiceCreateForm({
       if (selectedRepository) {
         setSelectedRepository(null)
       }
+      branchInitialLoadRef.current = false
+      setBranchOptions([])
+      setBranchError(null)
+      setBranchSearch('')
       return
     }
 
@@ -747,26 +953,37 @@ export default function ServiceCreateForm({
                         }
                       }}
                     >
-                      <ComboboxTrigger className="w-full justify-between">
-                        <div className="flex flex-col items-start gap-0.5 text-left">
-                          <span className="text-sm font-medium text-gray-900 truncate">
+                      <ComboboxTrigger className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[48px]">
+                        <div className="flex w-full flex-col items-start gap-1 text-left">
+                          <span className="w-full truncate text-sm font-semibold text-gray-900">
                             {selectedRepository
-                              ? selectedRepository.name
+                              ? selectedRepository.fullName || selectedRepository.name
                               : manualRepositoryDisplay || '选择仓库'}
                           </span>
-                          <span className="text-xs text-gray-500 truncate">
-                            {selectedRepository
-                              ? selectedRepository.pathWithNamespace
-                              : '支持关键词搜索，选择后自动填充仓库 URL'}
-                          </span>
+                          <div className="flex w-full items-center gap-2 text-xs text-gray-500">
+                            <span className="truncate">
+                              {selectedRepository
+                                ? selectedRepository.pathWithNamespace
+                                : '支持关键词搜索，选择后自动填充仓库 URL'}
+                            </span>
+                            {selectedRepository?.defaultBranch ? (
+                              <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                                默认 {selectedRepository.defaultBranch}
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
                       </ComboboxTrigger>
-                      <ComboboxContent>
+                      <ComboboxContent
+                        className="max-h-80"
+                        popoverOptions={{ className: 'w-[420px] max-h-80 p-0' }}
+                      >
                         <ComboboxInput
                           placeholder="搜索仓库..."
+                          value={repositorySearch}
                           onValueChange={(value) => setRepositorySearch(value)}
                         />
-                        <ComboboxList>
+                        <ComboboxList className="max-h-72 overflow-y-auto py-1">
                           {repositoryLoading ? (
                             <div className="flex items-center justify-center py-6 text-sm text-gray-500">
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -775,16 +992,20 @@ export default function ServiceCreateForm({
                           ) : (
                             <>
                               <ComboboxEmpty>未找到匹配的仓库</ComboboxEmpty>
-                              <ComboboxGroup>
+                              <ComboboxGroup className="space-y-1">
                                 {repositoryOptions.map((option) => (
-                                  <ComboboxItem key={option.value} value={option.value}>
-                                    <div className="flex flex-col">
-                                      <span className="text-sm font-medium text-gray-900">{option.repo.name}</span>
-                                      <span className="text-xs text-gray-500">{option.repo.pathWithNamespace}</span>
-                                      {option.repo.defaultBranch ? (
-                                        <span className="text-xs text-gray-400">默认分支：{option.repo.defaultBranch}</span>
-                                      ) : null}
-                                    </div>
+                                  <ComboboxItem
+                                    key={option.value}
+                                    value={option.value}
+                                    className="flex flex-col gap-1 px-3 py-2"
+                                  >
+                                    <span className="text-sm font-medium text-gray-900">
+                                      {option.repo.fullName || option.repo.name}
+                                    </span>
+                                    <span className="text-xs text-gray-500">{option.repo.pathWithNamespace}</span>
+                                    {option.repo.defaultBranch ? (
+                                      <span className="text-[11px] text-gray-400">默认分支：{option.repo.defaultBranch}</span>
+                                    ) : null}
                                   </ComboboxItem>
                                 ))}
                               </ComboboxGroup>
@@ -818,13 +1039,145 @@ export default function ServiceCreateForm({
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="git_branch">分支</Label>
-                <Input
-                  id="git_branch"
-                  {...register('git_branch')}
-                  placeholder="main"
-                  defaultValue="main"
-                />
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="git_branch">分支</Label>
+                  {canUseBranchSelector ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1"
+                      onClick={() => void fetchBranches(undefined, { useDefaultBranch: false })}
+                      disabled={!repositoryIdentifier || branchLoading}
+                    >
+                      {branchLoading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCcw className="h-3.5 w-3.5" />
+                      )}
+                      刷新
+                    </Button>
+                  ) : null}
+                </div>
+                {canUseBranchSelector ? (
+                  <>
+                    <Combobox
+                      data={branchComboboxData}
+                      type="分支"
+                      value={normalizedBranchValue}
+                      onValueChange={(value) => {
+                        const trimmed = value.trim()
+                        const current = (gitBranchRef.current ?? '').trim()
+                        setValue('git_branch', trimmed, {
+                          shouldDirty: trimmed !== current,
+                          shouldValidate: true
+                        })
+                        gitBranchRef.current = trimmed
+                        branchInitialLoadRef.current = true
+                        setBranchSearch('')
+                      }}
+                      open={branchPickerOpen}
+                      onOpenChange={(open) => {
+                        setBranchPickerOpen(open)
+                        if (!open) {
+                          setBranchSearch('')
+                        } else if (!branchOptions.length && repositoryIdentifier) {
+                          void fetchBranches(undefined, { useDefaultBranch: !branchInitialLoadRef.current })
+                        }
+                      }}
+                      disabled={!repositoryIdentifier}
+                    >
+                      <ComboboxTrigger
+                        id="git_branch"
+                        className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[44px]"
+                        disabled={!repositoryIdentifier}
+                      >
+                        <div className="flex w-full flex-col items-start gap-1 text-left">
+                          <span className="w-full truncate text-sm font-medium text-gray-900">
+                            {branchDisplayLabel}
+                          </span>
+                          <span className="w-full truncate text-xs text-gray-500">
+                            {repositoryIdentifier ? branchDisplayDescription : '请先选择仓库'}
+                          </span>
+                        </div>
+                      </ComboboxTrigger>
+                      <ComboboxContent
+                        className="max-h-72"
+                        popoverOptions={{ className: 'w-[320px] sm:w-[360px] max-h-72 p-0' }}
+                      >
+                        <ComboboxInput
+                          placeholder={repositoryIdentifier ? '搜索分支...' : '请先选择仓库'}
+                          value={branchSearch}
+                          onValueChange={(value) => setBranchSearch(value)}
+                          disabled={!repositoryIdentifier}
+                        />
+                        <ComboboxList className="max-h-60 overflow-y-auto py-1">
+                          {branchLoading ? (
+                            <div className="flex items-center justify-center py-6 text-sm text-gray-500">
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              正在加载分支...
+                            </div>
+                          ) : (
+                            <>
+                              <ComboboxEmpty>未找到匹配的分支</ComboboxEmpty>
+                              <ComboboxGroup className="space-y-1">
+                                {branchOptions.map((option) => (
+                                  <ComboboxItem
+                                    key={option.value}
+                                    value={option.value}
+                                    className="flex flex-col gap-1 px-3 py-2"
+                                  >
+                                    <span className="text-sm font-medium text-gray-900">
+                                      {option.label}
+                                      {option.isDefault ? (
+                                        <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                                          默认
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                    {option.description ? (
+                                      <span className="text-xs text-gray-500">{option.description}</span>
+                                    ) : null}
+                                  </ComboboxItem>
+                                ))}
+                              </ComboboxGroup>
+                            </>
+                          )}
+                        </ComboboxList>
+                        <ComboboxCreateNew
+                          onCreateNew={(value) => {
+                            const trimmed = value.trim()
+                            if (!trimmed) {
+                              return
+                            }
+                            const current = (gitBranchRef.current ?? '').trim()
+                            setValue('git_branch', trimmed, {
+                              shouldDirty: trimmed !== current,
+                              shouldValidate: true
+                            })
+                            gitBranchRef.current = trimmed
+                            branchInitialLoadRef.current = true
+                            setBranchSearch('')
+                          }}
+                        >
+                          {(value) => <span>使用自定义分支 “{value}”</span>}
+                        </ComboboxCreateNew>
+                      </ComboboxContent>
+                    </Combobox>
+                    <input type="hidden" {...register('git_branch', { required: true })} />
+                    {branchError ? (
+                      <p className="text-xs text-red-500">{branchError}</p>
+                    ) : (
+                      <p className="text-xs text-gray-500">选择仓库后可搜索并选择分支，或输入自定义分支名。</p>
+                    )}
+                  </>
+                ) : (
+                  <Input
+                    id="git_branch"
+                    {...register('git_branch', { required: true })}
+                    placeholder="main"
+                  />
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="git_path">项目路径</Label>
@@ -832,7 +1185,6 @@ export default function ServiceCreateForm({
                   id="git_path"
                   {...register('git_path')}
                   placeholder="/"
-                  defaultValue="/"
                 />
               </div>
             </div>

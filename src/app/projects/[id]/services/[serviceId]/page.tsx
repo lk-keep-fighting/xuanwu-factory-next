@@ -1,9 +1,9 @@
 'use client'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box } from 'lucide-react'
+import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -11,16 +11,30 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxCreateNew
+} from '@/components/ui/shadcn-io/combobox'
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { serviceSvc } from '@/service/serviceSvc'
+import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { projectSvc } from '@/service/projectSvc'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 import { findVolumeTemplate, generateNFSSubpath, type VolumeTemplate } from '@/lib/volume-templates'
 import { cn } from '@/lib/utils'
 import { parseImageReference, formatImageReference, isImageReferenceEqual } from '@/lib/service-image'
-import { ServiceType } from '@/types/project'
+import { extractGitLabProjectPath } from '@/lib/gitlab'
+import { ServiceType, GitProvider } from '@/types/project'
 import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus } from '@/types/project'
+import type { GitProviderConfig } from '@/types/system'
 
 const STATUS_COLORS: Record<string, string> = {
   running: 'bg-green-500',
@@ -41,6 +55,13 @@ const STATUS_LABELS: Record<string, string> = {
 const SERVICE_STATUSES = ['running', 'pending', 'stopped', 'error', 'building'] as const
 
 type ServiceStatus = (typeof SERVICE_STATUSES)[number]
+
+type GitBranchOption = {
+  value: string
+  label: string
+  isDefault: boolean
+  description?: string | null
+}
 
 const normalizeServiceStatus = (status?: string): ServiceStatus => {
   if (!status || typeof status !== 'string') {
@@ -192,6 +213,14 @@ export default function ServiceDetailPage() {
   const [buildingImage, setBuildingImage] = useState(false)
   const [buildBranch, setBuildBranch] = useState('')
   const [buildTag, setBuildTag] = useState('')
+  const [gitProviderConfig, setGitProviderConfig] = useState<GitProviderConfig | null>(null)
+  const [branchOptions, setBranchOptions] = useState<GitBranchOption[]>([])
+  const [branchLoading, setBranchLoading] = useState(false)
+  const [branchError, setBranchError] = useState<string | null>(null)
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false)
+  const [branchSearch, setBranchSearch] = useState('')
+  const branchInitialLoadRef = useRef(false)
+  const gitBranchRef = useRef<string>('')
 
   const builtImageRef = useMemo(() => parseImageReference(service?.built_image), [service?.built_image])
   const builtImageDisplay = builtImageRef.image ? formatImageReference(builtImageRef.image, builtImageRef.tag) : ''
