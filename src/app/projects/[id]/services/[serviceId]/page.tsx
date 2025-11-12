@@ -173,34 +173,39 @@ const formatDuration = (start?: string, end?: string) => {
 // 解析资源限制字符串
 const parseResourceValue = (value: string | undefined, type: 'cpu' | 'memory') => {
   if (!value) return { value: '', unit: type === 'cpu' ? 'm' : 'Mi' }
-  
+
   const trimmed = value.trim()
   if (!trimmed) return { value: '', unit: type === 'cpu' ? 'm' : 'Mi' }
-  
+
   if (type === 'cpu') {
     // CPU: 支持 "1000m" 或 "1" 格式
     if (trimmed.endsWith('m')) {
       return { value: trimmed.slice(0, -1), unit: 'm' as const }
-    } else {
-      return { value: trimmed, unit: '' as const }
     }
-  } else {
-    // Memory: 支持 "512Mi" 或 "1Gi" 格式
-    if (trimmed.endsWith('Gi')) {
-      return { value: trimmed.slice(0, -2), unit: 'Gi' as const }
-    } else if (trimmed.endsWith('Mi')) {
-      return { value: trimmed.slice(0, -2), unit: 'Mi' as const }
-    } else {
-      // 默认当作 Mi
-      return { value: trimmed, unit: 'Mi' as const }
-    }
+
+    return { value: trimmed, unit: 'core' as const }
   }
+
+  // Memory: 支持 "512Mi" 或 "1Gi" 格式
+  if (trimmed.endsWith('Gi')) {
+    return { value: trimmed.slice(0, -2), unit: 'Gi' as const }
+  }
+
+  if (trimmed.endsWith('Mi')) {
+    return { value: trimmed.slice(0, -2), unit: 'Mi' as const }
+  }
+
+  // 默认当作 Mi
+  return { value: trimmed, unit: 'Mi' as const }
 }
 
 // 组合资源限制字符串
 const combineResourceValue = (value: string, unit: string) => {
   const trimmedValue = value.trim()
   if (!trimmedValue) return ''
+  if (unit === 'core') {
+    return trimmedValue
+  }
   return `${trimmedValue}${unit}`
 }
 
@@ -220,7 +225,7 @@ export default function ServiceDetailPage() {
   const [volumes, setVolumes] = useState<Array<{ nfs_subpath?: string; container_path: string; read_only: boolean }>>([])
   // 资源限制状态
   const [cpuValue, setCpuValue] = useState('')
-  const [cpuUnit, setCpuUnit] = useState<'m' | ''>('m')
+  const [cpuUnit, setCpuUnit] = useState<'m' | 'core'>('m')
   const [memoryValue, setMemoryValue] = useState('')
   const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Mi')
   const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
@@ -830,7 +835,7 @@ export default function ServiceDetailPage() {
       const parsedCpu = parseResourceValue(cpuLimit, 'cpu')
       const parsedMemory = parseResourceValue(memoryLimit, 'memory')
       setCpuValue(parsedCpu.value)
-      setCpuUnit(parsedCpu.unit as 'm' | '')
+      setCpuUnit(parsedCpu.unit as 'm' | 'core')
       setMemoryValue(parsedMemory.value)
       setMemoryUnit(parsedMemory.unit as 'Mi' | 'Gi')
 
@@ -2209,13 +2214,13 @@ export default function ServiceDetailPage() {
                                 onChange={(e) => setCpuValue(e.target.value)}
                                 className="flex-1"
                               />
-                              <Select value={cpuUnit} onValueChange={(value: 'm' | '') => setCpuUnit(value)}>
+                              <Select value={cpuUnit} onValueChange={(value: 'm' | 'core') => setCpuUnit(value)}>
                                 <SelectTrigger className="w-24">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="m">m (millicores)</SelectItem>
-                                  <SelectItem value="">核 (cores)</SelectItem>
+                                  <SelectItem value="core">核 (cores)</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
