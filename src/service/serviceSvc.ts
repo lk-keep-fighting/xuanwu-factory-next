@@ -6,6 +6,7 @@ import type {
   ServiceImageRecord,
   ServiceImageStatus
 } from '@/types/project'
+import type { K8sServiceStatus } from '@/types/k8s'
 
 const API_BASE = '/api/services'
 
@@ -436,18 +437,37 @@ export const serviceSvc = {
   /**
    * 获取服务实时状态（从 K8s）
    */
-  async getK8sServiceStatus(id: string): Promise<unknown> {
-    const service = await this.getServiceById(id)
-    if (!service) throw new Error('服务不存在')
-    
+  async getK8sServiceStatus(id: string): Promise<K8sServiceStatus> {
     const response = await fetch(`${API_BASE}/${id}/status`)
-    
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Failed to get service status')
+    let payload: unknown = null
+
+    try {
+      payload = await response.json()
+    } catch (error) {
+      if (!response.ok) {
+        throw new Error('获取 Kubernetes 状态失败')
+      }
+
+      throw new Error('获取 Kubernetes 状态失败：返回数据格式无效')
     }
-    
-    return response.json()
+
+    if (!response.ok) {
+      const message =
+        payload &&
+        typeof payload === 'object' &&
+        'error' in (payload as Record<string, unknown>) &&
+        typeof (payload as { error?: unknown }).error === 'string'
+          ? ((payload as { error?: unknown }).error as string)
+          : `请求失败（${response.status}）`
+
+      throw new Error(message)
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('获取 Kubernetes 状态失败：返回数据格式无效')
+    }
+
+    return payload as K8sServiceStatus
   },
 
   /**

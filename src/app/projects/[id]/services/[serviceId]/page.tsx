@@ -34,6 +34,7 @@ import { parseImageReference, formatImageReference, isImageReferenceEqual } from
 import { extractGitLabProjectPath } from '@/lib/gitlab'
 import { ServiceType, GitProvider } from '@/types/project'
 import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus } from '@/types/project'
+import type { K8sServiceStatus } from '@/types/k8s'
 import type { GitProviderConfig } from '@/types/system'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -213,6 +214,9 @@ export default function ServiceDetailPage() {
   const [buildingImage, setBuildingImage] = useState(false)
   const [buildBranch, setBuildBranch] = useState('')
   const [buildTag, setBuildTag] = useState('')
+  const [k8sStatusInfo, setK8sStatusInfo] = useState<K8sServiceStatus | null>(null)
+  const [k8sStatusLoading, setK8sStatusLoading] = useState(false)
+  const [k8sStatusError, setK8sStatusError] = useState<string | null>(null)
   const [gitProviderConfig, setGitProviderConfig] = useState<GitProviderConfig | null>(null)
   const [gitProviderConfigLoaded, setGitProviderConfigLoaded] = useState(false)
   const [branchOptions, setBranchOptions] = useState<GitBranchOption[]>([])
@@ -800,6 +804,48 @@ export default function ServiceDetailPage() {
     }
   }, [initializeNetworkState, loadServiceImages, projectId, router, serviceId])
 
+  const fetchK8sStatus = useCallback(
+    async (options: { showToast?: boolean } = {}) => {
+      if (!serviceId) {
+        return null
+      }
+
+      const { showToast = false } = options
+
+      try {
+        setK8sStatusLoading(true)
+        setK8sStatusError(null)
+        const data = await serviceSvc.getK8sServiceStatus(serviceId)
+        setK8sStatusInfo(data)
+
+        const inlineError =
+          typeof data?.error === 'string' ? data.error.trim() : ''
+        const effectiveInlineError = inlineError.length > 0 ? inlineError : null
+
+        setK8sStatusError(effectiveInlineError)
+
+        if (showToast && effectiveInlineError) {
+          toast.warning(effectiveInlineError)
+        }
+
+        return data
+      } catch (error: any) {
+        const message = error?.message || '获取 Kubernetes 状态失败'
+        setK8sStatusInfo(null)
+        setK8sStatusError(message)
+
+        if (showToast) {
+          toast.error(message)
+        }
+
+        return null
+      } finally {
+        setK8sStatusLoading(false)
+      }
+    },
+    [serviceId]
+  )
+
   const loadDeployments = useCallback(async (showToast = false) => {
     if (!serviceId) return
 
@@ -873,7 +919,10 @@ export default function ServiceDetailPage() {
   }, [serviceId])
 
   useEffect(() => {
+    setK8sStatusInfo(null)
+    setK8sStatusError(null)
     void loadService()
+    void fetchK8sStatus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceId])
 
@@ -932,7 +981,8 @@ export default function ServiceDetailPage() {
       // 调用真正的 K8s 启动API
       await serviceSvc.startService(serviceId)
       toast.success('服务启动成功')
-      loadService()
+      await loadService()
+      await fetchK8sStatus({ showToast: true })
     } catch (error: any) {
       toast.error('启动失败：' + error.message)
     }
@@ -945,7 +995,8 @@ export default function ServiceDetailPage() {
       // 调用真正的 K8s 停止API
       await serviceSvc.stopService(serviceId)
       toast.success('服务已停止')
-      loadService()
+      await loadService()
+      await fetchK8sStatus({ showToast: true })
     } catch (error: any) {
       toast.error('停止失败：' + error.message)
     }
@@ -958,7 +1009,8 @@ export default function ServiceDetailPage() {
       // 调用真正的 K8s 重启 API
       await serviceSvc.restartService(serviceId)
       toast.success('服务重启成功')
-      loadService()
+      await loadService()
+      await fetchK8sStatus({ showToast: true })
     } catch (error: any) {
       toast.error('重启失败：' + error.message)
     }
@@ -1013,6 +1065,7 @@ export default function ServiceDetailPage() {
       
       toast.success(result?.message || '部署成功，服务正在启动')
       await loadService()
+      await fetchK8sStatus({ showToast: true })
       if (service.type === ServiceType.APPLICATION) {
         await loadServiceImages({ page: 1 })
       }
@@ -1327,9 +1380,25 @@ export default function ServiceDetailPage() {
     )
   }
 
-  const normalizedStatus = normalizeServiceStatus(service.status)
-  const statusColor = STATUS_COLORS[normalizedStatus]
-  const statusLabel = STATUS_LABELS[normalizedStatus]
+  const normalizedDbStatus = normalizeServiceStatus(k8sStatusInfo?.dbStatus ?? service.status)
+  let normalizedK8sStatus: ServiceStatus | null = null
+
+  if (typeof k8sStatusInfo?.status === 'string') {
+    const trimmedStatus = k8sStatusInfo.status.trim()
+
+    if (trimmedStatus) {
+      normalizedK8sStatus = normalizeServiceStatus(trimmedStatus)
+    }
+  }
+
+  const normalizedStatus = normalizedK8sStatus ?? normalizedDbStatus
+  const statusColor = STATUS_COLORS[normalizedStatus] ?? 'bg-gray-500'
+  const statusLabel = STATUS_LABELS[normalizedStatus] ?? normalizedStatus
+  const dbStatusLabel = STATUS_LABELS[normalizedDbStatus] ?? normalizedDbStatus
+  const statusSourceLabel = normalizedK8sStatus ? 'Kubernetes 实时状态' : '系统记录状态'
+  const statusMismatch = normalizedK8sStatus !== null && normalizedK8sStatus !== normalizedDbStatus
+  const k8sStatusErrorMessage = typeof k8sStatusError === 'string' ? k8sStatusError.trim() : ''
+  const hasK8sStatusError = k8sStatusErrorMessage.length > 0
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1348,16 +1417,55 @@ export default function ServiceDetailPage() {
                 返回
               </Button>
               
-              <div className="flex items-center gap-3">
+              <div className="flex items-start gap-3">
                 <h1 className="text-2xl font-bold text-gray-900">{service.name}</h1>
                 <Badge variant="outline">
                   {service.type === ServiceType.APPLICATION && 'Application'}
                   {service.type === ServiceType.DATABASE && 'Database'}
                   {service.type === ServiceType.IMAGE && 'Image'}
                 </Badge>
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-                  <span className="text-sm text-gray-600">{statusLabel}</span>
+                <div className="flex flex-col gap-1 self-start">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                    <span className="text-sm text-gray-700">{statusLabel}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="刷新 Kubernetes 状态"
+                      aria-label="刷新 Kubernetes 状态"
+                      onClick={() => void fetchK8sStatus({ showToast: true })}
+                      disabled={k8sStatusLoading}
+                    >
+                      {k8sStatusLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                    <span>{statusSourceLabel}</span>
+                    {statusMismatch ? (
+                      <span className="text-amber-600">系统记录：{dbStatusLabel}</span>
+                    ) : null}
+                    {typeof k8sStatusInfo?.readyReplicas === 'number' && typeof k8sStatusInfo?.replicas === 'number' ? (
+                      <span>就绪 {k8sStatusInfo.readyReplicas}/{k8sStatusInfo.replicas}</span>
+                    ) : null}
+                    {typeof k8sStatusInfo?.availableReplicas === 'number' && typeof k8sStatusInfo?.replicas === 'number' ? (
+                      <span>可用 {k8sStatusInfo.availableReplicas}/{k8sStatusInfo.replicas}</span>
+                    ) : null}
+                    {k8sStatusLoading ? (
+                      <span className="flex items-center gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        刷新中…
+                      </span>
+                    ) : null}
+                  </div>
+                  {hasK8sStatusError ? (
+                    <div className="text-xs text-red-500 max-w-xs">{k8sStatusErrorMessage}</div>
+                  ) : null}
                 </div>
               </div>
             </div>
