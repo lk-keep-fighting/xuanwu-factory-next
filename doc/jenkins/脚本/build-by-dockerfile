@@ -21,6 +21,10 @@ pipeline {
     string(name: 'IMAGE_REPOSITORY', defaultValue: '', description: '镜像仓库路径（不含标签）')
     string(name: 'IMAGE_TAG', defaultValue: 'latest', description: '镜像标签')
     string(name: 'FULL_IMAGE', defaultValue: '', description: '完整镜像名（{repository}:{tag}，优先）')
+    
+    string(name: 'SERVICE_IMAGE_ID', defaultValue: '', description: '平台侧镜像记录 ID（回调时使用）')
+    string(name: 'BUILD_CALLBACK_URL', defaultValue: '', description: '构建完成后回调平台的接口地址（可选）')
+    string(name: 'BUILD_CALLBACK_SECRET', defaultValue: '', description: '回调接口认证令牌（可选）')
   }
 
   environment {
@@ -28,9 +32,26 @@ pipeline {
     // nexus 凭证与镜像仓库地址（可由运维在 Job 配置中覆盖）
     NEXUS_CREDENTIALS = 'nexus-admin'
     NEXUS_IMAGE_REPO = 'nexus.aimstek.cn'
+    
+    // 回调相关配置（可在环境变量中配置默认值）
+    BUILD_CALLBACK_BASE_URL = "${env.BUILD_CALLBACK_BASE_URL ?: 'http://192.168.21.31:3000'}"
+    BUILD_START_TIME = "${currentBuild.startTimeInMillis}"
   }
 
   stages {
+    stage('Send Building Status') {
+      when { 
+        expression { 
+          return (params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()
+        } 
+      }
+      steps {
+        script {
+          SendBuildCallback('building', 'Build started')
+        }
+      }
+    }
+    
     stage('Checkout') {
       steps {
         script {
@@ -216,6 +237,20 @@ pipeline {
   }
 
   post {
+    success {
+      script {
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('success', 'Build and push completed successfully')
+        }
+      }
+    }
+    failure {
+      script {
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('failed', "Build failed: ${currentBuild.result ?: 'FAILURE'}")
+        }
+      }
+    }
     always {
       sh 'docker image prune -f || true'
     }
@@ -246,4 +281,90 @@ def PushDockerImage(registry_addr,registry_credentials_id,docker_image_name,vers
         '''
       }
     }
+}
+
+// 发送构建回调到平台
+def SendBuildCallback(status, message) {
+  def callbackUrl = params.BUILD_CALLBACK_URL?.trim()
+  
+  // 如果参数中没有指定完整回调URL，则从环境变量中拼接
+  if (!callbackUrl && env.BUILD_CALLBACK_BASE_URL?.trim() && params.SERVICE_ID?.trim()) {
+    callbackUrl = "${env.BUILD_CALLBACK_BASE_URL.trim()}/api/services/${params.SERVICE_ID.trim()}/build/callback"
+  }
+  
+  if (!callbackUrl) {
+    echo "Skipping callback: no BUILD_CALLBACK_URL or BUILD_CALLBACK_BASE_URL configured"
+    return
+  }
+  
+  def serviceImageId = params.SERVICE_IMAGE_ID?.trim()
+  if (!serviceImageId) {
+    echo "Skipping callback: SERVICE_IMAGE_ID not provided"
+    return
+  }
+  
+  // 计算构建耗时
+  def durationMs = currentBuild.duration ?: (System.currentTimeMillis() - env.BUILD_START_TIME.toLong())
+  
+  // 构建回调数据
+  def callbackData = [
+    service_image_id: serviceImageId,
+    status: status,
+    full_image: env.COMPUTED_IMAGE ?: params.FULL_IMAGE?.trim() ?: '',
+    duration_ms: durationMs,
+    build_number: env.BUILD_NUMBER,
+    build_url: env.BUILD_URL,
+    queue_url: env.BUILD_URL?.replace("/execution/node/", "/")?.replace("/${env.BUILD_NUMBER}/", "/queue/item/${currentBuild.queueId ?: ''}/"),
+    result: currentBuild.result ?: (status == 'success' ? 'SUCCESS' : (status == 'failed' ? 'FAILURE' : 'BUILDING')),
+    build_logs: message,
+    metadata: [
+      builder: 'jenkins',
+      node: env.NODE_NAME ?: 'unknown',
+      job_name: env.JOB_NAME,
+      git_branch: params.GIT_BRANCH,
+      git_repository: params.GIT_REPOSITORY
+    ]
+  ]
+  
+  def jsonPayload = groovy.json.JsonOutput.toJson(callbackData)
+  
+  echo "=== Sending Build Callback ==="
+  echo "URL: ${callbackUrl}"
+  echo "Status: ${status}"
+  echo "Image: ${callbackData.full_image}"
+  echo "Duration: ${durationMs}ms"
+  echo "=============================="
+  
+  try {
+    // 构建认证头
+    def authHeader = ''
+    def secret = params.BUILD_CALLBACK_SECRET?.trim()
+    if (secret) {
+      authHeader = "-H 'X-Build-Callback-Secret: ${secret}'"
+    }
+    
+    // 使用 curl 发送回调请求
+    def curlCmd = """
+      curl -X POST '${callbackUrl}' \
+        -H 'Content-Type: application/json' \
+        ${authHeader} \
+        -d '${jsonPayload.replace("'", "'\\''")}' \
+        --connect-timeout 10 \
+        --max-time 30 \
+        -w '\\nHTTP Status: %{http_code}'
+    """
+    
+    def response = sh(script: curlCmd, returnStdout: true).trim()
+    echo "Callback response: ${response}"
+    
+    // 检查HTTP状态码
+    if (response.contains('HTTP Status: 2')) {
+      echo "✓ Build callback sent successfully"
+    } else {
+      echo "⚠ Build callback may have failed, check response above"
+    }
+  } catch (Exception e) {
+    echo "✗ Failed to send build callback: ${e.message}"
+    // 不中断构建流程
+  }
 }

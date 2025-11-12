@@ -263,10 +263,10 @@ export default function ServiceDetailPage() {
     }
   }, [serviceType])
 
-  const isGitLabProvider = useMemo(() => (service?.git_provider ?? '').toLowerCase() === GitProvider.GITLAB, [service?.git_provider])
+  const isGitLabProvider = useMemo(() => (serviceType === 'application' ? (service as any)?.git_provider ?? '' : '').toLowerCase() === GitProvider.GITLAB, [serviceType, service])
 
   const effectiveGitRepository = useMemo(() => {
-    if (!service) {
+    if (!service || serviceType !== 'application') {
       return ''
     }
 
@@ -274,8 +274,8 @@ export default function ServiceDetailPage() {
       return editedService.git_repository.trim()
     }
 
-    return (service.git_repository ?? '').trim()
-  }, [editedService.git_repository, isEditing, service])
+    return ((service as any).git_repository ?? '').trim()
+  }, [editedService.git_repository, isEditing, service, serviceType])
 
   const gitlabIntegrationReady = useMemo(() => {
     if (!isGitLabProvider) {
@@ -312,9 +312,9 @@ export default function ServiceDetailPage() {
   }, [effectiveGitRepository, gitProviderConfig?.baseUrl, gitlabIntegrationReady])
 
   const normalizedBranchValue = useMemo(() => {
-    const raw = (editedService?.git_branch ?? service?.git_branch ?? '').trim()
+    const raw = (editedService?.git_branch ?? (serviceType === 'application' ? (service as any)?.git_branch : '') ?? '').trim()
     return raw
-  }, [editedService?.git_branch, service?.git_branch])
+  }, [editedService?.git_branch, serviceType === 'application' ? (service as any)?.git_branch : undefined, serviceType])
 
   useEffect(() => {
     gitBranchRef.current = normalizedBranchValue
@@ -469,7 +469,7 @@ export default function ServiceDetailPage() {
     }
   }, [branchPickerOpen, branchSelectorDisabled])
 
-  const builtImageRef = useMemo(() => parseImageReference(service?.built_image), [service?.built_image])
+  const builtImageRef = useMemo(() => parseImageReference(serviceType === 'application' ? (service as any)?.built_image : undefined), [serviceType === 'application' ? (service as any)?.built_image : undefined, serviceType])
   const builtImageDisplay = builtImageRef.image ? formatImageReference(builtImageRef.image, builtImageRef.tag) : ''
   const activeServiceImage = useMemo(
     () =>
@@ -691,7 +691,7 @@ export default function ServiceDetailPage() {
             successItems[0] ??
             null
 
-          const parsed = parseImageReference(service?.built_image)
+          const parsed = parseImageReference(serviceType === 'application' ? (service as any)?.built_image : undefined)
           const nextValue: ImageReferenceValue = fallbackImage
             ? {
                 optionId: fallbackImage.id ?? null,

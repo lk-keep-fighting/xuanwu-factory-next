@@ -113,7 +113,7 @@ type GitBranchOption = {
 }
 
 interface ServiceCreateFormProps {
-
+  projectId: string
   projectIdentifier?: string
   serviceType: ServiceType
   onSuccess: () => void

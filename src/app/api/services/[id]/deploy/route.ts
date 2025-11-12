@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { k8sService } from '@/lib/k8s'
-import { ServiceType, type Service } from '@/types/project'
+import { ServiceType, type Service, type ApplicationService } from '@/types/project'
 
 const resolveDeploymentTag = (service: Service): string | null => {
   switch (service.type) {
@@ -94,12 +94,14 @@ export async function POST(
 
         serviceImageId = selectedServiceImage.id
       } else {
-        selectedServiceImage = await prisma.serviceImage.findFirst({
-          where: {
-            service_id: id,
-            full_image: serviceWithoutProject.built_image
-          }
-        })
+        if (isApplicationService && (serviceWithoutProject as unknown as ApplicationService).built_image) {
+          selectedServiceImage = await prisma.serviceImage.findFirst({
+            where: {
+              service_id: id,
+              full_image: (serviceWithoutProject as unknown as ApplicationService).built_image!
+            }
+          })
+        }
 
         if (selectedServiceImage) {
           serviceImageId = selectedServiceImage.id
@@ -107,7 +109,8 @@ export async function POST(
       }
 
       if (selectedServiceImage) {
-        const needsBuiltImageSync = serviceWithoutProject.built_image !== selectedServiceImage.full_image
+        const currentBuiltImage = isApplicationService ? (serviceWithoutProject as unknown as ApplicationService).built_image : null
+        const needsBuiltImageSync = currentBuiltImage !== selectedServiceImage.full_image
         const needsActivation = !selectedServiceImage.is_active
 
         if (needsBuiltImageSync || needsActivation) {
@@ -138,16 +141,18 @@ export async function POST(
             return NextResponse.json({ error: '同步镜像状态失败，请稍后重试。' }, { status: 500 })
           }
         } else {
-          serviceWithoutProject.built_image = selectedServiceImage.full_image
+          if (isApplicationService) {
+            (serviceWithoutProject as unknown as ApplicationService).built_image = selectedServiceImage.full_image
+          }
         }
-      } else if (!serviceWithoutProject.built_image) {
+      } else if (isApplicationService && !(serviceWithoutProject as unknown as ApplicationService).built_image) {
         return NextResponse.json({ error: '请先构建镜像后再部署。' }, { status: 400 })
       }
     }
 
     const typedService = JSON.parse(JSON.stringify(serviceWithoutProject)) as Service
 
-    if (isApplicationService && !typedService.built_image) {
+    if (isApplicationService && !(typedService as unknown as ApplicationService).built_image) {
       return NextResponse.json({ error: '请先构建镜像后再部署。' }, { status: 400 })
     }
 
