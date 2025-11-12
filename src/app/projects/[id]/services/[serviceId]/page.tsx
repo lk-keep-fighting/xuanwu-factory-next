@@ -1683,7 +1683,7 @@ export default function ServiceDetailPage() {
                                         <ComboboxItem
                                           key={option.value}
                                           value={option.value}
-                                          className="flex flex-col gap-1 px-3 py-2"
+                                          className="flex flex-col items-start gap-1 px-3 py-2"
                                         >
                                           <span className="text-sm font-medium text-gray-900">
                                             {option.label}
@@ -1773,6 +1773,42 @@ export default function ServiceDetailPage() {
                           disabled={!isEditing}
                         />
                       </div>
+                      <div className="space-y-4 rounded-lg border border-dashed border-gray-300 p-4">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">触发 Jenkins 构建</p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            指定分支与标签，平台将调用内部 Jenkins 构建镜像并回填构建结果。
+                          </p>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-sm text-gray-700">构建分支</Label>
+                            <Input
+                              value={buildBranch}
+                              onChange={(event) => setBuildBranch(event.target.value)}
+                              placeholder={service.git_branch || 'main'}
+                              disabled={buildingImage}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-sm text-gray-700">镜像标签（可选）</Label>
+                            <Input
+                              value={buildTag}
+                              onChange={(event) => setBuildTag(event.target.value)}
+                              placeholder="例如：release-2024-01"
+                              disabled={buildingImage}
+                            />
+                          </div>
+                          <Button
+                            onClick={handleBuildImage}
+                            disabled={buildingImage || !buildBranch.trim()}
+                            className="w-full gap-2"
+                          >
+                            <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
+                            {buildingImage ? '构建中...' : '触发构建'}
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -1842,42 +1878,6 @@ export default function ServiceDetailPage() {
                               刷新
                             </Button>
                           </div>
-                        </div>
-                      </div>
-                      <div className="space-y-4 rounded-lg border border-dashed border-gray-300 p-4">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">触发 Jenkins 构建</p>
-                          <p className="mt-1 text-xs text-gray-500">
-                            指定分支与标签，平台将调用内部 Jenkins 构建镜像并回填构建结果。
-                          </p>
-                        </div>
-                        <div className="space-y-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-sm text-gray-700">构建分支</Label>
-                            <Input
-                              value={buildBranch}
-                              onChange={(event) => setBuildBranch(event.target.value)}
-                              placeholder={service.git_branch || 'main'}
-                              disabled={buildingImage}
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-sm text-gray-700">镜像标签（可选）</Label>
-                            <Input
-                              value={buildTag}
-                              onChange={(event) => setBuildTag(event.target.value)}
-                              placeholder="例如：release-2024-01"
-                              disabled={buildingImage}
-                            />
-                          </div>
-                          <Button
-                            onClick={handleBuildImage}
-                            disabled={buildingImage || !buildBranch.trim()}
-                            className="w-full gap-2"
-                          >
-                            <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
-                            {buildingImage ? '构建中...' : '触发构建'}
-                          </Button>
                         </div>
                       </div>
                     </div>
