@@ -134,9 +134,21 @@ export async function POST(
   const tag = createImageTag(branch, requestedTag)
   const fullImage = formatImageReference(repository, tag)
 
+  let buildCallbackUrl: string | null = null
+  try {
+    const requestUrl = new URL(request.url)
+    buildCallbackUrl = new URL(`/api/services/${id}/build/callback`, requestUrl.origin).toString()
+  } catch (callbackError) {
+    console.warn('[Services][Build] 无法生成构建回调地址:', callbackError)
+  }
+
   const metadata: Record<string, unknown> = {
     branch,
     requestedTag: requestedTag || undefined
+  }
+
+  if (buildCallbackUrl) {
+    metadata.buildCallbackUrl = buildCallbackUrl
   }
 
   try {
@@ -160,6 +172,8 @@ export async function POST(
     }
   })
 
+  metadata.serviceImageId = serviceImage.id
+
   const parameters: Record<string, string> = {
     SERVICE_ID: id,
     SERVICE_NAME: serviceRecord.name,
@@ -169,7 +183,17 @@ export async function POST(
     GIT_BRANCH: branch,
     IMAGE_REPOSITORY: repository,
     IMAGE_TAG: tag,
-    FULL_IMAGE: fullImage
+    FULL_IMAGE: fullImage,
+    SERVICE_IMAGE_ID: serviceImage.id
+  }
+
+  if (buildCallbackUrl) {
+    parameters.BUILD_CALLBACK_URL = buildCallbackUrl
+  }
+
+  const callbackSecret = (process.env.BUILD_CALLBACK_SECRET ?? '').trim()
+  if (callbackSecret) {
+    parameters.BUILD_CALLBACK_SECRET = callbackSecret
   }
 
   // only pass GIT_PATH when it's a meaningful subpath (avoid passing '/' or empty defaults)

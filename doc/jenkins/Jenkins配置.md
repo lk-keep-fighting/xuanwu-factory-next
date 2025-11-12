@@ -75,10 +75,47 @@
 | `IMAGE_REPOSITORY` | 镜像仓库路径（不含标签） | ✅ |
 | `IMAGE_TAG` | 镜像标签 | ✅ |
 | `FULL_IMAGE` | 完整镜像名（`{repository}:{tag}`） | ✅ |
+| `SERVICE_IMAGE_ID` | 平台侧镜像记录 ID，回调时用于定位构建记录 | ✅ |
+| `BUILD_CALLBACK_URL` | （可选）构建完成后回调平台的接口地址 | ⭕ |
+| `BUILD_CALLBACK_SECRET` | （可选）回调接口使用的认证令牌（若已配置） | ⭕ |
 
 > 平台会保证 `BUILD_ARGS` 为合法 JSON；如不需要可忽略。
 
-### 4.2 示例 Jenkinsfile
+### 4.2 构建结果回调接口
+
+当构建流程由 Jenkins 等外部系统执行时，可在任务完成后调用平台提供的回调接口同步最终结果：
+
+- **请求方法**：`POST /api/services/{serviceId}/build/callback`
+- **认证**：若配置了 `BUILD_CALLBACK_SECRET`，请在请求头中附加 `X-Build-Callback-Secret: <secret>` 或 `Authorization: Bearer <secret>`，也可在请求体中提供 `build_callback_secret` 字段。
+- **请求体字段**：
+  - `service_image_id`（必填）：对应触发构建时下发的 `SERVICE_IMAGE_ID`。
+  - `status`（必填）：`success`、`failed` 或 `building`。
+  - `full_image`（推荐）：最终推送的完整镜像名。
+  - 其余可选字段包括 `duration_ms`、`build_number`、`build_url`、`queue_url`、`digest`、`build_logs`、`metadata` 等，用于补充构建耗时和诊断信息。
+
+示例请求体：
+
+```json
+{
+  "service_image_id": "1c5d5e8d-42a6-4b62-b7d0-4dfb05c6f8a3",
+  "status": "success",
+  "full_image": "nexus.example.com/team/app:20241112113045",
+  "duration_ms": 184000,
+  "build_number": 128,
+  "build_url": "https://jenkins.example.com/job/build-app/128/",
+  "queue_url": "https://jenkins.example.com/queue/item/4521/",
+  "result": "SUCCESS",
+  "build_logs": "构建成功，镜像已推送到私有仓库",
+  "metadata": {
+    "builder": "jenkins",
+    "node": "agent-02"
+  }
+}
+```
+
+成功回调后，平台会根据 `status` 更新镜像记录的构建状态，并在成功时同步服务的 `built_image` 字段供后续部署使用。
+
+### 4.3 示例 Jenkinsfile
 
 以下示例演示如何使用参数构建并推送 Docker 镜像（需 Jenkins 具备 Docker 环境，以及名为 `registry-credentials` 的凭证用于登录镜像仓库）：
 
