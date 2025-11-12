@@ -1642,7 +1642,7 @@ export default function ServiceDetailPage() {
                     <div className="space-y-2">
                       <Label>项目路径</Label>
                       <Input 
-                        value={isEditing ? (editedService.git_path || '.') : (service.git_path || '.')}
+                        value={isEditing ? (editedService.git_path || '/') : (service.git_path || '/')}
                         onChange={(e) => setEditedService({ ...editedService, git_path: e.target.value })}
                         disabled={!isEditing}
                       />

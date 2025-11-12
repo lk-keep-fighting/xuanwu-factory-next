@@ -70,7 +70,7 @@
 | `GIT_PATH` | 仓库内相对子路径（Monorepo 时使用） | ⭕ |
 | `GIT_PROVIDER` | Git 提供商标识（github/gitlab/bitbucket/gitea） | ⭕ |
 | `DOCKERFILE_PATH` | Dockerfile 路径（相对仓库根目录） | ⭕ |
-| `BUILD_TYPE` | 构建方式（dockerfile / nixpacks / buildpacks） | ⭕ |
+| `BUILD_TYPE` | 构建方式（dockerfile） | ⭕ |
 | `BUILD_ARGS` | JSON 字符串，描述额外的 `build-arg` 键值对 | ⭕ |
 | `IMAGE_REPOSITORY` | 镜像仓库路径（不含标签） | ✅ |
 | `IMAGE_TAG` | 镜像标签 | ✅ |

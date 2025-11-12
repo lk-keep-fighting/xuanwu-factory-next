@@ -15,7 +15,7 @@ pipeline {
     string(name: 'GIT_PROVIDER', defaultValue: '', description: 'Git 提供商标识（可选）')
 
     string(name: 'DOCKERFILE_PATH', defaultValue: 'Dockerfile', description: 'Dockerfile 路径（可选）')
-    string(name: 'BUILD_TYPE', defaultValue: '', description: '构建方式（dockerfile / nixpacks / buildpacks）（可选）')
+    string(name: 'BUILD_TYPE', defaultValue: '', description: '构建方式（dockerfile）（可选）')
     text(name: 'BUILD_ARGS', defaultValue: '', description: 'JSON 字符串，描述额外的 build-arg（可选）')
 
     string(name: 'IMAGE_REPOSITORY', defaultValue: '', description: '镜像仓库路径（不含标签）')

@@ -987,13 +987,13 @@ export default function ServiceCreateForm({
                 ) : (
                   <p className="text-xs text-gray-500">
                     {gitlabIntegrationReady
-                      ? '选择仓库后会自动填充仓库 URL，亦可录入自定义地址。'
+                      ? ''
                       : 'GitLab 搜索不可用，可直接输入完整的仓库 URL。'}
                   </p>
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="git_branch">分支</Label>
@@ -1124,7 +1124,7 @@ export default function ServiceCreateForm({
                     {branchError ? (
                       <p className="text-xs text-red-500">{branchError}</p>
                     ) : (
-                      <p className="text-xs text-gray-500">选择仓库后可搜索并选择分支，或输入自定义分支名。</p>
+                      <p className="text-xs text-gray-500">选择仓库后可搜索并选择分支。</p>
                     )}
                   </>
                 ) : (
@@ -1135,14 +1135,14 @@ export default function ServiceCreateForm({
                   />
                 )}
               </div>
-              <div className="space-y-2">
+              {/* <div className="space-y-2">
                 <Label htmlFor="git_path">项目路径</Label>
                 <Input
                   id="git_path"
                   {...register('git_path')}
                   placeholder="."
                 />
-              </div>
+              </div> */}
             </div>
           </TabsContent>
 
@@ -1155,8 +1155,8 @@ export default function ServiceCreateForm({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={BuildType.DOCKERFILE}>Dockerfile</SelectItem>
-                  <SelectItem value={BuildType.NIXPACKS}>Nixpacks</SelectItem>
-                  <SelectItem value={BuildType.BUILDPACKS}>Buildpacks</SelectItem>
+                  {/* <SelectItem value={BuildType.NIXPACKS}>Nixpacks</SelectItem> */}
+                  {/* <SelectItem value={BuildType.BUILDPACKS}>Buildpacks</SelectItem> */}
                 </SelectContent>
               </Select>
             </div>
