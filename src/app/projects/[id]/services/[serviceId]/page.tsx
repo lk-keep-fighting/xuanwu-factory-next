@@ -172,10 +172,10 @@ const formatDuration = (start?: string, end?: string) => {
 
 // 解析资源限制字符串
 const parseResourceValue = (value: string | undefined, type: 'cpu' | 'memory') => {
-  if (!value) return { value: '', unit: type === 'cpu' ? 'm' : 'Mi' }
+  if (!value) return { value: '', unit: type === 'cpu' ? 'core' : 'Mi' }
 
   const trimmed = value.trim()
-  if (!trimmed) return { value: '', unit: type === 'cpu' ? 'm' : 'Mi' }
+  if (!trimmed) return { value: '', unit: type === 'cpu' ? 'core' : 'Mi' }
 
   if (type === 'cpu') {
     // CPU: 支持 "1000m" 或 "1" 格式
@@ -225,7 +225,7 @@ export default function ServiceDetailPage() {
   const [volumes, setVolumes] = useState<Array<{ nfs_subpath?: string; container_path: string; read_only: boolean }>>([])
   // 资源限制状态
   const [cpuValue, setCpuValue] = useState('')
-  const [cpuUnit, setCpuUnit] = useState<'m' | 'core'>('m')
+  const [cpuUnit, setCpuUnit] = useState<'m' | 'core'>('core')
   const [memoryValue, setMemoryValue] = useState('')
   const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Mi')
   const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
@@ -2215,7 +2215,7 @@ export default function ServiceDetailPage() {
                                 className="flex-1"
                               />
                               <Select value={cpuUnit} onValueChange={(value: 'm' | 'core') => setCpuUnit(value)}>
-                                <SelectTrigger className="w-24">
+                                <SelectTrigger className="w-32">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
