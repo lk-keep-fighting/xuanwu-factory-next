@@ -45,6 +45,20 @@ export async function GET(
 
     const statusResult = await k8sService.getServiceStatus(serviceName, namespace)
 
+    // 自动同步K8s状态到数据库
+    const k8sStatus = statusResult.status?.toLowerCase()?.trim()
+    const dbStatus = service.status?.toLowerCase()?.trim()
+    
+    if (k8sStatus && k8sStatus !== dbStatus) {
+      // 异步更新数据库状态，不阻塞响应
+      prisma.service.update({
+        where: { id },
+        data: { status: k8sStatus }
+      }).catch(error => {
+        console.error('[Services][Status][GET] 同步状态到数据库失败:', error)
+      })
+    }
+
     return NextResponse.json({
       ...statusResult,
       namespace,

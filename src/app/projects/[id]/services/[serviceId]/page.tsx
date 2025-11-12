@@ -22,6 +22,7 @@ import {
   ComboboxTrigger,
   ComboboxCreateNew
 } from '@/components/ui/shadcn-io/combobox'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { serviceSvc } from '@/service/serviceSvc'
@@ -169,6 +170,40 @@ const formatDuration = (start?: string, end?: string) => {
   return parts.join(' ')
 }
 
+// 解析资源限制字符串
+const parseResourceValue = (value: string | undefined, type: 'cpu' | 'memory') => {
+  if (!value) return { value: '', unit: type === 'cpu' ? 'm' : 'Mi' }
+  
+  const trimmed = value.trim()
+  if (!trimmed) return { value: '', unit: type === 'cpu' ? 'm' : 'Mi' }
+  
+  if (type === 'cpu') {
+    // CPU: 支持 "1000m" 或 "1" 格式
+    if (trimmed.endsWith('m')) {
+      return { value: trimmed.slice(0, -1), unit: 'm' as const }
+    } else {
+      return { value: trimmed, unit: '' as const }
+    }
+  } else {
+    // Memory: 支持 "512Mi" 或 "1Gi" 格式
+    if (trimmed.endsWith('Gi')) {
+      return { value: trimmed.slice(0, -2), unit: 'Gi' as const }
+    } else if (trimmed.endsWith('Mi')) {
+      return { value: trimmed.slice(0, -2), unit: 'Mi' as const }
+    } else {
+      // 默认当作 Mi
+      return { value: trimmed, unit: 'Mi' as const }
+    }
+  }
+}
+
+// 组合资源限制字符串
+const combineResourceValue = (value: string, unit: string) => {
+  const trimmedValue = value.trim()
+  if (!trimmedValue) return ''
+  return `${trimmedValue}${unit}`
+}
+
 export default function ServiceDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -183,6 +218,11 @@ export default function ServiceDetailPage() {
   const [editedService, setEditedService] = useState<any>({})
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([])
   const [volumes, setVolumes] = useState<Array<{ nfs_subpath?: string; container_path: string; read_only: boolean }>>([])
+  // 资源限制状态
+  const [cpuValue, setCpuValue] = useState('')
+  const [cpuUnit, setCpuUnit] = useState<'m' | ''>('m')
+  const [memoryValue, setMemoryValue] = useState('')
+  const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Mi')
   const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [deploying, setDeploying] = useState(false)
@@ -214,6 +254,16 @@ export default function ServiceDetailPage() {
   const [buildingImage, setBuildingImage] = useState(false)
   const [buildBranch, setBuildBranch] = useState('')
   const [buildTag, setBuildTag] = useState('')
+  const [buildDialogOpen, setBuildDialogOpen] = useState(false)
+  const [buildTagType, setBuildTagType] = useState<'dev' | 'test' | 'release'>('dev')
+  const [customBuildTag, setCustomBuildTag] = useState('')
+  const [deployDialogOpen, setDeployDialogOpen] = useState(false)
+  const [deployImageList, setDeployImageList] = useState<ServiceImageRecord[]>([])
+  const [deployImagePage, setDeployImagePage] = useState(1)
+  const [deployImageTotal, setDeployImageTotal] = useState(0)
+  const [deployImageLoading, setDeployImageLoading] = useState(false)
+  const [selectedDeployImageId, setSelectedDeployImageId] = useState<string | null>(null)
+  const DEPLOY_IMAGE_PAGE_SIZE = 5
   const [k8sStatusInfo, setK8sStatusInfo] = useState<K8sServiceStatus | null>(null)
   const [k8sStatusLoading, setK8sStatusLoading] = useState(false)
   const [k8sStatusError, setK8sStatusError] = useState<string | null>(null)
@@ -774,6 +824,16 @@ export default function ServiceDetailPage() {
         setVolumes([])
       }
 
+      // 初始化资源限制
+      const cpuLimit = data.resource_limits?.cpu
+      const memoryLimit = data.resource_limits?.memory
+      const parsedCpu = parseResourceValue(cpuLimit, 'cpu')
+      const parsedMemory = parseResourceValue(memoryLimit, 'memory')
+      setCpuValue(parsedCpu.value)
+      setCpuUnit(parsedCpu.unit as 'm' | '')
+      setMemoryValue(parsedMemory.value)
+      setMemoryUnit(parsedMemory.unit as 'Mi' | 'Gi')
+
       if ((data.type ?? '').toLowerCase() === ServiceType.APPLICATION) {
         const parsedBuiltImage = parseImageReference(data.built_image)
         setImagePickerValue({ optionId: null, image: parsedBuiltImage.image, tag: parsedBuiltImage.tag })
@@ -1036,39 +1096,84 @@ export default function ServiceDetailPage() {
   const handleDeploy = async () => {
     if (!serviceId || !service) return
 
+    // 如果是Application类型,弹出镜像选择对话框
     if (service.type === ServiceType.APPLICATION) {
-      if (!service.built_image) {
-        toast.error('请先构建镜像后再执行部署。')
-        return
-      }
-
-      if (!selectedServiceImageId && !imagesLoading && successfulServiceImages.length === 0) {
-        toast.error('当前没有可部署的镜像版本，请先构建成功的镜像。')
-        return
-      }
+      setDeployDialogOpen(true)
+      setDeployImagePage(1)
+      setSelectedDeployImageId(null)
+      void loadDeployImages(1)
+      return
     }
 
-    const confirmMessage = service.type === ServiceType.APPLICATION
-      ? '确定要部署此应用吗？'
-      : `确定要部署此${service.type === ServiceType.DATABASE ? '数据库' : '镜像'}服务吗？`
+    // 其他类型直接部署
+    const confirmMessage = service.type === ServiceType.DATABASE 
+      ? '确定要部署此数据库服务吗？'
+      : '确定要部署此镜像服务吗？'
 
     if (!confirm(confirmMessage)) return
 
     try {
       setDeploying(true)
+      const result = await serviceSvc.deployService(serviceId)
+      toast.success(result?.message || '部署成功，服务正在启动')
+      await loadService()
+      await fetchK8sStatus({ showToast: true })
+      await loadDeployments()
+      if (activeTab === 'logs') {
+        await loadLogs()
+      } else {
+        setHasLoadedLogs(false)
+        setLogs('')
+        setLogsError(null)
+      }
+    } catch (error: any) {
+      toast.error('部署失败：' + (error.message || '未知错误'))
+    } finally {
+      setDeploying(false)
+    }
+  }
 
-      const requestOptions = service.type === ServiceType.APPLICATION && selectedServiceImageId
-        ? { serviceImageId: selectedServiceImageId }
-        : undefined
+  // 加载部署对话框的镜像列表
+  const loadDeployImages = async (page: number) => {
+    if (!serviceId) return
 
-      const result = await serviceSvc.deployService(serviceId, requestOptions)
+    try {
+      setDeployImageLoading(true)
+      const result = await serviceSvc.getServiceImages(serviceId, {
+        page,
+        pageSize: DEPLOY_IMAGE_PAGE_SIZE,
+        status: 'success'
+      })
+      
+      setDeployImageList(result.items)
+      setDeployImageTotal(result.total)
+      setDeployImagePage(page)
+    } catch (error: any) {
+      toast.error('加载镜像列表失败：' + (error.message || '未知错误'))
+    } finally {
+      setDeployImageLoading(false)
+    }
+  }
+
+  // 执行部署(从对话框)
+  const handleConfirmDeploy = async () => {
+    if (!serviceId || !selectedDeployImageId) {
+      toast.error('请选择要部署的镜像版本')
+      return
+    }
+
+    try {
+      setDeploying(true)
+      setDeployDialogOpen(false)
+      
+      const result = await serviceSvc.deployService(serviceId, {
+        serviceImageId: selectedDeployImageId
+      })
 
       toast.success(result?.message || '部署成功，服务正在启动')
       await loadService()
       await fetchK8sStatus({ showToast: true })
-      if (service.type === ServiceType.APPLICATION) {
-        await loadServiceImages({ page: 1 })
-      }
+      await loadServiceImages({ page: 1 })
       await loadDeployments()
       if (activeTab === 'logs') {
         await loadLogs()
@@ -1126,22 +1231,79 @@ export default function ServiceDetailPage() {
     }
   }
 
+  // 直接部署指定镜像
+  const handleDeployImage = async (imageId: string | null) => {
+    if (!serviceId || !imageId) return
+
+    try {
+      setDeploying(true)
+      
+      // 先激活镜像
+      const activateResult = await serviceSvc.activateServiceImage(serviceId, imageId)
+      if (activateResult.service) {
+        setService(activateResult.service)
+        setEditedService(activateResult.service)
+      }
+
+      // 再执行部署
+      const deployResult = await serviceSvc.deployService(serviceId, {
+        serviceImageId: imageId
+      })
+
+      toast.success(deployResult?.message || '部署成功，服务正在启动')
+      
+      // 刷新所有状态
+      await loadService()
+      await fetchK8sStatus({ showToast: true })
+      await loadServiceImages({ page: 1 })
+      await loadDeployments()
+      
+      if (activeTab === 'logs') {
+        await loadLogs()
+      } else {
+        setHasLoadedLogs(false)
+        setLogs('')
+        setLogsError(null)
+      }
+    } catch (error: any) {
+      toast.error('部署失败：' + (error.message || '未知错误'))
+    } finally {
+      setDeploying(false)
+    }
+  }
+
+  const generateImageTag = () => {
+    const now = new Date()
+    const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
+    
+    switch (buildTagType) {
+      case 'dev':
+        return `dev-${timestamp}`
+      case 'test':
+        return `test-${timestamp}`
+      case 'release':
+        return `release-${timestamp}`
+      default:
+        return timestamp
+    }
+  }
+
   const handleBuildImage = async () => {
     if (!serviceId) return
 
     const payload: { branch?: string; tag?: string } = {}
-    const branchValue = buildBranch.trim()
-    const tagValue = buildTag.trim()
+    const branchValue = (service?.type === 'application' ? (service as any)?.git_branch?.trim() : '') || 'main'
+    const tagValue = customBuildTag.trim()
 
-    if (branchValue) {
-      payload.branch = branchValue
-    }
+    payload.branch = branchValue
+    
     if (tagValue) {
       payload.tag = tagValue
     }
 
     try {
       setBuildingImage(true)
+      setBuildDialogOpen(false)
       const result = await serviceSvc.buildApplicationService(serviceId, payload)
       const buildNumberText = result.build?.buildNumber ? ` #${result.build.buildNumber}` : ''
       toast.success(`Jenkins 构建任务已触发${buildNumberText}`)
@@ -1149,7 +1311,8 @@ export default function ServiceDetailPage() {
         setService(result.service)
         setEditedService(result.service)
       }
-      setBuildTag('')
+      setCustomBuildTag('')
+      setBuildTagType('dev')
       await loadServiceImages({ showToast: true, page: 1 })
       setActiveTab((prev) => (prev === 'deployments' ? prev : 'deployments'))
     } catch (error: any) {
@@ -1158,6 +1321,19 @@ export default function ServiceDetailPage() {
       setBuildingImage(false)
     }
   }
+
+  const handleOpenBuildDialog = () => {
+    const generated = generateImageTag()
+    setCustomBuildTag(generated)
+    setBuildDialogOpen(true)
+  }
+
+  useEffect(() => {
+    if (buildDialogOpen) {
+      const generated = generateImageTag()
+      setCustomBuildTag(generated)
+    }
+  }, [buildTagType, buildDialogOpen])
 
   // 保存配置
   const handleSave = async () => {
@@ -1176,6 +1352,16 @@ export default function ServiceDetailPage() {
         ...editedService,
         env_vars: envVarsObj,
         volumes: volumes.filter((v) => v.container_path.trim())
+      }
+
+      // 组合资源限制
+      const cpuLimit = combineResourceValue(cpuValue, cpuUnit)
+      const memoryLimit = combineResourceValue(memoryValue, memoryUnit)
+      if (cpuLimit || memoryLimit) {
+        updateData.resource_limits = {
+          ...(cpuLimit ? { cpu: cpuLimit } : {}),
+          ...(memoryLimit ? { memory: memoryLimit } : {})
+        }
       }
 
       const portsPayload: NetworkPortConfig[] = []
@@ -1395,7 +1581,7 @@ export default function ServiceDetailPage() {
   const statusColor = STATUS_COLORS[normalizedStatus] ?? 'bg-gray-500'
   const statusLabel = STATUS_LABELS[normalizedStatus] ?? normalizedStatus
   const dbStatusLabel = STATUS_LABELS[normalizedDbStatus] ?? normalizedDbStatus
-  const statusSourceLabel = normalizedK8sStatus ? 'Kubernetes 实时状态' : '系统记录状态'
+  const statusSourceLabel = normalizedK8sStatus ? 'Kubernetes 实时状态' : '数据库状态'
   const statusMismatch = normalizedK8sStatus !== null && normalizedK8sStatus !== normalizedDbStatus
   const k8sStatusErrorMessage = typeof k8sStatusError === 'string' ? k8sStatusError.trim() : ''
   const hasK8sStatusError = k8sStatusErrorMessage.length > 0
@@ -1446,15 +1632,25 @@ export default function ServiceDetailPage() {
                     </Button>
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-                    <span>{statusSourceLabel}</span>
+                    {/* 只在没有K8s状态时显示数据源标签 */}
+                    {!normalizedK8sStatus && <span>{statusSourceLabel}</span>}
                     {statusMismatch ? (
-                      <span className="text-amber-600">系统记录：{dbStatusLabel}</span>
+                      <span className="text-amber-600">数据库状态与实际不同步（{dbStatusLabel}）</span>
                     ) : null}
-                    {typeof k8sStatusInfo?.readyReplicas === 'number' && typeof k8sStatusInfo?.replicas === 'number' ? (
-                      <span>就绪 {k8sStatusInfo.readyReplicas}/{k8sStatusInfo.replicas}</span>
-                    ) : null}
-                    {typeof k8sStatusInfo?.availableReplicas === 'number' && typeof k8sStatusInfo?.replicas === 'number' ? (
-                      <span>可用 {k8sStatusInfo.availableReplicas}/{k8sStatusInfo.replicas}</span>
+                    {/* K8s Pod 状态信息 */}
+                    {normalizedK8sStatus && k8sStatusInfo ? (
+                      <>
+                        {typeof k8sStatusInfo.replicas === 'number' && k8sStatusInfo.replicas > 0 ? (
+                          <span className="inline-flex items-center gap-1">
+                            <span className="font-medium">副本 {k8sStatusInfo.replicas}</span>
+                            {typeof k8sStatusInfo.readyReplicas === 'number' ? (
+                              <span className={k8sStatusInfo.readyReplicas === k8sStatusInfo.replicas ? 'text-green-600' : 'text-amber-600'}>
+                                (就绪 {k8sStatusInfo.readyReplicas})
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : null}
+                      </>
                     ) : null}
                     {k8sStatusLoading ? (
                       <span className="flex items-center gap-1">
@@ -1773,254 +1969,208 @@ export default function ServiceDetailPage() {
                           disabled={!isEditing}
                         />
                       </div>
-                      <div className="space-y-4 rounded-lg border border-dashed border-gray-300 p-4">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">触发 Jenkins 构建</p>
-                          <p className="mt-1 text-xs text-gray-500">
-                            指定分支与标签，平台将调用内部 Jenkins 构建镜像并回填构建结果。
-                          </p>
-                        </div>
-                        <div className="space-y-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-sm text-gray-700">构建分支</Label>
-                            <Input
-                              value={buildBranch}
-                              onChange={(event) => setBuildBranch(event.target.value)}
-                              placeholder={service.git_branch || 'main'}
-                              disabled={buildingImage}
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-sm text-gray-700">镜像标签（可选）</Label>
-                            <Input
-                              value={buildTag}
-                              onChange={(event) => setBuildTag(event.target.value)}
-                              placeholder="例如：release-2024-01"
-                              disabled={buildingImage}
-                            />
-                          </div>
-                          <Button
-                            onClick={handleBuildImage}
-                            disabled={buildingImage || !buildBranch.trim()}
-                            className="w-full gap-2"
-                          >
-                            <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
-                            {buildingImage ? '构建中...' : '触发构建'}
-                          </Button>
-                        </div>
-                      </div>
+
                     </div>
                   </CardContent>
                 </Card>
 
                 <Card>
-                  <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <CardHeader className="flex flex-row items-center justify-between">
                     <div>
                       <CardTitle>镜像版本</CardTitle>
-                      <CardDescription>构建新的应用镜像并选择在集群中部署的版本。</CardDescription>
+                      <CardDescription>查看当前部署的镜像和历史构建版本。</CardDescription>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleOpenBuildDialog}
+                        disabled={buildingImage}
+                        variant="outline"
+                        className="gap-2"
+                      >
+                        <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
+                        {buildingImage ? '构建中...' : '构建'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={handleRefreshImages}
+                        disabled={imagesLoading}
+                        className="gap-2"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${imagesLoading ? 'animate-spin' : ''}`} />
+                        刷新
+                      </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="grid gap-6 lg:grid-cols-[3fr,2fr]">
-                      <div className="space-y-4">
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                          <p className="text-sm text-gray-500">当前部署镜像</p>
-                          <p className="mt-1 text-sm font-medium text-gray-900">
-                            {builtImageDisplay || '尚未选择镜像版本'}
+                  <CardContent className="space-y-4">
+                    {/* 当前部署镜像 */}
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-emerald-600 font-medium">当前 K8s 部署镜像</p>
+                          <p className="mt-1 text-sm font-semibold text-emerald-900">
+                            {builtImageDisplay || '尚未部署任何镜像'}
                           </p>
-                          {activeServiceImage ? (
-                            <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-                              <Check className="h-3 w-3" />
-                              当前部署
-                            </span>
-                          ) : null}
                         </div>
-                        <div className="space-y-3">
-                          {successfulServiceImages.length > 0 ? (
-                            <ImageReferencePicker
-                              value={imagePickerValue}
-                              options={applicationImageOptions}
-                              label="可用镜像"
-                              description="选择一个构建成功的镜像版本作为部署来源。"
-                              allowCustom={false}
-                              disabled={imagesLoading || activateImageLoading}
-                              onChange={handleImagePickerChange}
-                            />
-                          ) : (
-                            <div className="rounded-md border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500">
-                              暂无镜像记录，请先触发 Jenkins 构建。
-                            </div>
-                          )}
-                          {imagesError ? (
-                            <p className="text-sm text-red-600">{imagesError}</p>
-                          ) : null}
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              onClick={handleActivateImage}
-                              disabled={
-                                activateImageLoading ||
-                                imagesLoading ||
-                                !selectedServiceImageId ||
-                                isSelectionActive
-                              }
-                              className="gap-2"
-                            >
-                              <Check className={`w-4 h-4 ${activateImageLoading ? 'animate-spin' : ''}`} />
-                              {isSelectionActive ? '已是当前版本' : activateImageLoading ? '应用中...' : '设为部署版本'}
-                            </Button>
-                            <Button
-                              variant="outline"
-                              onClick={handleRefreshImages}
-                              disabled={imagesLoading}
-                              className="gap-2"
-                            >
-                              <RefreshCw className={`w-4 h-4 ${imagesLoading ? 'animate-spin' : ''}`} />
-                              刷新
-                            </Button>
-                          </div>
-                        </div>
+                        {activeServiceImage ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white">
+                            <Check className="h-3 w-3" />
+                            当前部署
+                          </span>
+                        ) : null}
                       </div>
                     </div>
+
+                    {/* 历史镜像列表 */}
                     <div className="space-y-2">
                       <Label className="text-sm font-medium text-gray-700">历史镜像</Label>
                       {imagesLoading ? (
-                        <p className="text-sm text-gray-500">镜像列表加载中...</p>
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                          <span className="ml-2 text-sm text-gray-500">加载中...</span>
+                        </div>
                       ) : serviceImages.length === 0 ? (
-                        <p className="text-sm text-gray-500">暂无镜像历史记录。</p>
+                        <div className="rounded-lg border border-dashed border-gray-300 px-4 py-8 text-center">
+                          <p className="text-sm text-gray-500">暂无镜像记录，请先触发 Jenkins 构建。</p>
+                        </div>
                       ) : (
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            {serviceImages.map((image) => {
-                              const status = (image.build_status ?? 'pending') as ServiceImageStatus
-                              const meta = IMAGE_STATUS_META[status]
-                              const isActive = image.id === activeServiceImageId
-                              const isSelected = image.id === selectedServiceImageId
-                              const isSelectable = status === 'success'
-                              const metadata =
-                                image.metadata && typeof image.metadata === 'object'
-                                  ? (image.metadata as Record<string, unknown>)
-                                  : null
-                              const metadataBranch = metadata && typeof metadata['branch'] === 'string' ? (metadata['branch'] as string) : null
-                              return (
-                                <div
-                                  key={image.id}
-                                  className={cn(
-                                    'rounded-lg border bg-white p-4 transition-shadow',
-                                    isSelected ? 'border-indigo-300 shadow-sm' : 'border-gray-200'
-                                  )}
-                                >
-                                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                    <div className="space-y-1">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-sm font-semibold text-gray-900">
-                                          {formatImageReference(image.image, image.tag)}
+                        <div className="space-y-2">
+                          {serviceImages.map((image) => {
+                            const status = (image.build_status ?? 'pending') as ServiceImageStatus
+                            const meta = IMAGE_STATUS_META[status]
+                            const isActive = image.id === activeServiceImageId
+                            const isDeployable = status === 'success'
+                            const metadata =
+                              image.metadata && typeof image.metadata === 'object'
+                                ? (image.metadata as Record<string, unknown>)
+                                : null
+                            const metadataBranch = metadata && typeof metadata['branch'] === 'string' ? (metadata['branch'] as string) : null
+                            
+                            return (
+                              <div
+                                key={image.id}
+                                className={cn(
+                                  'rounded-lg border p-4 transition-all',
+                                  isActive 
+                                    ? 'border-emerald-300 bg-emerald-50'
+                                    : 'border-gray-200 bg-white hover:border-gray-300'
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex-1 space-y-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-sm font-semibold text-gray-900">
+                                        {formatImageReference(image.image, image.tag)}
+                                      </span>
+                                      <span
+                                        className={cn(
+                                          'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+                                          meta.badgeClass
+                                        )}
+                                      >
+                                        {meta.label}
+                                      </span>
+                                      {isActive ? (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-medium text-white">
+                                          <Check className="h-3 w-3" />
+                                          当前部署
                                         </span>
-                                        <span
-                                          className={cn(
-                                            'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
-                                            meta.badgeClass
-                                          )}
-                                        >
-                                          {meta.label}
-                                        </span>
-                                        {isActive ? (
-                                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-                                            <Check className="h-3 w-3" />
-                                            当前部署
-                                          </span>
-                                        ) : null}
-                                        {isSelected && !isActive ? (
-                                          <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-                                            <Check className="h-3 w-3" />
-                                            待部署
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-                                        {image.build_number ? <span>构建号 #{image.build_number}</span> : null}
-                                        <span>创建于 {formatDateTime(image.created_at)}</span>
-                                        {metadataBranch ? <span>分支 {metadataBranch}</span> : null}
-                                      </div>
-                                      {image.build_logs && status === 'failed' ? (
-                                        <p className="text-xs text-red-600 line-clamp-2">{image.build_logs}</p>
                                       ) : null}
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                                      {image.build_number ? <span>构建号 #{image.build_number}</span> : null}
+                                      <span>创建于 {formatDateTime(image.created_at)}</span>
+                                      {metadataBranch ? <span>分支 {metadataBranch}</span> : null}
+                                    </div>
+                                    {image.build_logs && status === 'failed' ? (
+                                      <p className="text-xs text-red-600 line-clamp-2">{image.build_logs}</p>
+                                    ) : null}
+                                  </div>
+                                  <div className="flex-shrink-0">
+                                    {isActive ? (
                                       <Button
                                         variant="outline"
                                         size="sm"
+                                        disabled
                                         className="gap-2"
-                                        onClick={() =>
-                                          handleImagePickerChange({
-                                            optionId: image.id ?? null,
-                                            image: image.image,
-                                            tag: image.tag
-                                          })
-                                        }
-                                        disabled={imagesLoading || !isSelectable}
                                       >
-                                        选择
+                                        <Check className="h-4 w-4" />
+                                        已部署
                                       </Button>
-                                    </div>
+                                    ) : isDeployable ? (
+                                      <Button
+                                        variant="default"
+                                        size="sm"
+                                        onClick={() => handleDeployImage(image.id ?? null)}
+                                        disabled={deploying}
+                                        className="gap-2"
+                                      >
+                                        <Rocket className={`h-4 w-4 ${deploying ? 'animate-spin' : ''}`} />
+                                        {deploying ? '部署中...' : '部署'}
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled
+                                      >
+                                        不可用
+                                      </Button>
+                                    )}
                                   </div>
                                 </div>
-                              )
-                            })}
-                          </div>
-                          <div className="flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="text-xs text-gray-500">
-                              {imageHistoryStats ? (
-                                <>
-                                  第 {imageHistoryStats.page} / {imageHistoryStats.totalPages} 页 · 显示第 {imageHistoryStats.start}-{imageHistoryStats.end} 条 · 共 {imageHistoryStats.total} 条
-                                </>
-                              ) : (
-                                '暂无镜像历史记录'
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  void loadServiceImages({ page: Math.max((imageHistoryStats?.page ?? 1) - 1, 1) })
-                                }
-                                disabled={!imagePagination.hasPrevious || imagesLoading}
-                              >
-                                上一页
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  void loadServiceImages({ page: (imageHistoryStats?.page ?? 1) + 1 })
-                                }
-                                disabled={!imagePagination.hasNext || imagesLoading}
-                              >
-                                下一页
-                              </Button>
-                            </div>
-                          </div>
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
+                      {imagesError ? (
+                        <p className="text-sm text-red-600">{imagesError}</p>
+                      ) : null}
                     </div>
+
+                    {/* 分页 */}
+                    {imagePagination.totalPages > 1 && (
+                      <div className="flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-xs text-gray-500">
+                          {imageHistoryStats ? (
+                            <>
+                              第 {imageHistoryStats.page} / {imageHistoryStats.totalPages} 页 · 显示第 {imageHistoryStats.start}-{imageHistoryStats.end} 条 · 共 {imageHistoryStats.total} 条
+                            </>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              void loadServiceImages({ page: Math.max((imageHistoryStats?.page ?? 1) - 1, 1) })
+                            }
+                            disabled={!imagePagination.hasPrevious || imagesLoading}
+                          >
+                            上一页
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              void loadServiceImages({ page: (imageHistoryStats?.page ?? 1) + 1 })
+                            }
+                            disabled={!imagePagination.hasNext || imagesLoading}
+                          >
+                            下一页
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>部署配置</CardTitle>
+                    <CardTitle>部署与资源配置</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="space-y-2">
-                        <Label>端口</Label>
-                        <Input
-                          type="number"
-                          value={isEditing ? (editedService.port || '') : (service.port || '-')}
-                          onChange={(e) => setEditedService({ ...editedService, port: parseInt(e.target.value) })}
-                          disabled={!isEditing}
-                        />
-                      </div>
+                    <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>副本数</Label>
                         <Input
@@ -2045,6 +2195,61 @@ export default function ServiceDetailPage() {
                         />
                       </div>
                     )}
+                    <div className="border-t border-gray-200 pt-4 mt-4">
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">资源限制</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>CPU 限制</Label>
+                          {isEditing ? (
+                            <div className="flex gap-2">
+                              <Input
+                                type="number"
+                                placeholder="如: 1000"
+                                value={cpuValue}
+                                onChange={(e) => setCpuValue(e.target.value)}
+                                className="flex-1"
+                              />
+                              <Select value={cpuUnit} onValueChange={(value: 'm' | '') => setCpuUnit(value)}>
+                                <SelectTrigger className="w-24">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="m">m (millicores)</SelectItem>
+                                  <SelectItem value="">核 (cores)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : (
+                            <Input value={service.resource_limits?.cpu || '-'} disabled />
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label>内存限制</Label>
+                          {isEditing ? (
+                            <div className="flex gap-2">
+                              <Input
+                                type="number"
+                                placeholder="如: 512"
+                                value={memoryValue}
+                                onChange={(e) => setMemoryValue(e.target.value)}
+                                className="flex-1"
+                              />
+                              <Select value={memoryUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryUnit(value)}>
+                                <SelectTrigger className="w-20">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="Mi">Mi</SelectItem>
+                                  <SelectItem value="Gi">Gi</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : (
+                            <Input value={service.resource_limits?.memory || '-'} disabled />
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               </>
@@ -2183,40 +2388,6 @@ export default function ServiceDetailPage() {
               </Card>
             )}
 
-            {/* 资源限制 */}
-            <Card>
-              <CardHeader>
-                <CardTitle>资源限制</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>CPU 限制</Label>
-                    <Input
-                      placeholder="如: 1000m 或 1"
-                      value={isEditing ? (editedService.resource_limits?.cpu || '') : (service.resource_limits?.cpu || '-')}
-                      onChange={(e) => setEditedService({
-                        ...editedService,
-                        resource_limits: { ...editedService.resource_limits, cpu: e.target.value }
-                      })}
-                      disabled={!isEditing}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>内存限制</Label>
-                    <Input
-                      placeholder="如: 512Mi 或 1Gi"
-                      value={isEditing ? (editedService.resource_limits?.memory || '') : (service.resource_limits?.memory || '-')}
-                      onChange={(e) => setEditedService({
-                        ...editedService,
-                        resource_limits: { ...editedService.resource_limits, memory: e.target.value }
-                      })}
-                      disabled={!isEditing}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
           </TabsContent>
 
           {/* 环境变量 */}
@@ -2767,6 +2938,197 @@ export default function ServiceDetailPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* 构建对话框 */}
+      <Dialog open={buildDialogOpen} onOpenChange={setBuildDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>触发镜像构建</DialogTitle>
+            <DialogDescription>
+              配置构建参数，平台将调用 Jenkins 构建新镜像。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-gray-700">构建分支</Label>
+              <Input
+                value={(service?.type === 'application' ? (service as any)?.git_branch : '') || 'main'}
+                disabled
+                className="bg-gray-50"
+              />
+              <p className="text-xs text-gray-500">使用当前配置的分支进行构建</p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-gray-700">镜像版本类型</Label>
+              <Select
+                value={buildTagType}
+                onValueChange={(value: 'dev' | 'test' | 'release') => setBuildTagType(value)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dev">开发版 (dev-*)</SelectItem>
+                  <SelectItem value="test">测试版 (test-*)</SelectItem>
+                  <SelectItem value="release">发布版 (release-*)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500">
+                {buildTagType === 'dev' && '用于开发环境的镜像版本'}
+                {buildTagType === 'test' && '用于测试环境的镜像版本'}
+                {buildTagType === 'release' && '用于生产环境的镜像版本'}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
+              <Input
+                value={customBuildTag}
+                onChange={(e) => setCustomBuildTag(e.target.value)}
+                placeholder="例如：dev-20241112120000"
+              />
+              <p className="text-xs text-gray-500">系统已自动生成标签，可根据需要修改</p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setBuildDialogOpen(false)}
+              disabled={buildingImage}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleBuildImage}
+              disabled={buildingImage || !customBuildTag.trim()}
+              className="gap-2"
+            >
+              <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
+              {buildingImage ? '构建中...' : '开始构建'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 部署对话框 */}
+      <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>选择镜像版本</DialogTitle>
+            <DialogDescription>
+              请选择要部署的镜像版本，按构建时间倒序排列。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {deployImageLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                <span className="ml-2 text-sm text-gray-500">加载中...</span>
+              </div>
+            ) : deployImageList.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-300 px-4 py-8 text-center">
+                <p className="text-sm text-gray-500">暂无构建成功的镜像，请先触发构建。</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {deployImageList.map((image) => {
+                  const isSelected = selectedDeployImageId === image.id
+                  const isActive = image.id === activeServiceImageId
+                  const metadata =
+                    image.metadata && typeof image.metadata === 'object'
+                      ? (image.metadata as Record<string, unknown>)
+                      : null
+                  const metadataBranch = metadata && typeof metadata['branch'] === 'string' ? (metadata['branch'] as string) : null
+                  
+                  return (
+                    <div
+                      key={image.id}
+                      onClick={() => setSelectedDeployImageId(image.id ?? null)}
+                      className={cn(
+                        'rounded-lg border p-4 cursor-pointer transition-all',
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50 shadow-sm'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-gray-900">
+                              {formatImageReference(image.image, image.tag)}
+                            </span>
+                            {isActive ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                <Check className="h-3 w-3" />
+                                当前部署
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                            {image.build_number ? <span>构建号 #{image.build_number}</span> : null}
+                            <span>创建于 {formatDateTime(image.created_at)}</span>
+                            {metadataBranch ? <span>分支 {metadataBranch}</span> : null}
+                          </div>
+                        </div>
+                        {isSelected ? (
+                          <div className="flex-shrink-0">
+                            <div className="rounded-full bg-indigo-500 p-1">
+                              <Check className="h-4 w-4 text-white" />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            
+            {/* 分页 */}
+            {deployImageTotal > DEPLOY_IMAGE_PAGE_SIZE && (
+              <div className="flex items-center justify-between border-t border-gray-200 pt-3">
+                <div className="text-xs text-gray-500">
+                  第 {deployImagePage} / {Math.ceil(deployImageTotal / DEPLOY_IMAGE_PAGE_SIZE)} 页 · 共 {deployImageTotal} 条
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => loadDeployImages(deployImagePage - 1)}
+                    disabled={deployImagePage <= 1 || deployImageLoading}
+                  >
+                    上一页
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => loadDeployImages(deployImagePage + 1)}
+                    disabled={deployImagePage >= Math.ceil(deployImageTotal / DEPLOY_IMAGE_PAGE_SIZE) || deployImageLoading}
+                  >
+                    下一页
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeployDialogOpen(false)}
+              disabled={deploying}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleConfirmDeploy}
+              disabled={deploying || !selectedDeployImageId || deployImageLoading}
+              className="gap-2"
+            >
+              <Rocket className={`w-4 h-4 ${deploying ? 'animate-spin' : ''}`} />
+              {deploying ? '部署中...' : '开始部署'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
