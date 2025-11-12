@@ -174,7 +174,7 @@ export default function ServiceDetailPage() {
   const router = useRouter()
   const projectId = params.id as string
   const serviceId = params.serviceId as string
-  
+
   const [service, setService] = useState<Service | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
@@ -614,10 +614,10 @@ export default function ServiceDetailPage() {
 
         const successPromise = isApplicationService
           ? serviceSvc.getServiceImages(serviceId, {
-              page: 1,
-              pageSize: SUCCESS_IMAGE_OPTIONS_LIMIT,
-              status: 'success'
-            })
+            page: 1,
+            pageSize: SUCCESS_IMAGE_OPTIONS_LIMIT,
+            status: 'success'
+          })
           : null
 
         const historyResponse = await historyPromise
@@ -698,15 +698,15 @@ export default function ServiceDetailPage() {
           const parsed = parseImageReference(serviceType === 'application' ? (service as any)?.built_image : undefined)
           const nextValue: ImageReferenceValue = fallbackImage
             ? {
-                optionId: fallbackImage.id ?? null,
-                image: fallbackImage.image,
-                tag: fallbackImage.tag
-              }
+              optionId: fallbackImage.id ?? null,
+              image: fallbackImage.image,
+              tag: fallbackImage.tag
+            }
             : {
-                optionId: null,
-                image: parsed.image,
-                tag: parsed.tag
-              }
+              optionId: null,
+              image: parsed.image,
+              tag: parsed.tag
+            }
 
           if (!selectedImage) {
             setSelectedServiceImageId(fallbackImage?.id ?? null)
@@ -967,7 +967,7 @@ export default function ServiceDetailPage() {
     if (activeTab === 'logs' && !hasLoadedLogs) {
       void loadLogs()
     }
-    
+
     if (activeTab === 'yaml' && !yamlContent) {
       void loadYAML()
     }
@@ -1019,7 +1019,7 @@ export default function ServiceDetailPage() {
   // 删除服务
   const handleDelete = async () => {
     if (!serviceId || !confirm('确定要删除这个服务吗？')) return
-    
+
     try {
       const result = await serviceSvc.deleteService(serviceId)
       toast.success(result.message || '服务删除成功')
@@ -1047,22 +1047,22 @@ export default function ServiceDetailPage() {
         return
       }
     }
-    
-    const confirmMessage = service.type === ServiceType.APPLICATION 
+
+    const confirmMessage = service.type === ServiceType.APPLICATION
       ? '确定要部署此应用吗？'
       : `确定要部署此${service.type === ServiceType.DATABASE ? '数据库' : '镜像'}服务吗？`
-    
+
     if (!confirm(confirmMessage)) return
-    
+
     try {
       setDeploying(true)
-      
+
       const requestOptions = service.type === ServiceType.APPLICATION && selectedServiceImageId
         ? { serviceImageId: selectedServiceImageId }
         : undefined
 
       const result = await serviceSvc.deployService(serviceId, requestOptions)
-      
+
       toast.success(result?.message || '部署成功，服务正在启动')
       await loadService()
       await fetchK8sStatus({ showToast: true })
@@ -1162,7 +1162,7 @@ export default function ServiceDetailPage() {
   // 保存配置
   const handleSave = async () => {
     if (!serviceId) return
-    
+
     try {
       // 合并环境变量
       const envVarsObj: Record<string, string> = {}
@@ -1171,7 +1171,7 @@ export default function ServiceDetailPage() {
           envVarsObj[key] = value
         }
       })
-      
+
       const updateData: Record<string, unknown> = {
         ...editedService,
         env_vars: envVarsObj,
@@ -1280,7 +1280,7 @@ export default function ServiceDetailPage() {
           updateData.tag = trimmedTag ? trimmedTag : null
         }
       }
-      
+
       await serviceSvc.updateService(serviceId, updateData)
       toast.success('配置保存成功')
       setIsEditing(false)
@@ -1336,21 +1336,21 @@ export default function ServiceDetailPage() {
   // 应用卷挂载模板
   const applyVolumeTemplate = () => {
     if (!service || !project) return
-    
+
     const imageName = service.type === ServiceType.IMAGE ? (service as any).image : ''
     const template = findVolumeTemplate(imageName)
-    
+
     if (!template) {
       toast.error(`未找到 "${imageName}" 的预设模板`)
       return
     }
-    
+
     const newVolumes = template.volumes.map(v => ({
       nfs_subpath: generateNFSSubpath(service.name, v.container_path),
       container_path: v.container_path,
       read_only: v.read_only || false
     }))
-    
+
     setVolumes(newVolumes)
     toast.success(`已应用 ${template.displayName} 模板，共 ${newVolumes.length} 个挂载点`)
   }
@@ -1368,7 +1368,7 @@ export default function ServiceDetailPage() {
   // 更新卷挂载
   const updateVolume = (index: number, field: string, value: any) => {
     const newVolumes = [...volumes]
-    ;(newVolumes[index] as any)[field] = value
+      ; (newVolumes[index] as any)[field] = value
     setVolumes(newVolumes)
   }
 
@@ -1416,7 +1416,7 @@ export default function ServiceDetailPage() {
                 <ArrowLeft className="w-4 h-4" />
                 返回
               </Button>
-              
+
               <div className="flex items-start gap-3">
                 <h1 className="text-2xl font-bold text-gray-900">{service.name}</h1>
                 <Badge variant="outline">
@@ -1473,15 +1473,15 @@ export default function ServiceDetailPage() {
             {/* 操作按钮 */}
             <div className="flex items-center gap-2">
               {/* 部署按钮 - 所有服务类型都支持 */}
-              <Button 
-                onClick={handleDeploy} 
+              <Button
+                onClick={handleDeploy}
                 disabled={deploying || normalizedStatus === 'building'}
                 className="gap-2"
               >
                 <Rocket className="w-4 h-4" />
                 {deploying ? '部署中...' : '部署'}
               </Button>
-              
+
               {normalizedStatus === 'stopped' && (
                 <Button onClick={handleStart} className="gap-2">
                   <Play className="w-4 h-4" />
@@ -1576,184 +1576,181 @@ export default function ServiceDetailPage() {
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>Git 提供商</Label>
-                        <Input value={service.git_provider || '-'} disabled />
+                        <Label>仓库 URL</Label>
+                        <Input value={service.git_repository || '-'} disabled />
                       </div>
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label>分支</Label>
-                          {branchSelectorAvailable ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="gap-1"
-                              onClick={() => void fetchBranches(undefined, { useDefaultBranch: false })}
-                              disabled={branchSelectorDisabled || branchLoading}
-                            >
-                              {branchLoading ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <RefreshCw className="h-3.5 w-3.5" />
-                              )}
-                              刷新
-                            </Button>
-                          ) : null}
-                        </div>
-                        {branchSelectorAvailable ? (
-                          <>
-                            <Combobox
-                              data={branchComboboxData}
-                              type="分支"
-                              value={normalizedBranchValue}
-                              onValueChange={(value) => {
-                                if (!isEditing) {
-                                  return
-                                }
-                                const trimmed = value.trim()
-                                gitBranchRef.current = trimmed
-                                setEditedService((prev: any) => ({ ...prev, git_branch: trimmed }))
-                                setBuildBranch((prev) => (prev.trim() ? prev : trimmed))
-                                branchInitialLoadRef.current = true
-                                setBranchSearch('')
-                              }}
-                              open={branchPickerOpen}
-                              onOpenChange={(open) => {
-                                if (branchSelectorDisabled) {
-                                  setBranchPickerOpen(false)
-                                  return
-                                }
 
-                                setBranchPickerOpen(open)
-
-                                if (!open) {
-                                  setBranchSearch('')
-                                  return
-                                }
-
-                                if (!branchOptions.length) {
-                                  void fetchBranches(undefined, { useDefaultBranch: !branchInitialLoadRef.current })
-                                }
-                              }}
-                            >
-                              <ComboboxTrigger
-                                className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[44px]"
-                                disabled={branchSelectorDisabled}
-                              >
-                                <div className="flex w-full flex-col items-start gap-1 text-left">
-                                  <span className="w-full truncate text-sm font-medium text-gray-900">
-                                    {branchDisplayLabel}
-                                  </span>
-                                  <span className="w-full truncate text-xs text-gray-500">
-                                    {repositoryIdentifier ? branchDisplayDescription : '请先确认仓库 URL'}
-                                  </span>
-                                </div>
-                              </ComboboxTrigger>
-                              <ComboboxContent
-                                className="max-h-72"
-                                popoverOptions={{ className: 'w-[320px] sm:w-[360px] max-h-72 p-0' }}
-                              >
-                                <ComboboxInput
-                                  placeholder="搜索分支..."
-                                  value={branchSearch}
-                                  disabled={branchSelectorDisabled}
-                                  onValueChange={(value) => setBranchSearch(value)}
-                                />
-                                <ComboboxList className="max-h-60 overflow-y-auto py-1">
-                                  {branchLoading ? (
-                                    <div className="flex items-center justify-center py-6 text-sm text-gray-500">
-                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      正在加载分支...
-                                    </div>
-                                  ) : (
-                                    <>
-                                      <ComboboxEmpty>未找到匹配的分支</ComboboxEmpty>
-                                      <ComboboxGroup className="space-y-1">
-                                        {branchOptions.map((option) => (
-                                          <ComboboxItem
-                                            key={option.value}
-                                            value={option.value}
-                                            className="flex flex-col gap-1 px-3 py-2"
-                                          >
-                                            <span className="text-sm font-medium text-gray-900">
-                                              {option.label}
-                                              {option.isDefault ? (
-                                                <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                                                  默认
-                                                </span>
-                                              ) : null}
-                                            </span>
-                                            {option.description ? (
-                                              <span className="text-xs text-gray-500">{option.description}</span>
-                                            ) : null}
-                                          </ComboboxItem>
-                                        ))}
-                                      </ComboboxGroup>
-                                    </>
-                                  )}
-                                </ComboboxList>
-                                <ComboboxCreateNew
-                                  onCreateNew={(value) => {
-                                    if (!isEditing) {
-                                      return
-                                    }
-                                    const trimmed = value.trim()
-                                    if (!trimmed) {
-                                      return
-                                    }
-                                    gitBranchRef.current = trimmed
-                                    setEditedService((prev: any) => ({ ...prev, git_branch: trimmed }))
-                                    setBuildBranch((prev) => (prev.trim() ? prev : trimmed))
-                                    branchInitialLoadRef.current = true
-                                    setBranchSearch('')
-                                  }}
-                                >
-                                  {(value) => <span>使用自定义分支 “{value}”</span>}
-                                </ComboboxCreateNew>
-                              </ComboboxContent>
-                            </Combobox>
-                            {branchError ? (
-                              <p className="text-xs text-red-500">{branchError}</p>
-                            ) : (
-                              <p className="text-xs text-gray-500">
-                                {branchSelectorDisabled
-                                  ? '开启编辑后可选择分支。'
-                                  : '可搜索 GitLab 分支，或输入自定义分支名。'}
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            <Input
-                              value={isEditing ? (editedService.git_branch || 'main') : (service?.git_branch || 'main')}
-                              onChange={(e) =>
-                                setEditedService((prev: any) => ({ ...prev, git_branch: e.target.value }))
-                              }
-                              disabled={!isEditing}
-                              placeholder="main"
-                            />
-                            {isGitConfigLoading ? (
-                              <p className="text-xs text-gray-500">正在加载 Git 配置...</p>
-                            ) : showGitlabConfigWarning ? (
-                              <p className="text-xs text-yellow-600">
-                                GitLab 配置不可用，当前无法搜索分支，请手动输入分支名称。
-                              </p>
-                            ) : null}
-                          </>
-                        )}
+                        <Label>项目路径</Label>
+                        <Input
+                          value={isEditing ? (editedService.git_path || '/') : (service.git_path || '/')}
+                          onChange={(e) => setEditedService({ ...editedService, git_path: e.target.value })}
+                          disabled={!isEditing}
+                        />
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label>仓库 URL</Label>
-                      <Input value={service.git_repository || '-'} disabled />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>项目路径</Label>
-                      <Input 
-                        value={isEditing ? (editedService.git_path || '/') : (service.git_path || '/')}
-                        onChange={(e) => setEditedService({ ...editedService, git_path: e.target.value })}
-                        disabled={!isEditing}
-                      />
+                      <div className="flex items-center justify-between">
+                        <Label>分支</Label>
+                        {branchSelectorAvailable ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1"
+                            onClick={() => void fetchBranches(undefined, { useDefaultBranch: false })}
+                            disabled={branchSelectorDisabled || branchLoading}
+                          >
+                            {branchLoading ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            刷新
+                          </Button>
+                        ) : null}
+                      </div>
+                      {branchSelectorAvailable ? (
+                        <>
+                          <Combobox
+                            data={branchComboboxData}
+                            type="分支"
+                            value={normalizedBranchValue}
+                            onValueChange={(value) => {
+                              if (!isEditing) {
+                                return
+                              }
+                              const trimmed = value.trim()
+                              gitBranchRef.current = trimmed
+                              setEditedService((prev: any) => ({ ...prev, git_branch: trimmed }))
+                              setBuildBranch((prev) => (prev.trim() ? prev : trimmed))
+                              branchInitialLoadRef.current = true
+                              setBranchSearch('')
+                            }}
+                            open={branchPickerOpen}
+                            onOpenChange={(open) => {
+                              if (branchSelectorDisabled) {
+                                setBranchPickerOpen(false)
+                                return
+                              }
+
+                              setBranchPickerOpen(open)
+
+                              if (!open) {
+                                setBranchSearch('')
+                                return
+                              }
+
+                              if (!branchOptions.length) {
+                                void fetchBranches(undefined, { useDefaultBranch: !branchInitialLoadRef.current })
+                              }
+                            }}
+                          >
+                            <ComboboxTrigger
+                              className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[44px]"
+                              disabled={branchSelectorDisabled}
+                            >
+                              <div className="flex w-full flex-col items-start gap-1 text-left">
+                                <span className="w-full truncate text-sm font-medium text-gray-900">
+                                  {branchDisplayLabel}
+                                </span>
+                                <span className="w-full truncate text-xs text-gray-500">
+                                  {repositoryIdentifier ? branchDisplayDescription : '请先确认仓库 URL'}
+                                </span>
+                              </div>
+                            </ComboboxTrigger>
+                            <ComboboxContent
+                              className="max-h-72"
+                              popoverOptions={{ className: 'w-[320px] sm:w-[360px] max-h-72 p-0' }}
+                            >
+                              <ComboboxInput
+                                placeholder="搜索分支..."
+                                value={branchSearch}
+                                disabled={branchSelectorDisabled}
+                                onValueChange={(value) => setBranchSearch(value)}
+                              />
+                              <ComboboxList className="max-h-60 overflow-y-auto py-1">
+                                {branchLoading ? (
+                                  <div className="flex items-center justify-center py-6 text-sm text-gray-500">
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    正在加载分支...
+                                  </div>
+                                ) : (
+                                  <>
+                                    <ComboboxEmpty>未找到匹配的分支</ComboboxEmpty>
+                                    <ComboboxGroup className="space-y-1">
+                                      {branchOptions.map((option) => (
+                                        <ComboboxItem
+                                          key={option.value}
+                                          value={option.value}
+                                          className="flex flex-col gap-1 px-3 py-2"
+                                        >
+                                          <span className="text-sm font-medium text-gray-900">
+                                            {option.label}
+                                            {option.isDefault ? (
+                                              <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                                                默认
+                                              </span>
+                                            ) : null}
+                                          </span>
+                                          {option.description ? (
+                                            <span className="text-xs text-gray-500">{option.description}</span>
+                                          ) : null}
+                                        </ComboboxItem>
+                                      ))}
+                                    </ComboboxGroup>
+                                  </>
+                                )}
+                              </ComboboxList>
+                              <ComboboxCreateNew
+                                onCreateNew={(value) => {
+                                  if (!isEditing) {
+                                    return
+                                  }
+                                  const trimmed = value.trim()
+                                  if (!trimmed) {
+                                    return
+                                  }
+                                  gitBranchRef.current = trimmed
+                                  setEditedService((prev: any) => ({ ...prev, git_branch: trimmed }))
+                                  setBuildBranch((prev) => (prev.trim() ? prev : trimmed))
+                                  branchInitialLoadRef.current = true
+                                  setBranchSearch('')
+                                }}
+                              >
+                                {(value) => <span>使用自定义分支 “{value}”</span>}
+                              </ComboboxCreateNew>
+                            </ComboboxContent>
+                          </Combobox>
+                          {branchError ? (
+                            <p className="text-xs text-red-500">{branchError}</p>
+                          ) : (
+                            <p className="text-xs text-gray-500">
+                              {branchSelectorDisabled
+                                ? '开启编辑后可选择分支。'
+                                : '可搜索 GitLab 分支，或输入自定义分支名。'}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <Input
+                            value={isEditing ? (editedService.git_branch || 'main') : (service?.git_branch || 'main')}
+                            onChange={(e) =>
+                              setEditedService((prev: any) => ({ ...prev, git_branch: e.target.value }))
+                            }
+                            disabled={!isEditing}
+                            placeholder="main"
+                          />
+                          {isGitConfigLoading ? (
+                            <p className="text-xs text-gray-500">正在加载 Git 配置...</p>
+                          ) : showGitlabConfigWarning ? (
+                            <p className="text-xs text-yellow-600">
+                              GitLab 配置不可用，当前无法搜索分支，请手动输入分支名称。
+                            </p>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -1770,7 +1767,7 @@ export default function ServiceDetailPage() {
                       </div>
                       <div className="space-y-2">
                         <Label>Dockerfile 路径</Label>
-                        <Input 
+                        <Input
                           value={isEditing ? (editedService.dockerfile_path || 'Dockerfile') : (service.dockerfile_path || 'Dockerfile')}
                           onChange={(e) => setEditedService({ ...editedService, dockerfile_path: e.target.value })}
                           disabled={!isEditing}
@@ -2017,7 +2014,7 @@ export default function ServiceDetailPage() {
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-2">
                         <Label>端口</Label>
-                        <Input 
+                        <Input
                           type="number"
                           value={isEditing ? (editedService.port || '') : (service.port || '-')}
                           onChange={(e) => setEditedService({ ...editedService, port: parseInt(e.target.value) })}
@@ -2026,7 +2023,7 @@ export default function ServiceDetailPage() {
                       </div>
                       <div className="space-y-2">
                         <Label>副本数</Label>
-                        <Input 
+                        <Input
                           type="number"
                           value={isEditing ? (editedService.replicas || 1) : (service.replicas || 1)}
                           onChange={(e) => setEditedService({ ...editedService, replicas: parseInt(e.target.value) })}
@@ -2041,7 +2038,7 @@ export default function ServiceDetailPage() {
                     {service.command && (
                       <div className="space-y-2">
                         <Label>启动命令</Label>
-                        <Input 
+                        <Input
                           value={isEditing ? (editedService.command || '') : (service.command || '')}
                           onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
                           disabled={!isEditing}
@@ -2078,7 +2075,7 @@ export default function ServiceDetailPage() {
                       </div>
                       <div className="space-y-2">
                         <Label>存储大小</Label>
-                        <Input 
+                        <Input
                           value={isEditing ? (editedService.volume_size || '10Gi') : (service.volume_size || '10Gi')}
                           onChange={(e) => setEditedService({ ...editedService, volume_size: e.target.value })}
                           disabled={!isEditing}
@@ -2108,9 +2105,9 @@ export default function ServiceDetailPage() {
                     <div className="space-y-2">
                       <Label>连接 URL</Label>
                       <div className="flex gap-2">
-                        <Input 
-                          value={service.internal_connection_url || '-'} 
-                          disabled 
+                        <Input
+                          value={service.internal_connection_url || '-'}
+                          disabled
                           className="flex-1"
                           type="password"
                         />
@@ -2129,7 +2126,7 @@ export default function ServiceDetailPage() {
                       </div>
                       <div className="space-y-2">
                         <Label>外部端口</Label>
-                        <Input 
+                        <Input
                           type="number"
                           value={isEditing ? (editedService.external_port || '') : (service.external_port || '-')}
                           onChange={(e) => setEditedService({ ...editedService, external_port: parseInt(e.target.value) })}
@@ -2166,7 +2163,7 @@ export default function ServiceDetailPage() {
                   {service.command && (
                     <div className="space-y-2">
                       <Label>启动命令</Label>
-                      <Input 
+                      <Input
                         value={isEditing ? (editedService.command || '') : (service.command || '')}
                         onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
                         disabled={!isEditing}
@@ -2175,7 +2172,7 @@ export default function ServiceDetailPage() {
                   )}
                   <div className="space-y-2">
                     <Label>副本数</Label>
-                    <Input 
+                    <Input
                       type="number"
                       value={isEditing ? (editedService.replicas || 1) : (service.replicas || 1)}
                       onChange={(e) => setEditedService({ ...editedService, replicas: parseInt(e.target.value) })}
@@ -2195,11 +2192,11 @@ export default function ServiceDetailPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>CPU 限制</Label>
-                    <Input 
+                    <Input
                       placeholder="如: 1000m 或 1"
                       value={isEditing ? (editedService.resource_limits?.cpu || '') : (service.resource_limits?.cpu || '-')}
-                      onChange={(e) => setEditedService({ 
-                        ...editedService, 
+                      onChange={(e) => setEditedService({
+                        ...editedService,
                         resource_limits: { ...editedService.resource_limits, cpu: e.target.value }
                       })}
                       disabled={!isEditing}
@@ -2207,11 +2204,11 @@ export default function ServiceDetailPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>内存限制</Label>
-                    <Input 
+                    <Input
                       placeholder="如: 512Mi 或 1Gi"
                       value={isEditing ? (editedService.resource_limits?.memory || '') : (service.resource_limits?.memory || '-')}
-                      onChange={(e) => setEditedService({ 
-                        ...editedService, 
+                      onChange={(e) => setEditedService({
+                        ...editedService,
                         resource_limits: { ...editedService.resource_limits, memory: e.target.value }
                       })}
                       disabled={!isEditing}
@@ -2291,9 +2288,9 @@ export default function ServiceDetailPage() {
                   </div>
                   <div className="flex gap-2">
                     {service.type === ServiceType.IMAGE && findVolumeTemplate((service as any).image) && (
-                      <Button 
-                        onClick={applyVolumeTemplate} 
-                        size="sm" 
+                      <Button
+                        onClick={applyVolumeTemplate}
+                        size="sm"
                         variant="outline"
                         className="gap-2"
                       >
