@@ -29,10 +29,12 @@ import { ImageReferencePicker, type ImageReferenceValue } from '@/components/ser
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { ServiceType, DatabaseType, GitProvider, BuildType, Service } from '@/types/project'
+import type { NetworkPortConfig } from '@/types/project'
 import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Database as DatabaseIcon, Plus, Trash2, Loader2, RefreshCcw } from 'lucide-react'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
+import { buildServicePortName, sanitizeK8sResourceName } from '@/lib/k8s-name'
 
 const extractImageBaseName = (image?: string) => {
   if (!image) return ''
@@ -50,6 +52,7 @@ type NetworkPortFormState = {
   nodePort: string
   enableDomain: boolean
   domainPrefix: string
+  name: string
 }
 
 interface ServiceFormValues {
@@ -96,7 +99,8 @@ const createEmptyPort = (): NetworkPortFormState => ({
   protocol: 'TCP',
   nodePort: '',
   enableDomain: false,
-  domainPrefix: ''
+  domainPrefix: '',
+  name: ''
 })
 
 type GitRepositoryOption = {
@@ -697,53 +701,71 @@ export default function ServiceCreateForm({
         serviceData.command = data.command
         serviceData.replicas = data.replicas ? parseInt(data.replicas) : 1
 
-        const portsPayload: Array<{
-          container_port: number
-          service_port: number
-          protocol: 'TCP' | 'UDP'
-          node_port?: number
-          domain?: {
-            enabled: boolean
-            prefix: string
-            host: string
-          }
-        }> = []
+        const portsPayload: NetworkPortConfig[] = []
         let networkError: string | null = null
         const defaultPrefix = getDefaultDomainPrefix()
+        const seenPortKeys = new Set<string>()
+        const seenDomainHosts = new Set<string>()
+        const seenPortNames = new Set<string>()
+        const effectiveServiceNameForPorts = (data.name ?? '').trim()
+        const domainRoot = projectIdentifier ? `${projectIdentifier}.${DEFAULT_DOMAIN_ROOT}` : null
 
         for (const port of networkPorts) {
+          const hasInput =
+            port.containerPort.trim().length > 0 ||
+            port.servicePort.trim().length > 0 ||
+            port.nodePort.trim().length > 0 ||
+            port.enableDomain
+
           const containerPort = parseInt(port.containerPort, 10)
 
           if (!Number.isInteger(containerPort) || containerPort <= 0) {
-            if (
-              port.enableDomain ||
-              port.servicePort.trim().length > 0 ||
-              port.nodePort.trim().length > 0
-            ) {
-              networkError = '请为启用域名访问的端口填写有效的容器端口。'
+            if (hasInput) {
+              networkError = '请为启用的网络配置填写有效的容器端口。'
               break
             }
             continue
           }
 
+          const protocol = port.protocol ?? 'TCP'
           const servicePortValue = port.servicePort ? parseInt(port.servicePort, 10) : containerPort
           const servicePort =
             Number.isInteger(servicePortValue) && servicePortValue > 0 ? servicePortValue : containerPort
 
-          const portPayload: {
-            container_port: number
-            service_port: number
-            protocol: 'TCP' | 'UDP'
-            node_port?: number
-            domain?: {
-              enabled: boolean
-              prefix: string
-              host: string
+          const comboKey = `${containerPort}:${servicePort}:${protocol}`
+          if (seenPortKeys.has(comboKey)) {
+            networkError = '存在重复的端口配置，请检查容器端口、Service 端口与协议组合。'
+            break
+          }
+          seenPortKeys.add(comboKey)
+
+          const portNameBase = effectiveServiceNameForPorts || 'service'
+          let computedPortName = port.name ? sanitizeK8sResourceName(port.name) : ''
+
+          if (computedPortName) {
+            if (seenPortNames.has(computedPortName)) {
+              computedPortName = ''
+            } else {
+              seenPortNames.add(computedPortName)
             }
-          } = {
+          }
+
+          if (!computedPortName) {
+            computedPortName = buildServicePortName(portNameBase, containerPort)
+            let attemptIndex = 1
+            while (seenPortNames.has(computedPortName) && attemptIndex < 50) {
+              const fallbackBase = `${portNameBase}-${attemptIndex}`
+              computedPortName = buildServicePortName(fallbackBase, containerPort)
+              attemptIndex++
+            }
+            seenPortNames.add(computedPortName)
+          }
+
+          const portPayload: NetworkPortConfig = {
             container_port: containerPort,
             service_port: servicePort,
-            protocol: port.protocol
+            protocol,
+            name: computedPortName
           }
 
           if (networkServiceType === 'NodePort' && port.nodePort) {
@@ -754,7 +776,7 @@ export default function ServiceCreateForm({
           }
 
           if (port.enableDomain) {
-            if (!projectIdentifier) {
+            if (!projectIdentifier || !domainRoot) {
               networkError = '启用域名访问前，请先配置项目编号。'
               break
             }
@@ -765,10 +787,17 @@ export default function ServiceCreateForm({
               break
             }
 
+            const host = `${effectivePrefix}.${domainRoot}`
+            if (seenDomainHosts.has(host)) {
+              networkError = '域名配置重复，请检查域名前缀。'
+              break
+            }
+            seenDomainHosts.add(host)
+
             portPayload.domain = {
               enabled: true,
               prefix: effectivePrefix,
-              host: `${effectivePrefix}.${projectIdentifier}.${DEFAULT_DOMAIN_ROOT}`
+              host
             }
           }
 

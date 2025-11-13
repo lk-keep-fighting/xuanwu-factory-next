@@ -314,6 +314,31 @@ class K8sService {
     return { success: true }
   }
 
+  async syncServiceNetwork(service: Service, namespace: string): Promise<void> {
+    const targetNamespace = namespace?.trim()
+    const serviceName = service.name?.trim()
+
+    if (!serviceName) {
+      throw new Error('服务缺少名称，无法同步网络配置')
+    }
+
+    if (!targetNamespace) {
+      throw new Error('项目缺少有效的命名空间，无法同步网络配置')
+    }
+
+    const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
+
+    if (!normalizedNetwork || normalizedNetwork.ports.length === 0) {
+      await this.deleteK8sServiceIfExists(serviceName, targetNamespace)
+      await this.deleteIngressIfExists(`${serviceName}-ingress`, targetNamespace)
+      return
+    }
+
+    await this.ensureNamespace(targetNamespace)
+
+    await this.createServiceFromConfig(service, targetNamespace, normalizedNetwork)
+  }
+
   /**
    * 停止服务（将副本数设为 0）
    */
@@ -648,7 +673,9 @@ class K8sService {
                 ? normalizedNetwork.ports.map((port, index) => ({
                     containerPort: port.containerPort,
                     protocol: port.protocol,
-                    name: `port-${port.containerPort}-${index}`
+                    name:
+                      resolvedPortNames[index] ??
+                      buildServicePortName(service.name, port.containerPort)
                   }))
                 : undefined,
               env: this.buildEnvVars(service),
@@ -683,7 +710,9 @@ class K8sService {
           selector: { app: service.name },
           type: normalizedNetwork.serviceType,
           ports: normalizedNetwork.ports.map((port, index) => ({
-            name: `port-${index}`,
+            name:
+              resolvedPortNames[index] ??
+              buildServicePortName(service.name, port.containerPort),
             port: port.servicePort,
             targetPort: port.containerPort,
             protocol: port.protocol,
@@ -2212,7 +2241,8 @@ class K8sService {
         container_port: port.targetPort,
         service_port: port.port,
         protocol: port.protocol,
-        node_port: port.nodePort
+        node_port: port.nodePort,
+        name: port.name ? sanitizeK8sResourceName(port.name) : undefined
       }))
     )
 
@@ -2474,9 +2504,13 @@ class K8sService {
       return
     }
 
+    const resolvedPortNames = this.resolvePortNames(serviceName, config.ports)
+
     const ports: k8s.V1ServicePort[] = config.ports.map((port, index) => {
       const servicePort: k8s.V1ServicePort = {
-        name: `port-${port.containerPort}-${index}`,
+        name:
+          resolvedPortNames[index] ??
+          buildServicePortName(serviceName, port.containerPort),
         port: port.servicePort,
         targetPort: port.containerPort,
         protocol: port.protocol
@@ -2528,17 +2562,21 @@ class K8sService {
     if (config.serviceType === 'NodePort') {
       for (const existingPort of existingService.spec?.ports ?? []) {
         const existingTarget = existingPort.targetPort
-        const matchedPort = ports.find((portDef) => {
-          if (typeof existingTarget === 'number' && typeof portDef.targetPort === 'number') {
-            return existingTarget === portDef.targetPort
-          }
+        const matchedPort =
+          (existingPort.name
+            ? ports.find((portDef) => portDef.name === existingPort.name)
+            : undefined) ??
+          ports.find((portDef) => {
+            if (typeof existingTarget === 'number' && typeof portDef.targetPort === 'number') {
+              return existingTarget === portDef.targetPort
+            }
 
-          if (typeof existingPort.port === 'number') {
-            return portDef.port === existingPort.port
-          }
+            if (typeof existingPort.port === 'number') {
+              return portDef.port === existingPort.port
+            }
 
-          return false
-        })
+            return false
+          })
 
         if (matchedPort && matchedPort.nodePort === undefined && typeof existingPort.nodePort === 'number') {
           matchedPort.nodePort = existingPort.nodePort

@@ -29,6 +29,7 @@ import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { projectSvc } from '@/service/projectSvc'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
+import { buildServicePortName, sanitizeK8sResourceName } from '@/lib/k8s-name'
 import { findVolumeTemplate, generateNFSSubpath } from '@/lib/volume-templates'
 import { cn } from '@/lib/utils'
 import { parseImageReference, formatImageReference, isImageReferenceEqual } from '@/lib/service-image'
@@ -104,6 +105,7 @@ type NetworkPortFormState = {
   nodePort: string
   enableDomain: boolean
   domainPrefix: string
+  name: string
 }
 
 const generatePortId = () =>
@@ -118,7 +120,8 @@ const createEmptyPort = (): NetworkPortFormState => ({
   protocol: 'TCP',
   nodePort: '',
   enableDomain: false,
-  domainPrefix: ''
+  domainPrefix: '',
+  name: ''
 })
 
 const isNetworkConfigV2 = (config: NetworkConfig): config is NetworkConfigV2 =>
@@ -624,7 +627,8 @@ export default function ServiceDetailPage() {
           protocol: port.protocol ?? 'TCP',
           nodePort: port.node_port ? String(port.node_port) : '',
           enableDomain: Boolean(port.domain?.enabled),
-          domainPrefix: port.domain?.prefix ?? ''
+          domainPrefix: port.domain?.prefix ?? '',
+          name: port.name ?? ''
         }))
       )
       return
@@ -641,7 +645,8 @@ export default function ServiceDetailPage() {
           protocol: legacy.protocol ?? 'TCP',
           nodePort: legacy.node_port ? String(legacy.node_port) : '',
           enableDomain: false,
-          domainPrefix: ''
+          domainPrefix: '',
+          name: ''
         }
       ])
       return
@@ -1371,6 +1376,16 @@ export default function ServiceDetailPage() {
 
       const portsPayload: NetworkPortConfig[] = []
       let networkError: string | null = null
+      const seenPortKeys = new Set<string>()
+      const seenDomainHosts = new Set<string>()
+      const seenPortNames = new Set<string>()
+
+      const effectiveServiceNameForPorts =
+        typeof updateData.name === 'string' && updateData.name.trim().length > 0
+          ? updateData.name.trim()
+          : service?.name ?? ''
+
+      const domainRoot = projectIdentifier ? `${projectIdentifier}.${DEFAULT_DOMAIN_ROOT}` : null
 
       for (const port of networkPorts) {
         const hasInput =
@@ -1389,6 +1404,7 @@ export default function ServiceDetailPage() {
           continue
         }
 
+        const protocol = port.protocol ?? 'TCP'
         const servicePortInput = port.servicePort.trim()
         const parsedServicePort = servicePortInput ? parseInt(servicePortInput, 10) : containerPortValue
         const servicePortNumber =
@@ -1396,10 +1412,40 @@ export default function ServiceDetailPage() {
             ? parsedServicePort
             : containerPortValue
 
+        const comboKey = `${containerPortValue}:${servicePortNumber}:${protocol}`
+        if (seenPortKeys.has(comboKey)) {
+          networkError = '存在重复的端口配置，请检查容器端口、Service 端口与协议组合。'
+          break
+        }
+        seenPortKeys.add(comboKey)
+
+        const portNameBase = effectiveServiceNameForPorts || service?.name || 'service'
+        let computedPortName = port.name ? sanitizeK8sResourceName(port.name) : ''
+
+        if (computedPortName) {
+          if (seenPortNames.has(computedPortName)) {
+            computedPortName = ''
+          } else {
+            seenPortNames.add(computedPortName)
+          }
+        }
+
+        if (!computedPortName) {
+          computedPortName = buildServicePortName(portNameBase, containerPortValue)
+          let attemptIndex = 1
+          while (seenPortNames.has(computedPortName) && attemptIndex < 50) {
+            const fallbackBase = `${portNameBase}-${attemptIndex}`
+            computedPortName = buildServicePortName(fallbackBase, containerPortValue)
+            attemptIndex++
+          }
+          seenPortNames.add(computedPortName)
+        }
+
         const portPayload: NetworkPortConfig = {
           container_port: containerPortValue,
           service_port: servicePortNumber,
-          protocol: port.protocol ?? 'TCP'
+          protocol,
+          name: computedPortName
         }
 
         if (networkServiceType === 'NodePort') {
@@ -1415,7 +1461,7 @@ export default function ServiceDetailPage() {
         }
 
         if (port.enableDomain) {
-          if (!projectIdentifier) {
+          if (!projectIdentifier || !domainRoot) {
             networkError = '启用域名访问前，请先在项目中配置项目编号。'
             break
           }
@@ -1426,10 +1472,17 @@ export default function ServiceDetailPage() {
             break
           }
 
+          const host = `${effectivePrefix}.${domainRoot}`
+          if (seenDomainHosts.has(host)) {
+            networkError = '域名配置重复，请检查域名前缀。'
+            break
+          }
+          seenDomainHosts.add(host)
+
           portPayload.domain = {
             enabled: true,
             prefix: effectivePrefix,
-            host: `${effectivePrefix}.${domainSuffixText}`
+            host
           }
         }
 

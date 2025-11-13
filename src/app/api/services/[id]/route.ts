@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { k8sService } from '@/lib/k8s'
 import { prisma } from '@/lib/prisma'
+import type { Service } from '@/types/project'
 
 type ServiceWithProject = Prisma.ServiceGetPayload<{
   include: {
@@ -93,6 +94,8 @@ export async function PUT(
     updateData.project_id = body.project_id.trim()
   }
 
+  const networkConfigUpdated = Object.prototype.hasOwnProperty.call(updateData, 'network_config')
+
   const dataEntries = Object.entries(updateData).filter(([, value]) => value !== undefined)
 
   if (dataEntries.length === 0) {
@@ -106,6 +109,53 @@ export async function PUT(
       where: { id },
       data
     })
+
+    if (networkConfigUpdated) {
+      let serviceWithProject: ServiceWithProject | null = null
+
+      try {
+        serviceWithProject = await prisma.service.findUnique({
+          where: { id },
+          include: {
+            project: {
+              select: { identifier: true }
+            }
+          }
+        })
+      } catch (syncLoadError: unknown) {
+        console.error('[Services][PUT] 加载服务项目数据失败:', syncLoadError)
+        return NextResponse.json(
+          { error: '同步网络配置失败：无法加载服务所属项目信息。' },
+          { status: 500 }
+        )
+      }
+
+      if (!serviceWithProject) {
+        return NextResponse.json({ error: '同步网络配置失败：服务不存在。' }, { status: 500 })
+      }
+
+      const namespace = serviceWithProject.project?.identifier?.trim()
+      if (!namespace) {
+        return NextResponse.json({ error: '项目缺少编号，无法同步网络配置。' }, { status: 400 })
+      }
+
+      const { project: _project, ...serviceWithoutProject } = serviceWithProject
+      const typedService = JSON.parse(JSON.stringify(serviceWithoutProject)) as Service
+
+      try {
+        await k8sService.syncServiceNetwork(typedService, namespace)
+      } catch (syncError: unknown) {
+        console.error('[Services][PUT] 同步网络配置失败:', syncError)
+        const rawMessage =
+          syncError instanceof Error ? (syncError.message || '').trim() : '同步网络配置失败'
+        const message = rawMessage || '同步网络配置失败'
+        const status =
+          syncError instanceof Error && (message.includes('缺少') || message.includes('无效'))
+            ? 400
+            : 500
+        return NextResponse.json({ error: message }, { status })
+      }
+    }
 
     return NextResponse.json(service)
   } catch (error: unknown) {
