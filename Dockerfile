@@ -19,8 +19,7 @@ COPY prisma ./prisma
 COPY scripts ./scripts
 
 # 安装生产依赖（仅安装必需的包）
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod
+RUN pnpm install --frozen-lockfile --prod
 
 # ============ 阶段 2: 构建应用 ============
 FROM node:20-alpine AS builder
@@ -37,8 +36,7 @@ COPY prisma ./prisma
 COPY scripts ./scripts
 
 # 安装所有依赖（包括 devDependencies）
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 # 复制源代码
 COPY . .
