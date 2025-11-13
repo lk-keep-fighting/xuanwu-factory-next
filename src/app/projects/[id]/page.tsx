@@ -120,7 +120,7 @@ export default function ProjectDetailPage() {
   const params = useParams()
   const router = useRouter()
   const id = params.id as string
-  
+
   const [project, setProject] = useState<Project | null>(null)
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
@@ -237,7 +237,7 @@ export default function ProjectDetailPage() {
   // 删除服务
   const handleDeleteService = async (serviceId: string) => {
     if (!confirm('确定要删除这个服务吗？')) return
-    
+
     try {
       const result = await serviceSvc.deleteService(serviceId)
       toast.success(result.message || '服务删除成功')
@@ -293,7 +293,7 @@ export default function ProjectDetailPage() {
             <ArrowLeft className="w-4 h-4" />
             返回项目列表
           </Button>
-          
+
           <div className="bg-white rounded-lg shadow-sm p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex-1 min-w-[240px]">
@@ -314,7 +314,7 @@ export default function ProjectDetailPage() {
                   )
                 )}
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -407,7 +407,7 @@ export default function ProjectDetailPage() {
               className="pl-10"
             />
           </div>
-          
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="gap-2">
@@ -465,10 +465,10 @@ export default function ProjectDetailPage() {
               const applicationService = isApplicationService(service, normalizedType) ? service : null
               const databaseService = isDatabaseService(service, normalizedType) ? service : null
               const imageService = isImageService(service, normalizedType) ? service : null
-              
+
               return (
                 <Card
-                  key={service.id} 
+                  key={service.id}
                   className="hover:shadow-lg transition-all duration-200 cursor-pointer"
                   onClick={() => router.push(`/projects/${id}/services/${service.id}`)}
                 >
@@ -485,7 +485,7 @@ export default function ProjectDetailPage() {
                           </Badge>
                         </div>
                       </div>
-                      
+
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                           <Button variant="ghost" size="sm">
@@ -523,7 +523,7 @@ export default function ProjectDetailPage() {
                       </DropdownMenu>
                     </div>
                   </CardHeader>
-                  
+
                   <CardContent>
                     <div className="space-y-2 text-sm">
                       <div className="flex items-center justify-between">
@@ -533,24 +533,38 @@ export default function ProjectDetailPage() {
                           <span className="text-gray-900">{statusLabel}</span>
                         </div>
                       </div>
-                      
+
                       {applicationService && (
                         <>
                           <div className="flex items-center justify-between">
-                            <span className="text-gray-500">代码源</span>
-                            <span className="text-gray-900 truncate ml-2">
-                              {applicationService.git_repository || '-'}
-                            </span>
+                            <span className="text-gray-500">仓库</span>
+
+
+                            <a 
+                              href={applicationService.git_repository || '#'} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 hover:underline text-right truncate ml-2 max-w-[250px]" 
+                              title={applicationService.git_repository || '-'}
+                              onClick={(e) => {
+                                if (!applicationService.git_repository) {
+                                  e.preventDefault()
+                                }
+                                e.stopPropagation()
+                              }}
+                            >
+                              {applicationService.git_repository ? applicationService.git_repository.split('/').pop() || applicationService.git_repository : '-'}
+                            </a>
                           </div>
-                          {applicationService.port && (
+                          {/* {applicationService.port && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-500">端口</span>
                               <span className="text-gray-900">{applicationService.port}</span>
                             </div>
-                          )}
+                          )} */}
                         </>
                       )}
-                      
+
                       {databaseService && (
                         <>
                           <div className="flex items-center justify-between">
@@ -565,13 +579,20 @@ export default function ProjectDetailPage() {
                           )}
                         </>
                       )}
-                      
+
                       {imageService && (
                         <div className="flex items-center justify-between">
                           <span className="text-gray-500">镜像</span>
                           <span className="text-gray-900 truncate ml-2">
                             {imageService.image}
-                            {imageService.tag && `:${imageService.tag}`}
+                          </span>
+                        </div>
+                      )}
+                      {imageService && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">标签</span>
+                          <span className="text-gray-900 truncate ml-2">
+                            {imageService.tag && `${imageService.tag}`}
                           </span>
                         </div>
                       )}
