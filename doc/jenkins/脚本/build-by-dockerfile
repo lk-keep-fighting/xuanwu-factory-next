@@ -307,6 +307,9 @@ def SendBuildCallback(status, message) {
   def durationMs = currentBuild.duration ?: (System.currentTimeMillis() - env.BUILD_START_TIME.toLong())
   
   // 构建回调数据
+  def queueId = resolveQueueId()
+  def queueUrl = buildQueueUrl(queueId)
+
   def callbackData = [
     service_image_id: serviceImageId,
     status: status,
@@ -314,7 +317,7 @@ def SendBuildCallback(status, message) {
     duration_ms: durationMs,
     build_number: env.BUILD_NUMBER,
     build_url: env.BUILD_URL,
-    queue_url: env.BUILD_URL?.replace("/execution/node/", "/")?.replace("/${env.BUILD_NUMBER}/", "/queue/item/${currentBuild.queueId ?: ''}/"),
+    queue_url: queueUrl,
     result: currentBuild.result ?: (status == 'success' ? 'SUCCESS' : (status == 'failed' ? 'FAILURE' : 'BUILDING')),
     build_logs: message,
     metadata: [
@@ -366,5 +369,58 @@ def SendBuildCallback(status, message) {
   } catch (Exception e) {
     echo "✗ Failed to send build callback: ${e.message}"
     // 不中断构建流程
+  }
+}
+
+// 尝试从当前构建上下文安全获取 queueId
+def resolveQueueId() {
+  def queueId = ''
+  try {
+    def directId = currentBuild?.queueId
+    if (directId) {
+      queueId = directId.toString()
+    }
+  } catch (MissingPropertyException ignored) {
+    // RunWrapper 在旧版本中不提供 queueId 字段
+  } catch (Exception e) {
+    echo "Unable to read queueId from RunWrapper: ${e.message}"
+  }
+
+  if (queueId) {
+    return queueId
+  }
+
+  try {
+    def rawId = currentBuild?.rawBuild?.getQueueId()
+    if (rawId) {
+      queueId = rawId.toString()
+    }
+  } catch (Exception e) {
+    echo "Unable to read queueId from rawBuild: ${e.message}"
+  }
+
+  if (queueId) {
+    return queueId
+  }
+
+  return env.BUILD_QUEUE_ID ?: ''
+}
+
+// 根据 queueId 构建 Jenkins 队列链接
+def buildQueueUrl(queueId) {
+  def buildUrl = env.BUILD_URL?.trim()
+  if (!buildUrl || !queueId) {
+    return ''
+  }
+
+  try {
+    def sanitized = buildUrl.replace("/execution/node/", "/")
+    if (env.BUILD_NUMBER) {
+      sanitized = sanitized.replace("/${env.BUILD_NUMBER}/", "/queue/item/${queueId}/")
+    }
+    return sanitized
+  } catch (Exception e) {
+    echo "Unable to construct queue URL: ${e.message}"
+    return ''
   }
 }
