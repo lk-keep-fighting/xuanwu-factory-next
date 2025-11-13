@@ -10,6 +10,7 @@ import {
   ServiceType,
   type NetworkConfigV2
 } from '@/types/project'
+import { buildServicePortName, sanitizeK8sResourceName } from '@/lib/k8s-name'
 import type { K8sImportCandidate, K8sWorkloadKind } from '@/types/k8s'
 import * as yaml from 'js-yaml'
 
@@ -22,6 +23,7 @@ type NormalizedPortConfig = {
   containerPort: number
   servicePort: number
   protocol: 'TCP' | 'UDP'
+  name?: string
   nodePort?: number
   domain?: NormalizedPortDomain
 }
@@ -248,6 +250,9 @@ class K8sService {
     }
 
     const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
+    const resolvedPortNames = normalizedNetwork
+      ? this.resolvePortNames(service.name, normalizedNetwork.ports)
+      : []
 
     const deployment: k8s.V1Deployment = {
       metadata: {
@@ -272,7 +277,9 @@ class K8sService {
                 ? normalizedNetwork.ports.map((port, index) => ({
                     containerPort: port.containerPort,
                     protocol: port.protocol,
-                    name: `port-${port.containerPort}-${index}`
+                    name:
+                      resolvedPortNames[index] ??
+                      buildServicePortName(service.name, port.containerPort)
                   }))
                 : undefined,
               env: this.buildEnvVars(service),
@@ -608,6 +615,9 @@ class K8sService {
     }
 
     const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
+    const resolvedPortNames = normalizedNetwork
+      ? this.resolvePortNames(service.name, normalizedNetwork.ports)
+      : []
 
     // 构建 Deployment 对象
     const deployment: k8s.V1Deployment = {
@@ -1667,10 +1677,18 @@ class K8sService {
           ? nodePortNumber
           : undefined
 
+      const rawNameValue = portRecord['name']
+      const normalizedName =
+        typeof rawNameValue === 'string' ? sanitizeK8sResourceName(rawNameValue) : undefined
+
       const normalized: NormalizedPortConfig = {
         containerPort,
         servicePort,
         protocol: protocolValue
+      }
+
+      if (normalizedName) {
+        normalized.name = normalizedName
       }
 
       if (nodePort !== undefined) {
@@ -2252,6 +2270,50 @@ class K8sService {
       repository: workableImage,
       tag: 'latest'
     }
+  }
+
+  private resolvePortNames(serviceName: string, ports: NormalizedPortConfig[]): string[] {
+    const sanitizedServiceName = sanitizeK8sResourceName(serviceName) || 'svc'
+    const usedNames = new Set<string>()
+
+    return ports.map((port, index) => {
+      const fallbackPort = port.servicePort || port.containerPort
+      const candidates: string[] = []
+
+      if (port.name) {
+        const sanitized = sanitizeK8sResourceName(port.name)
+        if (sanitized) {
+          candidates.push(sanitized)
+        }
+      }
+
+      candidates.push(buildServicePortName(serviceName, fallbackPort))
+
+      if (port.containerPort !== fallbackPort) {
+        candidates.push(buildServicePortName(serviceName, port.containerPort))
+      }
+
+      for (const candidate of candidates) {
+        if (candidate && !usedNames.has(candidate)) {
+          usedNames.add(candidate)
+          return candidate
+        }
+      }
+
+      let suffix = index + 1
+      while (suffix < index + 50) {
+        const candidate = sanitizeK8sResourceName(`${sanitizedServiceName}-${fallbackPort}-${suffix}`)
+        if (candidate && !usedNames.has(candidate)) {
+          usedNames.add(candidate)
+          return candidate
+        }
+        suffix++
+      }
+
+      const fallbackName = `port-${port.containerPort}-${index}`
+      usedNames.add(fallbackName)
+      return fallbackName
+    })
   }
 
   private getIngressRules(config: NormalizedNetworkConfig): IngressRuleConfig[] {
