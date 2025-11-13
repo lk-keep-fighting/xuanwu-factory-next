@@ -390,20 +390,13 @@ def resolveQueueId() {
     return queueId
   }
 
-  try {
-    def rawId = currentBuild?.rawBuild?.getQueueId()
-    if (rawId) {
-      queueId = rawId.toString()
-    }
-  } catch (Exception e) {
-    echo "Unable to read queueId from rawBuild: ${e.message}"
+  def envQueueId = env.BUILD_QUEUE_ID?.trim()
+  if (envQueueId) {
+    return envQueueId
   }
 
-  if (queueId) {
-    return queueId
-  }
-
-  return env.BUILD_QUEUE_ID ?: ''
+  echo "Queue id not available from Jenkins; queue_url will be omitted. Set BUILD_QUEUE_ID to override."
+  return ''
 }
 
 // 根据 queueId 构建 Jenkins 队列链接
