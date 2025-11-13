@@ -31,7 +31,7 @@ if [ "$CLEAN_BUILD" = "true" ]; then
 fi
 
 # 步骤 2: 构建 Docker 镜像
-echo -e "${GREEN}开始构建 Docker 镜像...${NC}"
+echo -e "${GREEN}开始构建 Docker 镜像，--platform linux/amd64，--build-arg NODE_ENV=production，${NC}"
 docker build \
     --platform linux/amd64 \
     --build-arg NODE_ENV=production \
@@ -118,6 +118,5 @@ echo -e "${GREEN}=== 构建完成 ===${NC}"
 echo -e "镜像: ${FULL_IMAGE}"
 echo ""
 echo -e "${YELLOW}下一步操作:${NC}"
-echo "1. 推送镜像: PUSH_IMAGE=true ./build-docker.sh"
-echo "2. 本地测试: TEST_LOCAL=true ./build-docker.sh"
-echo "3. 部署到 K8s: kubectl apply -f k8s-deployment.yaml"
+echo "1. 本地测试: TEST_LOCAL=true ./build-docker.sh"
+echo "2. 部署到 K8s: kubectl apply -f k8s-deployment.yaml"

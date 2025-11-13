@@ -35,8 +35,9 @@ stringData:
   # Kubernetes 管理配置（使用 doc/k8s/generate-admin-token.sh 生成）
   K8S_API_SERVER: "https://192.168.44.201:6443"
   K8S_BEARER_TOKEN: "eyJhbGciOiJSUzI1NiIsImtpZCI6IkZQMTdlaFNsWjFmU25iWlRwUHd1M1hXNmM3bGR5OHBhRFV5M0k4Nk0xTGcifQ.eyJhdWQiOlsiaHR0cHM6Ly9rdWJlcm5ldGVzLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWwiXSwiZXhwIjoxNzkzNzcyNTQ0LCJpYXQiOjE3NjIyMzY1NDQsImlzcyI6Imh0dHBzOi8va3ViZXJuZXRlcy5kZWZhdWx0LnN2Yy5jbHVzdGVyLmxvY2FsIiwia3ViZXJuZXRlcy5pbyI6eyJuYW1lc3BhY2UiOiJ4dWFud3UtZmFjdG9yeSIsInNlcnZpY2VhY2NvdW50Ijp7Im5hbWUiOiJ4dWFud3UtZmFjdG9yeS1hZG1pbiIsInVpZCI6IjkzZmM1YjllLTA4NTgtNDA5Ny1iODg5LWJkMjQ0NTRjYTAzMCJ9fSwibmJmIjoxNzYyMjM2NTQ0LCJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6eHVhbnd1LWZhY3Rvcnk6eHVhbnd1LWZhY3RvcnktYWRtaW4ifQ.xcZtKUAJ3tzxWpmehiVzkR20zSCdFlRhY_QpspVNjiJPXv2O89bz84Lmcld4yuO6kpcD7yWQuZaz6mpjQEbTvT3PIIw9WGONx76tLYTj_7PVwYs9GOmudQZy3D0ABmsbpvxhd1Sn1vgJ8N5ZBAQ8P0wFGaSqDhir66V4DxT5rPlVkgMMjM-cXbefQbW8ftyHB8djKejCKBmovf-uAGw6lZT8ngQp3x4pQxQVgyDKdHYpwS37KPCLuhUUH229ti4e4o9FKuS1mMd3osPfywcCfaV60JEmFvY8k53MNgi4FLUXqifIgi-LxfCxMPPLS-3jvmdswL7VC6HBsVaDB-iU1w"
-  K8S_CA_CERT_DATA: "DATA+OMITTED"
-  K8S_SKIP_TLS_VERIFY: "false"
+  # 如果有 CA 证书，请替换下面的值；否则设置 K8S_SKIP_TLS_VERIFY 为 true
+  # K8S_CA_CERT_DATA: "LS0tLS1CRUdJTi...(Base64 encoded CA certificate)"
+  K8S_SKIP_TLS_VERIFY: "true"  # 跳过 TLS 验证（适用于自签名证书）
   # 可选：提供完整 kubeconfig（支持纯文本或 Base64 原文）
   # KUBECONFIG_DATA: |
   #   apiVersion: v1
@@ -92,7 +93,7 @@ spec:
       
       containers:
       - name: xuanwu-factory
-        image: nexus.aimstek.cn/xuanwu-factory:20251104-170926  # 替换为实际镜像地址
+        image: nexus.aimstek.cn/xuanwu-factory:20251113-111400  # 替换为实际镜像地址
         imagePullPolicy: Always
         
         ports:

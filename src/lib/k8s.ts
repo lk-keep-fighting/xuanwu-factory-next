@@ -1,6 +1,7 @@
 import * as k8s from '@kubernetes/client-node'
 import fs from 'node:fs'
 import { createHash } from 'node:crypto'
+import https from 'node:https'
 import {
   type Service,
   type ApplicationService,
@@ -56,6 +57,9 @@ class K8sService {
 
     this.initializeKubeConfig()
 
+    // 配置 HTTPS Agent 以支持自签名证书
+    this.configureHttpsAgent()
+
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api)
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api)
     this.networkingApi = this.kc.makeApiClient(k8s.NetworkingV1Api)
@@ -91,6 +95,7 @@ class K8sService {
         console.log('[K8s]    集群:', currentCluster.name)
         console.log('[K8s]    API Server:', currentCluster.server)
         console.log('[K8s]    上下文:', currentContext)
+        console.log('[K8s]    TLS验证:', currentCluster.skipTLSVerify ? '已禁用 ⚠️' : '已启用')
       } else {
         console.warn('[K8s] ⚠️  配置加载但未找到当前集群')
       }
@@ -103,6 +108,30 @@ class K8sService {
       console.error('[K8s]    2. 测试连接：运行 kubectl cluster-info')
       console.error('[K8s]    3. 生产环境：设置 KUBECONFIG_DATA 或 K8S_API_SERVER/K8S_BEARER_TOKEN 环境变量')
       console.error('[K8s] 原始错误对象:', error)
+    }
+  }
+
+  /**
+   * 配置 HTTPS Agent 以支持自签名证书
+   */
+  private configureHttpsAgent(): void {
+    const currentCluster = this.kc.getCurrentCluster()
+    
+    // 如果集群配置了 skipTLSVerify 或没有提供 CA 证书，则禁用证书验证
+    if (currentCluster?.skipTLSVerify || !currentCluster?.caData) {
+      const httpsAgent = new https.Agent({
+        rejectUnauthorized: false
+      })
+      
+      // 为 KubeConfig 设置自定义的 HTTPS Agent
+      // @ts-expect-error - KubeConfig 内部支持但未在类型定义中暴露
+      this.kc.requestOptions = {
+        httpsAgent
+      }
+      
+      console.log('[K8s] 🔓 已配置 HTTPS Agent：禁用证书验证（适用于自签名证书）')
+    } else {
+      console.log('[K8s] 🔒 使用默认 HTTPS Agent：启用证书验证')
     }
   }
 
