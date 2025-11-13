@@ -174,14 +174,17 @@ pipeline {
 
           // run docker build inside subpath if provided to limit filesystem scanning
           def subpath = env.BUILD_SUBPATH?.trim()
+          def buildkitEnv = env.DOCKER_BUILDKIT?.trim()
+          def buildkitValue = buildkitEnv && buildkitEnv != '' ? buildkitEnv : '1'
+          echo "Running docker build (DOCKER_BUILDKIT=${buildkitValue})"
+          // use set -eu for maximum POSIX compatibility (avoids 'Illegal option -o pipefail' on some agents)
+          def dockerBuildCmd = "set -eu; DOCKER_BUILDKIT=${buildkitValue} docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
           if (subpath) {
             dir(subpath) {
-              // use set -eu to be compatible with /bin/sh on some agents (dash doesn't support pipefail)
-              sh "set -eu; docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
+              sh dockerBuildCmd
             }
           } else {
-            // use set -eu for maximum POSIX compatibility (avoids 'Illegal option -o pipefail' on some agents)
-            sh "set -eu; docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
+            sh dockerBuildCmd
           }
           env.COMPUTED_IMAGE = image
           echo "=== Final Image Tag ==="
@@ -390,20 +393,13 @@ def resolveQueueId() {
     return queueId
   }
 
-  try {
-    def rawId = currentBuild?.rawBuild?.getQueueId()
-    if (rawId) {
-      queueId = rawId.toString()
-    }
-  } catch (Exception e) {
-    echo "Unable to read queueId from rawBuild: ${e.message}"
+  def envQueueId = env.BUILD_QUEUE_ID?.trim()
+  if (envQueueId) {
+    return envQueueId
   }
 
-  if (queueId) {
-    return queueId
-  }
-
-  return env.BUILD_QUEUE_ID ?: ''
+  echo "Queue id not available from Jenkins; queue_url will be omitted. Set BUILD_QUEUE_ID to override."
+  return ''
 }
 
 // 根据 queueId 构建 Jenkins 队列链接
