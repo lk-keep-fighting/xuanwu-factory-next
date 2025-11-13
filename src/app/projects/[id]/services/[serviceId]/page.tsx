@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2 } from 'lucide-react'
+import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -1111,7 +1111,7 @@ export default function ServiceDetailPage() {
     }
 
     // 其他类型直接部署
-    const confirmMessage = service.type === ServiceType.DATABASE 
+    const confirmMessage = service.type === ServiceType.DATABASE
       ? '确定要部署此数据库服务吗？'
       : '确定要部署此镜像服务吗？'
 
@@ -1149,7 +1149,7 @@ export default function ServiceDetailPage() {
         pageSize: DEPLOY_IMAGE_PAGE_SIZE,
         status: 'success'
       })
-      
+
       setDeployImageList(result.items)
       setDeployImageTotal(result.total)
       setDeployImagePage(page)
@@ -1170,7 +1170,7 @@ export default function ServiceDetailPage() {
     try {
       setDeploying(true)
       setDeployDialogOpen(false)
-      
+
       const result = await serviceSvc.deployService(serviceId, {
         serviceImageId: selectedDeployImageId
       })
@@ -1242,7 +1242,7 @@ export default function ServiceDetailPage() {
 
     try {
       setDeploying(true)
-      
+
       // 先激活镜像
       const activateResult = await serviceSvc.activateServiceImage(serviceId, imageId)
       if (activateResult.service) {
@@ -1256,13 +1256,13 @@ export default function ServiceDetailPage() {
       })
 
       toast.success(deployResult?.message || '部署成功，服务正在启动')
-      
+
       // 刷新所有状态
       await loadService()
       await fetchK8sStatus({ showToast: true })
       await loadServiceImages({ page: 1 })
       await loadDeployments()
-      
+
       if (activeTab === 'logs') {
         await loadLogs()
       } else {
@@ -1280,7 +1280,7 @@ export default function ServiceDetailPage() {
   const generateImageTag = () => {
     const now = new Date()
     const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
-    
+
     switch (buildTagType) {
       case 'dev':
         return `dev-${timestamp}`
@@ -1301,7 +1301,7 @@ export default function ServiceDetailPage() {
     const tagValue = customBuildTag.trim()
 
     payload.branch = branchValue
-    
+
     if (tagValue) {
       payload.tag = tagValue
     }
@@ -1673,6 +1673,15 @@ export default function ServiceDetailPage() {
 
             {/* 操作按钮 */}
             <div className="flex items-center gap-2">
+              <Button
+                onClick={handleOpenBuildDialog}
+                disabled={buildingImage}
+                variant="outline"
+                className="gap-2"
+              >
+                <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
+                {buildingImage ? '构建中...' : '构建'}
+              </Button>
               {/* 部署按钮 - 所有服务类型都支持 */}
               <Button
                 onClick={handleDeploy}
@@ -1987,15 +1996,6 @@ export default function ServiceDetailPage() {
                     </div>
                     <div className="flex gap-2">
                       <Button
-                        onClick={handleOpenBuildDialog}
-                        disabled={buildingImage}
-                        variant="outline"
-                        className="gap-2"
-                      >
-                        <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
-                        {buildingImage ? '构建中...' : '构建'}
-                      </Button>
-                      <Button
                         variant="outline"
                         onClick={handleRefreshImages}
                         disabled={imagesLoading}
@@ -2049,13 +2049,14 @@ export default function ServiceDetailPage() {
                                 ? (image.metadata as Record<string, unknown>)
                                 : null
                             const metadataBranch = metadata && typeof metadata['branch'] === 'string' ? (metadata['branch'] as string) : null
-                            
+                            const metadataBuildUrl = metadata && typeof metadata['buildUrl'] === 'string' ? (metadata['buildUrl'] as string) : null
+
                             return (
                               <div
                                 key={image.id}
                                 className={cn(
                                   'rounded-lg border p-4 transition-all',
-                                  isActive 
+                                  isActive
                                     ? 'border-emerald-300 bg-emerald-50'
                                     : 'border-gray-200 bg-white hover:border-gray-300'
                                 )}
@@ -2085,9 +2086,20 @@ export default function ServiceDetailPage() {
                                       {image.build_number ? <span>构建号 #{image.build_number}</span> : null}
                                       <span>创建于 {formatDateTime(image.created_at)}</span>
                                       {metadataBranch ? <span>分支 {metadataBranch}</span> : null}
+                                      {metadataBuildUrl ? (
+                                        <a
+                                          href={metadataBuildUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
+                                        >
+                                          <span>查看构建任务</span>
+                                          <ExternalLink className="h-3 w-3" />
+                                        </a>
+                                      ) : null}
                                     </div>
                                     {image.build_logs && status === 'failed' ? (
-                                      <p className="text-xs text-red-600 line-clamp-2">{image.build_logs}</p>
+                                      <p className="text-xs text-red-600 line-clamp-2 break-all overflow-hidden">{image.build_logs}</p>
                                     ) : null}
                                   </div>
                                   <div className="flex-shrink-0">
@@ -3043,7 +3055,7 @@ export default function ServiceDetailPage() {
                       ? (image.metadata as Record<string, unknown>)
                       : null
                   const metadataBranch = metadata && typeof metadata['branch'] === 'string' ? (metadata['branch'] as string) : null
-                  
+
                   return (
                     <div
                       key={image.id}
@@ -3087,7 +3099,7 @@ export default function ServiceDetailPage() {
                 })}
               </div>
             )}
-            
+
             {/* 分页 */}
             {deployImageTotal > DEPLOY_IMAGE_PAGE_SIZE && (
               <div className="flex items-center justify-between border-t border-gray-200 pt-3">
