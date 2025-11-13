@@ -187,14 +187,14 @@ export async function POST(
     SERVICE_IMAGE_ID: serviceImage.id
   }
 
-  if (buildCallbackUrl) {
-    parameters.BUILD_CALLBACK_URL = buildCallbackUrl
-  }
+  // if (buildCallbackUrl) {
+  //   parameters.BUILD_CALLBACK_URL = buildCallbackUrl
+  // }
 
-  const callbackSecret = (process.env.BUILD_CALLBACK_SECRET ?? '').trim()
-  if (callbackSecret) {
-    parameters.BUILD_CALLBACK_SECRET = callbackSecret
-  }
+  // const callbackSecret = (process.env.BUILD_CALLBACK_SECRET ?? '').trim()
+  // if (callbackSecret) {
+  //   parameters.BUILD_CALLBACK_SECRET = callbackSecret
+  // }
 
   // only pass GIT_PATH when it's a meaningful subpath (avoid passing '/' or empty defaults)
   if (serviceRecord.git_path) {
