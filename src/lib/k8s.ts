@@ -11,7 +11,7 @@ import {
   ServiceType,
   type NetworkConfigV2
 } from '@/types/project'
-import type { K8sImportCandidate, K8sWorkloadKind } from '@/types/k8s'
+import type { K8sImportCandidate, K8sWorkloadKind, K8sImportVolumeInfo } from '@/types/k8s'
 import * as yaml from 'js-yaml'
 
 type NormalizedPortDomain = {
@@ -2069,18 +2069,53 @@ class K8sService {
   }
 
   private candidateToCreateRequest(projectId: string, candidate: K8sImportCandidate): CreateServiceRequest {
-    const primaryEnv = candidate.containers[0]?.env ?? {}
-    const envVars = Object.fromEntries(
-      Object.entries(primaryEnv).filter(([key, value]) => key && typeof value === 'string' && value.length)
-    )
+    const envVars = candidate.containers.reduce<Record<string, string>>((acc, container) => {
+      if (!container?.env) {
+        return acc
+      }
+
+      for (const [key, value] of Object.entries(container.env)) {
+        if (!key || typeof value !== 'string') {
+          continue
+        }
+
+        if (!(key in acc)) {
+          acc[key] = value
+        }
+      }
+
+      return acc
+    }, {})
 
     const volumes = candidate.volumes
-      .filter((volume) => volume.containerPath)
-      .map((volume) => ({
-        container_path: volume.containerPath,
-        ...(volume.hostPath ? { host_path: volume.hostPath } : {}),
-        ...(volume.readOnly ? { read_only: true } : {})
-      }))
+      .map((volume) => {
+        const containerPath = volume.containerPath?.trim()
+        if (!containerPath) {
+          return null
+        }
+
+        const normalized: Record<string, unknown> = {
+          container_path: containerPath
+        }
+
+        if (volume.subPath) {
+          normalized.nfs_subpath = volume.subPath
+        }
+
+        if (volume.hostPath) {
+          const hostPath = volume.hostPath.trim()
+          if (hostPath) {
+            normalized.host_path = hostPath
+          }
+        }
+
+        if (typeof volume.readOnly === 'boolean') {
+          normalized.read_only = volume.readOnly
+        }
+
+        return normalized
+      })
+      .filter((volume): volume is Record<string, unknown> => volume !== null)
 
     const payload: CreateServiceRequest = {
       project_id: projectId,
@@ -2111,7 +2146,7 @@ class K8sService {
   private extractVolumesFromTemplate(
     templateSpec: k8s.V1PodSpec,
     container: k8s.V1Container
-  ): Array<{ containerPath: string; hostPath?: string; readOnly?: boolean }> {
+  ): K8sImportVolumeInfo[] {
     const mounts = container.volumeMounts ?? []
     if (mounts.length === 0) {
       return []
@@ -2122,11 +2157,14 @@ class K8sService {
     return mounts.map((mount) => {
       const matchedVolume = volumes.find((volume) => volume.name === mount.name)
       const hostPath = matchedVolume?.hostPath?.path
+      const subPath = mount.subPath?.trim()
+      const readOnly = typeof mount.readOnly === 'boolean' ? mount.readOnly : undefined
 
       return {
         containerPath: mount.mountPath,
         hostPath: hostPath || undefined,
-        readOnly: mount.readOnly || undefined
+        readOnly,
+        subPath: subPath && subPath.length ? subPath : undefined
       }
     })
   }
