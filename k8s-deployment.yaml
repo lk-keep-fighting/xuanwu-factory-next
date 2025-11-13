@@ -40,7 +40,7 @@ stringData:
   K8S_SKIP_TLS_VERIFY: "true"  # 跳过 TLS 验证（适用于自签名证书）
 
   # Jenkins 配置（用于触发镜像构建）
-  JENKINS_BASE_URL: "http://192.168.21.31:8081"  # Jenkins 访问地址
+  JENKINS_BASE_URL: "http://192.168.44.121"  # Jenkins 访问地址
   JENKINS_USER: "xuanwu"  # Jenkins 用户名
   JENKINS_API_TOKEN: "1112e29a2d923515b98730268f45a01d3c"  # Jenkins API Token（需替换）
   JENKINS_JOB_NAME: "CICD-STD/build-by-dockerfile"  # Jenkins Job 名称
