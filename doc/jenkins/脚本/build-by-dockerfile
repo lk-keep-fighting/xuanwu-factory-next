@@ -34,7 +34,7 @@ pipeline {
     NEXUS_IMAGE_REPO = 'nexus.aimstek.cn'
     
     // 回调相关配置（可在环境变量中配置默认值）
-    BUILD_CALLBACK_BASE_URL = "${env.BUILD_CALLBACK_BASE_URL ?: 'http://192.168.21.31:3000'}"
+    BUILD_CALLBACK_BASE_URL = "${env.BUILD_CALLBACK_BASE_URL ?: 'http://factory.dev.aimstek.cn'}"
     BUILD_START_TIME = "${currentBuild.startTimeInMillis}"
   }
 

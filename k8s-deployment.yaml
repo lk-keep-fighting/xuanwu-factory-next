@@ -38,6 +38,15 @@ stringData:
   # 如果有 CA 证书，请替换下面的值；否则设置 K8S_SKIP_TLS_VERIFY 为 true
   # K8S_CA_CERT_DATA: "LS0tLS1CRUdJTi...(Base64 encoded CA certificate)"
   K8S_SKIP_TLS_VERIFY: "true"  # 跳过 TLS 验证（适用于自签名证书）
+
+  # Jenkins 配置（用于触发镜像构建）
+  JENKINS_BASE_URL: "http://192.168.21.31:8081"  # Jenkins 访问地址
+  JENKINS_USER: "xuanwu"  # Jenkins 用户名
+  JENKINS_API_TOKEN: "1112e29a2d923515b98730268f45a01d3c"  # Jenkins API Token（需替换）
+  JENKINS_JOB_NAME: "CICD-STD/build-by-dockerfile"  # Jenkins Job 名称
+  # JENKINS_JOB_TOKEN: ""  # （可选）Jenkins Job Token
+  # JENKINS_BUILD_TIMEOUT_MS: "900000"  # （可选）构建超时时间，默认 15 分钟
+  # JENKINS_POLL_INTERVAL_MS: "5000"  # （可选）轮询间隔，默认 5 秒
   # 可选：提供完整 kubeconfig（支持纯文本或 Base64 原文）
   # KUBECONFIG_DATA: |
   #   apiVersion: v1
@@ -150,6 +159,56 @@ spec:
             secretKeyRef:
               name: xuanwu-factory-secret
               key: KUBECONFIG_DATA
+              optional: true
+
+        # Jenkins 配置（用于触发镜像构建）
+        - name: JENKINS_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: JENKINS_BASE_URL
+              optional: true
+
+        - name: JENKINS_USER
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: JENKINS_USER
+              optional: true
+
+        - name: JENKINS_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: JENKINS_API_TOKEN
+              optional: true
+
+        - name: JENKINS_JOB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: JENKINS_JOB_NAME
+              optional: true
+
+        - name: JENKINS_JOB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: JENKINS_JOB_TOKEN
+              optional: true
+
+        - name: JENKINS_BUILD_TIMEOUT_MS
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: JENKINS_BUILD_TIMEOUT_MS
+              optional: true
+
+        - name: JENKINS_POLL_INTERVAL_MS
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: JENKINS_POLL_INTERVAL_MS
               optional: true
 
         # 资源限制
