@@ -28,6 +28,7 @@ export interface K8sImportVolumeInfo {
   containerPath: string
   hostPath?: string
   readOnly?: boolean
+  subPath?: string
 }
 
 export interface K8sImportCandidate {
