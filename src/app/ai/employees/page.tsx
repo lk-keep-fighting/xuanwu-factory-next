@@ -131,7 +131,7 @@ export default function AiEmployeesPage() {
   const [loading, setLoading] = useState(true)
   const [selectedType, setSelectedType] = useState<'ALL' | AIEmployeeType>('ALL')
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | AIEmployeeStatus>('ALL')
-  const [sortBy, setSortBy] = useState<'tasks' | 'lastTask' | ''>('')
+  const [sortBy, setSortBy] = useState<'tasks' | 'lastTask' | 'default'>('default')
   const [searchTerm, setSearchTerm] = useState('')
   const [searchKeyword, setSearchKeyword] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -173,7 +173,7 @@ export default function AiEmployeesPage() {
 
   const sortOptions = useMemo(
     () => [
-      { label: '默认排序', value: '' },
+      { label: '默认排序', value: 'default' },
       { label: '按执行任务数', value: 'tasks' },
       { label: '按最近任务时间', value: 'lastTask' }
     ],
@@ -186,7 +186,7 @@ export default function AiEmployeesPage() {
       const params = new URLSearchParams()
       if (selectedType !== 'ALL') params.set('type', selectedType)
       if (selectedStatus !== 'ALL') params.set('status', selectedStatus)
-      if (sortBy) params.set('sortBy', sortBy)
+      if (sortBy !== 'default') params.set('sortBy', sortBy)
       if (searchKeyword) params.set('search', searchKeyword)
 
       const query = params.toString()
@@ -572,7 +572,7 @@ export default function AiEmployeesPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={sortBy} onValueChange={(value) => setSortBy(value as 'tasks' | 'lastTask' | '')}>
+            <Select value={sortBy} onValueChange={(value) => setSortBy(value as 'tasks' | 'lastTask' | 'default')}>
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="排序方式" />
               </SelectTrigger>
