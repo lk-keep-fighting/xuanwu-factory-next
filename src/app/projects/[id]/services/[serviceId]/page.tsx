@@ -106,6 +106,15 @@ type NetworkPortFormState = {
   domainPrefix: string
 }
 
+type DeploymentImageInfo = {
+  id: string | null
+  fullImage: string | null
+  image: string
+  tag?: string
+  display: string
+  record: ServiceImageRecord | null
+}
+
 const generatePortId = () =>
   typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()
@@ -281,6 +290,11 @@ export default function ServiceDetailPage() {
   const [branchSearch, setBranchSearch] = useState('')
   const branchInitialLoadRef = useRef(false)
   const gitBranchRef = useRef<string>('')
+  const imageSelectionManuallyChangedRef = useRef(false)
+  const lastAppliedActiveImageRef = useRef<{ id: string | null; fullImage: string | null }>({
+    id: null,
+    fullImage: null
+  })
   const serviceType = service?.type
 
   useEffect(() => {
@@ -528,16 +542,111 @@ export default function ServiceDetailPage() {
     }
   }, [branchPickerOpen, branchSelectorDisabled])
 
+  const serviceImageLookup = useMemo(() => {
+    const byId = new Map<string, ServiceImageRecord>()
+    const byFullImage = new Map<string, ServiceImageRecord>()
+
+    const register = (entry?: ServiceImageRecord) => {
+      if (!entry) return
+      const { id, full_image } = entry
+      if (typeof id === 'string' && id && !byId.has(id)) {
+        byId.set(id, entry)
+      }
+      if (typeof full_image === 'string' && full_image && !byFullImage.has(full_image)) {
+        byFullImage.set(full_image, entry)
+      }
+    }
+
+    serviceImages.forEach(register)
+    successfulServiceImages.forEach(register)
+
+    return { byId, byFullImage }
+  }, [serviceImages, successfulServiceImages])
+
+  const resolveDeploymentImageInfo = useCallback(
+    (deployment: Deployment | null | undefined): DeploymentImageInfo | null => {
+      if (!deployment) {
+        return null
+      }
+
+      const serviceImageId = deployment.service_image_id ?? null
+      let record: ServiceImageRecord | null = null
+
+      if (serviceImageId) {
+        record = serviceImageLookup.byId.get(serviceImageId) ?? null
+      }
+
+      let fullImage = record?.full_image ?? deployment.image_tag ?? null
+
+      if ((!record || !record.full_image) && fullImage) {
+        record = serviceImageLookup.byFullImage.get(fullImage) ?? record
+        fullImage = record?.full_image ?? fullImage
+      }
+
+      if (!record && deployment.service_image) {
+        record = deployment.service_image
+        fullImage = record?.full_image ?? fullImage
+      }
+
+      const effectiveFullImage = typeof fullImage === 'string' && fullImage.trim() ? fullImage : null
+      const parsed = parseImageReference(effectiveFullImage ?? undefined)
+      const baseImage = record?.image ?? parsed.image
+      const baseTag = record?.tag ?? parsed.tag
+      const display = baseImage ? formatImageReference(baseImage, baseTag) : effectiveFullImage ?? '未知镜像'
+
+      return {
+        id: record?.id ?? serviceImageId,
+        fullImage: effectiveFullImage,
+        image: baseImage,
+        tag: baseTag,
+        display,
+        record: record ?? null
+      }
+    },
+    [serviceImageLookup]
+  )
+
+  const latestSuccessfulDeployment = useMemo(
+    () => deployments.find((item) => item.status === 'success') ?? null,
+    [deployments]
+  )
+
+  const latestActiveDeploymentInProgress = useMemo(
+    () => deployments.find((item) => item.status === 'building' || item.status === 'pending') ?? null,
+    [deployments]
+  )
+
+  const currentDeploymentInfo = useMemo(
+    () => resolveDeploymentImageInfo(latestSuccessfulDeployment),
+    [latestSuccessfulDeployment, resolveDeploymentImageInfo]
+  )
+
+  const ongoingDeploymentInfo = useMemo(
+    () => resolveDeploymentImageInfo(latestActiveDeploymentInProgress),
+    [latestActiveDeploymentInProgress, resolveDeploymentImageInfo]
+  )
+
+  const ongoingDeploymentFullImage = ongoingDeploymentInfo?.fullImage ?? null
+  const latestDeployment = useMemo(() => deployments[0] ?? null, [deployments])
+
+  const activeServiceImageRecord = currentDeploymentInfo?.record ?? null
+  const activeServiceImageId = currentDeploymentInfo?.id ?? activeServiceImageRecord?.id ?? null
+  const activeServiceImageFullImage = currentDeploymentInfo?.fullImage ?? activeServiceImageRecord?.full_image ?? null
+
+  const extractMetadataBranch = (image?: ServiceImageRecord | null) => {
+    if (!image || !image.metadata || typeof image.metadata !== 'object') {
+      return null
+    }
+    const metadata = image.metadata as Record<string, unknown>
+    const branch = metadata['branch']
+    return typeof branch === 'string' && branch.trim() ? branch.trim() : null
+  }
+
+  const activeImageBranch = extractMetadataBranch(activeServiceImageRecord)
+  const ongoingImageBranch = extractMetadataBranch(ongoingDeploymentInfo?.record ?? null)
+
   const builtImageRef = useMemo(() => parseImageReference(serviceType === 'application' ? (service as any)?.built_image : undefined), [serviceType === 'application' ? (service as any)?.built_image : undefined, serviceType])
   const builtImageDisplay = builtImageRef.image ? formatImageReference(builtImageRef.image, builtImageRef.tag) : ''
-  const activeServiceImage = useMemo(
-    () =>
-      successfulServiceImages.find((img) => img.is_active) ??
-      serviceImages.find((img) => img.is_active) ??
-      null,
-    [serviceImages, successfulServiceImages]
-  )
-  const activeServiceImageId = activeServiceImage?.id ?? null
   const applicationImageOptions = useMemo(
     () =>
       successfulServiceImages.map((image) => {
@@ -558,7 +667,6 @@ export default function ServiceDetailPage() {
       }),
     [successfulServiceImages]
   )
-  const isSelectionActive = selectedServiceImageId !== null && selectedServiceImageId === activeServiceImageId
   const imageHistoryStats = useMemo(() => {
     if (serviceImages.length === 0) {
       return null
@@ -742,34 +850,69 @@ export default function ServiceDetailPage() {
 
           if (selectedServiceImageId && !selectedImage) {
             setSelectedServiceImageId(null)
+            imageSelectionManuallyChangedRef.current = false
+            lastAppliedActiveImageRef.current = { id: null, fullImage: null }
           }
 
-          const fallbackImage =
-            selectedImage ??
-            successItems.find((img) => img.is_active) ??
-            successItems[0] ??
-            null
+          let fallbackImage: ServiceImageRecord | null = selectedImage ?? null
+
+          if (!fallbackImage) {
+            const deploymentActive = deployments.find((item) => item.status === 'success')
+            if (deploymentActive?.service_image_id) {
+              fallbackImage = successItems.find((img) => img.id === deploymentActive.service_image_id) ?? null
+            }
+            if (!fallbackImage && deploymentActive?.image_tag) {
+              fallbackImage = successItems.find((img) => img.full_image === deploymentActive.image_tag) ?? null
+            }
+          }
+
+          if (!fallbackImage) {
+            fallbackImage = successItems.find((img) => img.is_active) ?? null
+          }
+
+          if (!fallbackImage) {
+            fallbackImage = successItems[0] ?? null
+          }
 
           const parsed = parseImageReference(serviceType === 'application' ? (service as any)?.built_image : undefined)
           const nextValue: ImageReferenceValue = fallbackImage
             ? {
-              optionId: fallbackImage.id ?? null,
-              image: fallbackImage.image,
-              tag: fallbackImage.tag
-            }
+                optionId: fallbackImage.id ?? null,
+                image: fallbackImage.image,
+                tag: fallbackImage.tag
+              }
             : {
-              optionId: null,
-              image: parsed.image,
-              tag: parsed.tag
-            }
+                optionId: null,
+                image: parsed.image,
+                tag: parsed.tag
+              }
 
-          if (!selectedImage) {
+          const fallbackFullImage = fallbackImage?.full_image ?? (nextValue.image ? formatImageReference(nextValue.image, nextValue.tag) : null)
+
+          const shouldApplySelection =
+            !selectedImage ||
+            (!imageSelectionManuallyChangedRef.current &&
+              (lastAppliedActiveImageRef.current.id !== (fallbackImage?.id ?? null) ||
+                lastAppliedActiveImageRef.current.fullImage !== fallbackFullImage))
+
+          if (shouldApplySelection) {
             setSelectedServiceImageId(fallbackImage?.id ?? null)
+            setImagePickerValue(nextValue)
+            imageSelectionManuallyChangedRef.current = false
+            lastAppliedActiveImageRef.current = {
+              id: fallbackImage?.id ?? null,
+              fullImage: fallbackFullImage ?? null
+            }
+          } else if (selectedImage) {
+            const selectedValue: ImageReferenceValue = {
+              optionId: selectedImage.id ?? null,
+              image: selectedImage.image,
+              tag: selectedImage.tag
+            }
+            setImagePickerValue((prev) =>
+              prev.optionId === selectedValue.optionId && isImageReferenceEqual(prev, selectedValue) ? prev : selectedValue
+            )
           }
-
-          setImagePickerValue((prev) =>
-            prev.optionId === nextValue.optionId && isImageReferenceEqual(prev, nextValue) ? prev : nextValue
-          )
         } else {
           setSuccessfulServiceImages([])
         }
@@ -783,7 +926,7 @@ export default function ServiceDetailPage() {
         setImagesLoading(false)
       }
     },
-    [selectedServiceImageId, service?.built_image, service?.type, serviceId]
+    [deployments, selectedServiceImageId, service?.built_image, service?.type, serviceId]
   )
 
   // 加载服务详情
@@ -1170,6 +1313,7 @@ export default function ServiceDetailPage() {
     try {
       setDeploying(true)
       setDeployDialogOpen(false)
+      imageSelectionManuallyChangedRef.current = false
 
       const result = await serviceSvc.deployService(serviceId, {
         serviceImageId: selectedDeployImageId
@@ -1195,6 +1339,7 @@ export default function ServiceDetailPage() {
   }
 
   const handleImagePickerChange = (value: ImageReferenceValue) => {
+    imageSelectionManuallyChangedRef.current = true
     setImagePickerValue(value)
     setSelectedServiceImageId(value.optionId ?? null)
   }
@@ -1223,6 +1368,7 @@ export default function ServiceDetailPage() {
       setActivateImageLoading(true)
       const result = await serviceSvc.activateServiceImage(serviceId, selectedServiceImageId)
       toast.success('部署镜像已更新')
+      imageSelectionManuallyChangedRef.current = false
       if (result.service) {
         setService(result.service)
         setEditedService(result.service)
@@ -1245,6 +1391,7 @@ export default function ServiceDetailPage() {
 
       // 先激活镜像
       const activateResult = await serviceSvc.activateServiceImage(serviceId, imageId)
+      imageSelectionManuallyChangedRef.current = false
       if (activateResult.service) {
         setService(activateResult.service)
         setEditedService(activateResult.service)
@@ -2008,21 +2155,107 @@ export default function ServiceDetailPage() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {/* 当前部署镜像 */}
-                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-emerald-600 font-medium">当前 K8s 部署镜像</p>
-                          <p className="mt-1 text-sm font-semibold text-emerald-900">
-                            {builtImageDisplay || '尚未部署任何镜像'}
-                          </p>
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 space-y-3">
+                      <p className="text-xs font-medium text-emerald-600">当前 K8s 部署镜像</p>
+                      {ongoingDeploymentInfo ? (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <p className="text-xs font-medium text-amber-700">
+                                {latestActiveDeploymentInProgress?.status === 'pending' ? '等待部署' : '部署中'}
+                              </p>
+                              <p className="text-sm font-semibold text-amber-900">{ongoingDeploymentInfo.display}</p>
+                              {ongoingImageBranch ? (
+                                <p className="text-xs text-amber-700">分支 {ongoingImageBranch}</p>
+                              ) : null}
+                              {(() => {
+                                const progressParts: string[] = []
+                                if (
+                                  typeof k8sStatusInfo?.updatedReplicas === 'number' &&
+                                  typeof k8sStatusInfo?.replicas === 'number' &&
+                                  k8sStatusInfo.replicas > 0
+                                ) {
+                                  const updated = Math.min(k8sStatusInfo.updatedReplicas, k8sStatusInfo.replicas)
+                                  progressParts.push(`已更新 ${updated}/${k8sStatusInfo.replicas}`)
+                                }
+                                if (
+                                  typeof k8sStatusInfo?.readyReplicas === 'number' &&
+                                  typeof k8sStatusInfo?.replicas === 'number' &&
+                                  k8sStatusInfo.replicas > 0
+                                ) {
+                                  const ready = Math.min(k8sStatusInfo.readyReplicas, k8sStatusInfo.replicas)
+                                  progressParts.push(`就绪 ${ready}/${k8sStatusInfo.replicas}`)
+                                }
+                                if (progressParts.length === 0 && latestActiveDeploymentInProgress?.status === 'pending') {
+                                  progressParts.push('等待调度中…')
+                                }
+                                if (progressParts.length > 0) {
+                                  return <p className="text-xs text-amber-700">{progressParts.join(' · ')}</p>
+                                }
+                                return null
+                              })()}
+                            </div>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-medium text-white">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              {latestActiveDeploymentInProgress?.status === 'pending' ? '排队中' : '部署中'}
+                            </span>
+                          </div>
                         </div>
-                        {activeServiceImage ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white">
+                      ) : latestDeployment?.status === 'failed' ? (
+                        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <p className="text-xs font-medium text-red-700">部署失败</p>
+                              <p className="text-sm font-semibold text-red-900">
+                                {(() => {
+                                  if (latestDeployment?.image_tag) {
+                                    const parsed = parseImageReference(latestDeployment.image_tag)
+                                    const label = parsed.image
+                                      ? formatImageReference(parsed.image, parsed.tag)
+                                      : latestDeployment.image_tag
+                                    return label
+                                  }
+                                  return '未知镜像'
+                                })()}
+                              </p>
+                              {latestDeployment?.build_logs ? (
+                                <p className="text-xs text-red-700 line-clamp-2">{latestDeployment.build_logs}</p>
+                              ) : null}
+                            </div>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-500 px-2.5 py-0.5 text-xs font-medium text-white">
+                              <X className="h-3 w-3" />
+                              失败
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+                      {currentDeploymentInfo ? (
+                        <div
+                          className={cn(
+                            'rounded-md border px-3 py-2 flex items-start justify-between gap-3',
+                            ongoingDeploymentInfo ? 'border-emerald-300 bg-white' : 'border-emerald-200 bg-white'
+                          )}
+                        >
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-emerald-700">正在运行</p>
+                            <p className="text-sm font-semibold text-emerald-900">{currentDeploymentInfo.display}</p>
+                            {activeImageBranch ? (
+                              <p className="text-xs text-emerald-700">分支 {activeImageBranch}</p>
+                            ) : null}
+                          </div>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-medium text-white">
                             <Check className="h-3 w-3" />
                             当前部署
                           </span>
-                        ) : null}
-                      </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-sm font-semibold text-emerald-900">尚未部署任何镜像</p>
+                          {builtImageDisplay ? (
+                            <p className="mt-1 text-xs text-emerald-700">最近构建：{builtImageDisplay}</p>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
 
                     {/* 历史镜像列表 */}
@@ -2042,8 +2275,16 @@ export default function ServiceDetailPage() {
                           {serviceImages.map((image) => {
                             const status = (image.build_status ?? 'pending') as ServiceImageStatus
                             const meta = IMAGE_STATUS_META[status]
-                            const isActive = image.id === activeServiceImageId
+                            const matchesActiveById = activeServiceImageId && image.id === activeServiceImageId
+                            const matchesActiveByFullImage =
+                              activeServiceImageFullImage && image.full_image === activeServiceImageFullImage
+                            const isActive = Boolean(matchesActiveById || matchesActiveByFullImage)
                             const isDeployable = status === 'success'
+                            const isUpdating = Boolean(
+                              ongoingDeploymentInfo &&
+                                ((ongoingDeploymentInfo.id && image.id === ongoingDeploymentInfo.id) ||
+                                  (ongoingDeploymentFullImage && image.full_image === ongoingDeploymentFullImage))
+                            )
                             const metadata =
                               image.metadata && typeof image.metadata === 'object'
                                 ? (image.metadata as Record<string, unknown>)
@@ -2079,6 +2320,12 @@ export default function ServiceDetailPage() {
                                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-medium text-white">
                                           <Check className="h-3 w-3" />
                                           当前部署
+                                        </span>
+                                      ) : null}
+                                      {isUpdating && !isActive ? (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-medium text-white">
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                          部署中
                                         </span>
                                       ) : null}
                                     </div>
@@ -2118,11 +2365,11 @@ export default function ServiceDetailPage() {
                                         variant="default"
                                         size="sm"
                                         onClick={() => handleDeployImage(image.id ?? null)}
-                                        disabled={deploying}
+                                        disabled={deploying || isUpdating}
                                         className="gap-2"
                                       >
-                                        <Rocket className={`h-4 w-4 ${deploying ? 'animate-spin' : ''}`} />
-                                        {deploying ? '部署中...' : '部署'}
+                                        <Rocket className={`h-4 w-4 ${deploying || isUpdating ? 'animate-spin' : ''}`} />
+                                        {deploying || isUpdating ? '部署中...' : '部署'}
                                       </Button>
                                     ) : (
                                       <Button
@@ -3049,7 +3296,15 @@ export default function ServiceDetailPage() {
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {deployImageList.map((image) => {
                   const isSelected = selectedDeployImageId === image.id
-                  const isActive = image.id === activeServiceImageId
+                  const matchesActiveById = activeServiceImageId && image.id === activeServiceImageId
+                  const matchesActiveByFullImage =
+                    activeServiceImageFullImage && image.full_image === activeServiceImageFullImage
+                  const isActive = Boolean(matchesActiveById || matchesActiveByFullImage)
+                  const isUpdating = Boolean(
+                    ongoingDeploymentInfo &&
+                      ((ongoingDeploymentInfo.id && image.id === ongoingDeploymentInfo.id) ||
+                        (ongoingDeploymentFullImage && image.full_image === ongoingDeploymentFullImage))
+                  )
                   const metadata =
                     image.metadata && typeof image.metadata === 'object'
                       ? (image.metadata as Record<string, unknown>)
@@ -3077,6 +3332,12 @@ export default function ServiceDetailPage() {
                               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
                                 <Check className="h-3 w-3" />
                                 当前部署
+                              </span>
+                            ) : null}
+                            {isUpdating && !isActive ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                部署中
                               </span>
                             ) : null}
                           </div>
