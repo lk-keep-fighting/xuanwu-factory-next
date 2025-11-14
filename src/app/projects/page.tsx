@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag } from 'lucide-react'
+import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -229,6 +229,12 @@ export default function ProjectsPage() {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold text-gray-900">项目管理</h1>
           <div className="flex items-center gap-2">
+            <Button asChild variant="outline" className="gap-2">
+              <Link href="/ai/employees">
+                <Sparkles className="h-4 w-4" />
+                AI 员工模块
+              </Link>
+            </Button>
             <Button asChild variant="outline">
               <Link href="/settings">系统配置</Link>
             </Button>
