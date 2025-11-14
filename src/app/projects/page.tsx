@@ -1,14 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag, Sparkles } from 'lucide-react'
+import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag, Sparkles, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
@@ -34,6 +35,15 @@ const initialFormState: ProjectFormState = {
   identifier: '',
   description: ''
 }
+
+const SORT_OPTIONS = [
+  { value: 'created_desc', label: '按创建时间（最新优先）', sortBy: 'created_at', sortOrder: 'desc' },
+  { value: 'created_asc', label: '按创建时间（最早优先）', sortBy: 'created_at', sortOrder: 'asc' },
+  { value: 'name_asc', label: '按名称（A-Z）', sortBy: 'name', sortOrder: 'asc' },
+  { value: 'name_desc', label: '按名称（Z-A）', sortBy: 'name', sortOrder: 'desc' }
+] as const
+
+type SortOptionValue = (typeof SORT_OPTIONS)[number]['value']
 
 type ProjectFormType = 'create' | 'edit'
 
@@ -80,24 +90,45 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [searchValue, setSearchValue] = useState('')
+  const [sortOption, setSortOption] = useState<SortOptionValue>('created_desc')
 
-  const loadProjects = async () => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchValue(searchTerm.trim())
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [searchTerm])
+
+  const loadProjects = useCallback(async () => {
     try {
       setLoading(true)
-      const res = await fetch('/api/projects')
+
+      const params = new URLSearchParams()
+      const sortConfig = SORT_OPTIONS.find((option) => option.value === sortOption) ?? SORT_OPTIONS[0]
+      params.set('sortBy', sortConfig.sortBy)
+      params.set('sortOrder', sortConfig.sortOrder)
+      if (searchValue) {
+        params.set('search', searchValue)
+      }
+
+      const queryString = params.toString()
+      const res = await fetch(`/api/projects${queryString ? `?${queryString}` : ''}`)
       if (!res.ok) throw new Error('Failed to fetch projects')
       const data = await res.json()
-      setProjects(data)
+      setProjects(Array.isArray(data) ? data : [])
     } catch (error: unknown) {
       toast.error(`加载项目失败：${getErrorMessage(error)}`)
     } finally {
       setLoading(false)
     }
-  }
+  }, [searchValue, sortOption])
 
   useEffect(() => {
     loadProjects()
-  }, [])
+  }, [loadProjects])
 
   const resetForm = (type: ProjectFormType) => {
     if (type === 'create') {
@@ -223,47 +254,90 @@ export default function ProjectsPage() {
     }
   }
 
+  const hasActiveSearch = searchValue !== ''
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">项目管理</h1>
-          <div className="flex items-center gap-2">
-            <Button asChild variant="outline" className="gap-2">
-              <Link href="/ai/employees">
-                <Sparkles className="h-4 w-4" />
-                AI 员工模块
-              </Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link href="/settings">系统配置</Link>
-            </Button>
-            <Button
-              onClick={() => {
-                resetForm('create')
-                setIsCreateDialogOpen(true)
-              }}
-              className="gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              新建项目
-            </Button>
+        <div className="flex flex-col gap-4 mb-6">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <h1 className="text-3xl font-bold text-gray-900">项目管理</h1>
+            <div className="flex items-center gap-2">
+              <Button asChild variant="outline" className="gap-2">
+                <Link href="/ai/employees">
+                  <Sparkles className="h-4 w-4" />
+                  AI 员工模块
+                </Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href="/settings">系统配置</Link>
+              </Button>
+              <Button
+                onClick={() => {
+                  resetForm('create')
+                  setIsCreateDialogOpen(true)
+                }}
+                className="gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                新建项目
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="relative w-full md:w-72">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="搜索项目名称或编号"
+                className="pl-9"
+              />
+            </div>
+            <div className="flex w-full md:w-auto">
+              <Select value={sortOption} onValueChange={(value) => setSortOption(value as SortOptionValue)}>
+                <SelectTrigger className="w-full md:w-56">
+                  <SelectValue placeholder="选择排序方式" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SORT_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 
         {loading ? (
           <div className="text-center py-12 text-gray-500">加载中...</div>
         ) : projects.length === 0 ? (
-          <Card className="text-center py-12">
-            <CardContent>
-              <FolderOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500 mb-4">暂无项目</p>
-              <Button onClick={() => {
-                resetForm('create')
-                setIsCreateDialogOpen(true)
-              }}>创建第一个项目</Button>
-            </CardContent>
-          </Card>
+          hasActiveSearch ? (
+            <Card className="text-center py-12">
+              <CardContent className="space-y-3">
+                <Search className="w-16 h-16 text-gray-300 mx-auto" />
+                <p className="text-gray-500">未找到匹配的项目</p>
+                <p className="text-sm text-gray-400">请尝试调整搜索关键词或排序方式</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="text-center py-12">
+              <CardContent>
+                <FolderOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500 mb-4">暂无项目</p>
+                <Button
+                  onClick={() => {
+                    resetForm('create')
+                    setIsCreateDialogOpen(true)
+                  }}
+                >
+                  创建第一个项目
+                </Button>
+              </CardContent>
+            </Card>
+          )
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {projects.map((project) => (
