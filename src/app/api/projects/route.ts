@@ -13,10 +13,29 @@ const normalizeIdentifier = (value: string) =>
     .replace(/-+$/, '')
     .slice(0, 63)
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url)
+    const searchKeyword = searchParams.get('search')?.trim() ?? ''
+    const sortByParam = searchParams.get('sortBy')
+    const sortOrderParam = searchParams.get('sortOrder')
+
+    const sortBy = sortByParam === 'name' ? 'name' : 'created_at'
+    const sortOrder: Prisma.SortOrder = sortOrderParam === 'asc' ? 'asc' : 'desc'
+
+    const where: Prisma.ProjectWhereInput | undefined =
+      searchKeyword !== ''
+        ? {
+            OR: [
+              { name: { contains: searchKeyword, mode: 'insensitive' } },
+              { identifier: { contains: searchKeyword, mode: 'insensitive' } }
+            ]
+          }
+        : undefined
+
     const projects = await prisma.project.findMany({
-      orderBy: { created_at: 'desc' }
+      where,
+      orderBy: sortBy === 'name' ? { name: sortOrder } : { created_at: sortOrder }
     })
 
     return NextResponse.json(projects)
