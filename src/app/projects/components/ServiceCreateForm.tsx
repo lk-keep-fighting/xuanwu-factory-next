@@ -28,7 +28,16 @@ import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
-import { ServiceType, DatabaseType, GitProvider, BuildType, Service } from '@/types/project'
+import {
+  ServiceType,
+  DatabaseType,
+  GitProvider,
+  BuildType,
+  Service,
+  SUPPORTED_DATABASE_TYPES,
+  DATABASE_TYPE_METADATA,
+  type SupportedDatabaseType
+} from '@/types/project'
 import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Database as DatabaseIcon, Plus, Trash2, Loader2, RefreshCcw } from 'lucide-react'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
@@ -112,6 +121,11 @@ type GitBranchOption = {
   description?: string | null
 }
 
+const DATABASE_OPTIONS = SUPPORTED_DATABASE_TYPES.map(value => ({
+  value,
+  label: DATABASE_TYPE_METADATA[value].label
+}))
+
 interface ServiceCreateFormProps {
   projectId: string
   projectIdentifier?: string
@@ -134,7 +148,7 @@ export default function ServiceCreateForm({
       git_path: '.'
     }
   })
-  const [selectedDatabaseType, setSelectedDatabaseType] = useState<DatabaseType>(DatabaseType.MYSQL)
+  const [selectedDatabaseType, setSelectedDatabaseType] = useState<SupportedDatabaseType>(DatabaseType.MYSQL)
   
   // 环境变量管理
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
@@ -598,26 +612,31 @@ export default function ServiceCreateForm({
 
   // 生成数据库连接 URL
   const generateConnectionUrl = (
-    dbType: DatabaseType,
+    dbType: SupportedDatabaseType,
     host: string,
     port: number,
     username: string,
     password: string,
     database: string
   ) => {
-    switch (dbType) {
-      case DatabaseType.MYSQL:
-      case DatabaseType.MARIADB:
-        return `mysql://${username}:${password}@${host}:${port}/${database}`
-      case DatabaseType.POSTGRESQL:
-        return `postgresql://${username}:${password}@${host}:${port}/${database}`
-      case DatabaseType.MONGODB:
-        return `mongodb://${username}:${password}@${host}:${port}/${database}`
-      case DatabaseType.REDIS:
-        return `redis://default:${password}@${host}:${port}`
-      default:
-        return ''
+    const normalizedHost = host.trim()
+    const normalizedPort = Number.isFinite(port) ? port : Number(port)
+
+    if (!normalizedHost || !Number.isFinite(normalizedPort) || normalizedPort <= 0) {
+      return ''
     }
+
+    if (dbType === DatabaseType.MYSQL) {
+      const encodedUser = encodeURIComponent(username || 'root')
+      const encodedPassword = encodeURIComponent(password || '')
+      const encodedDatabase = database ? `/${encodeURIComponent(database)}` : ''
+      return `mysql://${encodedUser}:${encodedPassword}@${normalizedHost}:${normalizedPort}${encodedDatabase}`
+    }
+
+    const encodedPassword = password ? encodeURIComponent(password) : ''
+    return encodedPassword
+      ? `redis://:${encodedPassword}@${normalizedHost}:${normalizedPort}`
+      : `redis://${normalizedHost}:${normalizedPort}`
   }
 
   const handleImageReferenceChange = (next: ImageReferenceValue) => {
@@ -661,34 +680,62 @@ export default function ServiceCreateForm({
       }
       // Database - 内置数据库镜像
       else if (serviceType === ServiceType.DATABASE) {
+        const metadata = DATABASE_TYPE_METADATA[selectedDatabaseType]
+        const parsedPort = data.port ? Number.parseInt(data.port, 10) : NaN
+        const port = Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : metadata.defaultPort
+
+        const parsedExternalPort = data.external_port ? Number.parseInt(data.external_port, 10) : NaN
+        const externalPort = Number.isInteger(parsedExternalPort) && parsedExternalPort > 0 ? parsedExternalPort : undefined
+
+        const version = (data.version ?? '').trim() || 'latest'
+        const volumeSize = (data.volume_size ?? '').trim() || '10Gi'
+
+        const internalHost =
+          sanitizeDomainLabel(`service-${selectedDatabaseType}-${serviceData.name}`) ||
+          `service-${selectedDatabaseType}`
+
+        const isMysql = selectedDatabaseType === DatabaseType.MYSQL
+        const username = isMysql ? (data.username ?? '').trim() || 'admin' : ''
+        const databaseName = isMysql ? (data.database_name ?? '').trim() || serviceData.name : ''
+        const password = (data.password ?? '').trim() || generatePassword()
+        const rootPassword = isMysql ? (data.root_password ?? '').trim() || generatePassword() : undefined
+
         serviceData.database_type = selectedDatabaseType
-        serviceData.version = data.version || 'latest'
-        
-        const defaultPorts: Record<DatabaseType, number> = {
-          [DatabaseType.MYSQL]: 3306,
-          [DatabaseType.POSTGRESQL]: 5432,
-          [DatabaseType.MONGODB]: 27017,
-          [DatabaseType.REDIS]: 6379,
-          [DatabaseType.MARIADB]: 3306
+        serviceData.version = version
+        serviceData.port = port
+        if (externalPort !== undefined) {
+          serviceData.external_port = externalPort
+        } else {
+          delete serviceData.external_port
         }
-        serviceData.port = data.port ? parseInt(data.port) : defaultPorts[selectedDatabaseType]
-        serviceData.external_port = data.external_port ? parseInt(data.external_port) : undefined
-        
-        serviceData.username = data.username || 'admin'
-        serviceData.password = data.password || generatePassword()
-        serviceData.root_password = data.root_password || generatePassword()
-        serviceData.database_name = data.database_name || serviceData.name
-        serviceData.volume_size = data.volume_size || '10Gi'
-        
-        serviceData.internal_host = `service-${serviceData.name}`
-        serviceData.internal_connection_url = generateConnectionUrl(
+        serviceData.password = password
+        serviceData.volume_size = volumeSize
+        serviceData.internal_host = internalHost
+
+        if (isMysql) {
+          serviceData.username = username
+          serviceData.database_name = databaseName
+          serviceData.root_password = rootPassword
+        } else {
+          delete serviceData.username
+          delete serviceData.database_name
+          delete serviceData.root_password
+        }
+
+        const connectionUrl = generateConnectionUrl(
           selectedDatabaseType,
-          serviceData.internal_host as string,
-          serviceData.port as number,
-          serviceData.username as string,
-          serviceData.password as string,
-          serviceData.database_name as string
+          internalHost,
+          port,
+          username,
+          password,
+          databaseName
         )
+
+        if (connectionUrl) {
+          serviceData.internal_connection_url = connectionUrl
+        } else {
+          delete serviceData.internal_connection_url
+        }
       }
       // 镜像服务 - 基于现有镜像
       else if (serviceType === ServiceType.IMAGE) {
@@ -1283,14 +1330,8 @@ export default function ServiceCreateForm({
           <TabsContent value="general" className="space-y-4 mt-4">
             <div className="space-y-2">
               <Label>数据库类型</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { value: DatabaseType.MYSQL, label: 'MySQL' },
-                  { value: DatabaseType.POSTGRESQL, label: 'PostgreSQL' },
-                  { value: DatabaseType.REDIS, label: 'Redis' },
-                  { value: DatabaseType.MONGODB, label: 'MongoDB' },
-                  { value: DatabaseType.MARIADB, label: 'MariaDB' }
-                ].map((db) => (
+              <div className="grid grid-cols-2 gap-2">
+                {DATABASE_OPTIONS.map((db) => (
                   <Button
                     key={db.value}
                     type="button"
@@ -1315,15 +1356,21 @@ export default function ServiceCreateForm({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="database_name">数据库名</Label>
-                <Input
-                  id="database_name"
-                  {...register('database_name')}
-                  placeholder="与服务名相同"
-                />
-              </div>
+            <div
+              className={`grid gap-4 grid-cols-1 ${
+                selectedDatabaseType === DatabaseType.MYSQL ? 'md:grid-cols-2' : ''
+              }`}
+            >
+              {selectedDatabaseType === DatabaseType.MYSQL && (
+                <div className="space-y-2">
+                  <Label htmlFor="database_name">数据库名</Label>
+                  <Input
+                    id="database_name"
+                    {...register('database_name')}
+                    placeholder="与服务名相同"
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="volume_size">存储大小</Label>
                 <Input
@@ -1335,18 +1382,30 @@ export default function ServiceCreateForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="username">用户名</Label>
-                <Input
-                  id="username"
-                  {...register('username')}
-                  placeholder="admin"
-                  defaultValue="admin"
-                />
+            {selectedDatabaseType === DatabaseType.MYSQL ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="username">用户名</Label>
+                  <Input
+                    id="username"
+                    {...register('username')}
+                    placeholder="admin"
+                    defaultValue="admin"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">数据库密码</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    {...register('password')}
+                    placeholder="自动生成"
+                  />
+                </div>
               </div>
+            ) : (
               <div className="space-y-2">
-                <Label htmlFor="password">密码</Label>
+                <Label htmlFor="password">访问密码</Label>
                 <Input
                   id="password"
                   type="password"
@@ -1354,7 +1413,7 @@ export default function ServiceCreateForm({
                   placeholder="自动生成"
                 />
               </div>
-            </div>
+            )}
           </TabsContent>
 
           <TabsContent value="advanced" className="space-y-4 mt-4">
@@ -1379,15 +1438,17 @@ export default function ServiceCreateForm({
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="root_password">Root 密码</Label>
-              <Input
-                id="root_password"
-                type="password"
-                {...register('root_password')}
-                placeholder="自动生成"
-              />
-            </div>
+            {selectedDatabaseType === DatabaseType.MYSQL && (
+              <div className="space-y-2">
+                <Label htmlFor="root_password">Root 密码</Label>
+                <Input
+                  id="root_password"
+                  type="password"
+                  {...register('root_password')}
+                  placeholder="自动生成"
+                />
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       )}
