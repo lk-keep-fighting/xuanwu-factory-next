@@ -27,8 +27,8 @@ export async function GET(request: NextRequest) {
       searchKeyword !== ''
         ? {
             OR: [
-              { name: { contains: searchKeyword, mode: 'insensitive' } },
-              { identifier: { contains: searchKeyword, mode: 'insensitive' } }
+              { name: { contains: searchKeyword } },
+              { identifier: { contains: searchKeyword } }
             ]
           }
         : undefined
