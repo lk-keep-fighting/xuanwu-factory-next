@@ -2,6 +2,27 @@ import type { Project } from '@/types/project'
 
 const API_BASE = '/api/projects'
 
+type ProjectListQuery = {
+  search?: string
+  sortBy?: 'created_at' | 'name'
+  sortOrder?: 'asc' | 'desc'
+}
+
+const buildQueryString = (params?: ProjectListQuery) => {
+  const query = new URLSearchParams()
+  if (params?.search) {
+    query.set('search', params.search)
+  }
+  if (params?.sortBy) {
+    query.set('sortBy', params.sortBy)
+  }
+  if (params?.sortOrder) {
+    query.set('sortOrder', params.sortOrder)
+  }
+  const queryString = query.toString()
+  return queryString ? `?${queryString}` : ''
+}
+
 /**
  * 项目管理服务
  */
@@ -27,8 +48,8 @@ export const projectSvc = {
   /**
    * 获取项目列表
    */
-  async getProjects(): Promise<Project[]> {
-    const response = await fetch(API_BASE)
+  async getProjects(params?: ProjectListQuery): Promise<Project[]> {
+    const response = await fetch(`${API_BASE}${buildQueryString(params)}`)
     
     if (!response.ok) {
       const error = await response.json()
@@ -89,7 +110,7 @@ export const projectSvc = {
    * 根据名称搜索项目
    */
   async searchProjects(keyword: string): Promise<Project[]> {
-    const response = await fetch(`${API_BASE}?search=${encodeURIComponent(keyword)}`)
+    const response = await fetch(`${API_BASE}${buildQueryString({ search: keyword })}`)
     
     if (!response.ok) {
       const error = await response.json()
