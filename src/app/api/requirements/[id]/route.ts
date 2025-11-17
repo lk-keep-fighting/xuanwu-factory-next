@@ -1,31 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { requirementsMockStore } from '@/service/requirementsMockStore'
-import {
-  type RequirementPriority,
-  type RequirementStatus,
-  type RequirementStatusChangePayload,
-  type RequirementUpdatePayload
-} from '@/types/requirement'
-
-const STATUS_VALUES: RequirementStatus[] = ['DRAFT', 'TODO', 'IN_PROGRESS', 'DONE', 'CANCELED']
-const PRIORITY_VALUES: RequirementPriority[] = ['LOW', 'MEDIUM', 'HIGH']
-
-const coerceStatus = (value: unknown): RequirementStatus | undefined => {
-  if (typeof value !== 'string') return undefined
-  if (STATUS_VALUES.includes(value as RequirementStatus)) {
-    return value as RequirementStatus
-  }
-  return undefined
-}
-
-const coercePriority = (value: unknown): RequirementPriority | undefined => {
-  if (typeof value !== 'string') return undefined
-  if (PRIORITY_VALUES.includes(value as RequirementPriority)) {
-    return value as RequirementPriority
-  }
-  return undefined
-}
+import { type RequirementUpdatePayload } from '@/types/requirement'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,13 +17,9 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({
       data: detail,
       meta: {
-        nextStatuses: requirementsMockStore.getNextStatuses(detail.status),
         aiEmployees: requirementsMockStore.getAiEmployees(),
         projects: filters.projects,
-        services: filters.services,
-        people: requirementsMockStore.getPeople(),
-        priorities: filters.priorities,
-        statuses: filters.statuses
+        services: filters.services
       }
     })
   } catch (error: unknown) {
@@ -61,36 +33,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   try {
     const payload = await request.json()
 
-    if (payload?.action === 'statusChange') {
-      const toStatus = coerceStatus(payload?.toStatus)
-      const changedBy = typeof payload?.changedBy === 'string' ? payload.changedBy : ''
-      const note = typeof payload?.note === 'string' ? payload.note : undefined
-
-      if (!toStatus) {
-        return NextResponse.json({ error: '无效的目标状态' }, { status: 400 })
-      }
-      if (!changedBy) {
-        return NextResponse.json({ error: '缺少操作者信息' }, { status: 400 })
-      }
-
-      const changePayload: RequirementStatusChangePayload = {
-        toStatus,
-        changedBy,
-        note
-      }
-
-      const updated = requirementsMockStore.changeStatus(params.id, changePayload)
-      return NextResponse.json({ data: updated })
-    }
-
     const updatePayload: RequirementUpdatePayload = {}
 
     if (typeof payload?.title === 'string') {
       updatePayload.title = payload.title
-    }
-
-    if (typeof payload?.description === 'string') {
-      updatePayload.description = payload.description
     }
 
     if (typeof payload?.projectId === 'string') {
@@ -99,40 +45,6 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
     if (Array.isArray(payload?.serviceIds)) {
       updatePayload.serviceIds = payload.serviceIds.map((id: unknown) => String(id))
-    }
-
-    const priority = coercePriority(payload?.priority)
-    if (priority) {
-      updatePayload.priority = priority
-    }
-
-    const status = coerceStatus(payload?.status)
-    if (status) {
-      updatePayload.status = status
-    }
-
-    if (typeof payload?.ownerId === 'string') {
-      updatePayload.ownerId = payload.ownerId
-    }
-
-    if (Array.isArray(payload?.watcherIds)) {
-      updatePayload.watcherIds = payload.watcherIds.map((id: unknown) => String(id))
-    }
-
-    if ('dueAt' in payload) {
-      if (payload.dueAt === null || payload.dueAt === '') {
-        updatePayload.dueAt = null
-      } else if (typeof payload.dueAt === 'string') {
-        updatePayload.dueAt = payload.dueAt
-      }
-    }
-
-    if (Array.isArray(payload?.tags)) {
-      updatePayload.tags = payload.tags.map((tag: unknown) => String(tag))
-    }
-
-    if (typeof payload?.updatedBy === 'string') {
-      updatePayload.updatedBy = payload.updatedBy
     }
 
     const updated = requirementsMockStore.update(params.id, updatePayload)
