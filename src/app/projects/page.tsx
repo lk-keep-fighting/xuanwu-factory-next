@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag, Sparkles, Search } from 'lucide-react'
+import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag, Sparkles, Search, ClipboardList } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -267,6 +267,12 @@ export default function ProjectsPage() {
                 <Link href="/ai/employees">
                   <Sparkles className="h-4 w-4" />
                   AI 员工模块
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="gap-2">
+                <Link href="/requirements">
+                  <ClipboardList className="h-4 w-4" />
+                  需求管理模块
                 </Link>
               </Button>
               <Button asChild variant="outline">
