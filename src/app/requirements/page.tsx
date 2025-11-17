@@ -270,6 +270,11 @@ export default function RequirementListPage() {
   }, [createForm.projectId, services])
 
   const openCreateDialog = () => {
+    if (!optionsLoading && projects.length === 0) {
+      toast.error('暂无可用项目，请先在项目管理中创建项目')
+      return
+    }
+
     const defaultProjectId = projects[0]?.id ?? ''
     const defaultServiceId = defaultProjectId
       ? services.find((service) => service.project_id === defaultProjectId)?.id
@@ -318,6 +323,10 @@ export default function RequirementListPage() {
     }
     if (!createForm.projectId) {
       toast.error('请选择关联项目')
+      return
+    }
+    if (formServices.length > 0 && createForm.serviceIds.length === 0) {
+      toast.error('请至少选择一个关联服务')
       return
     }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-import { requirementsMockStore } from '@/service/requirementsMockStore'
+import { requirementService } from '@/service/requirementService'
 import { type RequirementCreatePayload, type RequirementListQuery } from '@/types/requirement'
 
 const buildListQuery = (request: NextRequest): RequirementListQuery => {
@@ -41,7 +41,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     const query = buildListQuery(request)
-    const response = requirementsMockStore.list(query)
+    const response = await requirementService.list(query)
     return NextResponse.json(response)
   } catch (error: unknown) {
     console.error('[Requirement][GET] Failed to list requirements:', error)
@@ -72,12 +72,13 @@ export async function POST(request: NextRequest) {
       serviceIds
     }
 
-    const requirement = requirementsMockStore.create(sanitizedPayload)
+    const requirement = await requirementService.create(sanitizedPayload)
 
     return NextResponse.json({ data: requirement })
   } catch (error: unknown) {
     console.error('[Requirement][POST] Failed to create requirement:', error)
     const message = error instanceof Error ? error.message : '创建需求失败'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const status = message.includes('不存在') ? 400 : 500
+    return NextResponse.json({ error: message }, { status })
   }
 }

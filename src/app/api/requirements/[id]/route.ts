@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-import { requirementsMockStore } from '@/service/requirementsMockStore'
+import { requirementService } from '@/service/requirementService'
 import { type RequirementUpdatePayload } from '@/types/requirement'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const detail = requirementsMockStore.get(params.id)
+    const detail = await requirementService.get(params.id)
     if (!detail) {
       return NextResponse.json({ error: '未找到对应的需求' }, { status: 404 })
     }
 
-    const filters = requirementsMockStore.getFilters()
+    const aiEmployees = requirementService.listAiEmployees()
 
     return NextResponse.json({
       data: detail,
       meta: {
-        aiEmployees: requirementsMockStore.getAiEmployees(),
-        projects: filters.projects,
-        services: filters.services
+        aiEmployees
       }
     })
   } catch (error: unknown) {
@@ -47,18 +45,23 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       updatePayload.serviceIds = payload.serviceIds.map((id: unknown) => String(id))
     }
 
-    const updated = requirementsMockStore.update(params.id, updatePayload)
+    const updated = await requirementService.update(params.id, updatePayload)
+    if (!updated) {
+      return NextResponse.json({ error: '未找到对应的需求' }, { status: 404 })
+    }
+
     return NextResponse.json({ data: updated })
   } catch (error: unknown) {
     console.error('[Requirement][PATCH/:id] Failed to update requirement:', error)
     const message = error instanceof Error ? error.message : '更新需求失败'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const status = message.includes('不存在') ? 400 : 500
+    return NextResponse.json({ error: message }, { status })
   }
 }
 
 export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const removed = requirementsMockStore.delete(params.id)
+    const removed = await requirementService.delete(params.id)
     if (!removed) {
       return NextResponse.json({ error: '未找到对应的需求' }, { status: 404 })
     }

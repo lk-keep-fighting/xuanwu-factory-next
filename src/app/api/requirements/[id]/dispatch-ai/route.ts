@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-import { requirementsMockStore } from '@/service/requirementsMockStore'
+import { requirementService } from '@/service/requirementService'
 import { type RequirementDispatchPayload } from '@/types/requirement'
 import { type AITaskPriority } from '@/types/ai'
 
@@ -61,12 +61,13 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       requestedBy
     }
 
-    const result = requirementsMockStore.dispatch(params.id, dispatchPayload)
+    const result = await requirementService.dispatch(params.id, dispatchPayload)
 
     return NextResponse.json({ data: result.requirement, newlyCreatedTaskIds: result.newlyCreatedTaskIds })
   } catch (error: unknown) {
     console.error('[Requirement][POST/:id/dispatch-ai] Failed to dispatch requirement:', error)
     const message = error instanceof Error ? error.message : '派发任务失败'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const status = message.includes('不存在') ? 400 : 500
+    return NextResponse.json({ error: message }, { status })
   }
 }
