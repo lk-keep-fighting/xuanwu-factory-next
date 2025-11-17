@@ -60,7 +60,7 @@ export interface RequirementFilterOptions {
 export interface RequirementListResponse {
   items: RequirementListItem[]
   total: number
-  filters: RequirementFilterOptions
+  filters?: RequirementFilterOptions
 }
 
 export type RequirementListQuery = {

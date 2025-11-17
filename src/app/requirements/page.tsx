@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Plus, RefreshCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
@@ -39,15 +39,18 @@ import {
   TableRow
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
-import {
-  type RequirementFilterOptions,
-  type RequirementListItem,
-  type RequirementListResponse
-} from '@/types/requirement'
+import { type RequirementListItem, type RequirementListResponse } from '@/types/requirement'
 
-const initialFilters: RequirementFilterOptions = {
-  projects: [],
-  services: []
+type ProjectOption = {
+  id: string
+  name: string
+  identifier?: string
+}
+
+type ServiceOption = {
+  id: string
+  name: string
+  project_id: string
 }
 
 type CreateRequirementForm = {
@@ -80,27 +83,16 @@ const buildRelativeTime = (value?: string) => {
   return `${Math.floor(diffMonths / 12)} 年前`
 }
 
-const getInitialForm = (filters: RequirementFilterOptions): CreateRequirementForm => {
-  const defaultProject = filters.projects[0]?.id ?? ''
-  const defaultServiceIds = filters.services
-    .filter((service) => service.projectId === defaultProject)
-    .slice(0, 1)
-    .map((service) => service.id)
-
-  return {
-    title: '',
-    projectId: defaultProject,
-    serviceIds: defaultServiceIds
-  }
-}
-
 export default function RequirementListPage() {
   const router = useRouter()
 
   const [items, setItems] = useState<RequirementListItem[]>([])
-  const [filters, setFilters] = useState<RequirementFilterOptions>(initialFilters)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+
+  const [projects, setProjects] = useState<ProjectOption[]>([])
+  const [services, setServices] = useState<ServiceOption[]>([])
+  const [optionsLoading, setOptionsLoading] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState('')
   const [searchValue, setSearchValue] = useState('')
@@ -110,8 +102,23 @@ export default function RequirementListPage() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
-  const [createForm, setCreateForm] = useState<CreateRequirementForm>(() => getInitialForm(initialFilters))
+  const [createForm, setCreateForm] = useState<CreateRequirementForm>({
+    title: '',
+    projectId: '',
+    serviceIds: []
+  })
   const [creating, setCreating] = useState(false)
+
+  const selectedProjectRef = useRef(selectedProject)
+  const selectedServiceRef = useRef(selectedService)
+
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject
+  }, [selectedProject])
+
+  useEffect(() => {
+    selectedServiceRef.current = selectedService
+  }, [selectedService])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -138,7 +145,6 @@ export default function RequirementListPage() {
 
       const data = (await res.json()) as RequirementListResponse
       setItems(Array.isArray(data.items) ? data.items : [])
-      setFilters(data.filters ?? initialFilters)
       setTotal(typeof data.total === 'number' ? data.total : 0)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : '加载需求列表失败'
@@ -152,25 +158,128 @@ export default function RequirementListPage() {
     fetchRequirements()
   }, [fetchRequirements])
 
+  const loadOptions = useCallback(async () => {
+    try {
+      setOptionsLoading(true)
+      const [projectsRes, servicesRes] = await Promise.all([
+        fetch('/api/projects'),
+        fetch('/api/services')
+      ])
+
+      if (!projectsRes.ok) {
+        throw new Error('获取项目列表失败')
+      }
+      if (!servicesRes.ok) {
+        throw new Error('获取服务列表失败')
+      }
+
+      const projectData = (await projectsRes.json()) as Array<Partial<ProjectOption>>
+      const serviceData = (await servicesRes.json()) as Array<Partial<ServiceOption> & { project_id?: string }>
+
+      const normalizedProjects: ProjectOption[] = projectData
+        .filter((project): project is { id: string; name?: string; identifier?: string } =>
+          typeof project.id === 'string' && project.id.trim() !== ''
+        )
+        .map((project) => {
+          const nameCandidate = typeof project.name === 'string' ? project.name.trim() : ''
+          const identifierCandidate = typeof project.identifier === 'string' ? project.identifier.trim() : ''
+          return {
+            id: project.id,
+            name: nameCandidate || identifierCandidate || project.id,
+            identifier: identifierCandidate || undefined
+          }
+        })
+
+      const normalizedServices: ServiceOption[] = serviceData
+        .filter((service): service is { id: string; name?: string; project_id: string } =>
+          typeof service.id === 'string' &&
+          service.id.trim() !== '' &&
+          typeof service.project_id === 'string' &&
+          service.project_id.trim() !== ''
+        )
+        .map((service) => ({
+          id: service.id,
+          name: typeof service.name === 'string' && service.name.trim() !== '' ? service.name : service.id,
+          project_id: service.project_id
+        }))
+
+      setProjects(normalizedProjects)
+      setServices(normalizedServices)
+
+      const currentSelectedProject = selectedProjectRef.current
+      let nextSelectedProject = currentSelectedProject
+      if (currentSelectedProject !== 'ALL' && !normalizedProjects.some((project) => project.id === currentSelectedProject)) {
+        nextSelectedProject = 'ALL'
+        setSelectedProject('ALL')
+      }
+
+      const currentSelectedService = selectedServiceRef.current
+      if (currentSelectedService !== 'ALL') {
+        const serviceValid = normalizedServices.some((service) => {
+          if (service.id !== currentSelectedService) return false
+          if (nextSelectedProject === 'ALL') return true
+          return service.project_id === nextSelectedProject
+        })
+        if (!serviceValid) {
+          setSelectedService('ALL')
+        }
+      }
+
+      setCreateForm((prev) => {
+        let projectId = prev.projectId
+        if (!projectId || !normalizedProjects.some((project) => project.id === projectId)) {
+          projectId = normalizedProjects[0]?.id ?? ''
+        }
+
+        let serviceIds = prev.serviceIds.filter((serviceId) =>
+          normalizedServices.some((service) => service.id === serviceId && service.project_id === projectId)
+        )
+        if (serviceIds.length === 0 && projectId) {
+          const defaultService = normalizedServices.find((service) => service.project_id === projectId)
+          if (defaultService) {
+            serviceIds = [defaultService.id]
+          }
+        }
+
+        return {
+          ...prev,
+          projectId,
+          serviceIds
+        }
+      })
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '加载项目或服务失败'
+      toast.error(message)
+    } finally {
+      setOptionsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
-    setCreateForm((prev) => {
-      if (prev.projectId || filters.projects.length === 0) return prev
-      return getInitialForm(filters)
-    })
-  }, [filters])
+    loadOptions()
+  }, [loadOptions])
 
   const filteredServices = useMemo(() => {
-    if (selectedProject === 'ALL') return filters.services
-    return filters.services.filter((service) => service.projectId === selectedProject)
-  }, [filters.services, selectedProject])
+    if (selectedProject === 'ALL') return services
+    return services.filter((service) => service.project_id === selectedProject)
+  }, [services, selectedProject])
 
   const formServices = useMemo(() => {
-    if (!createForm.projectId) return filters.services
-    return filters.services.filter((service) => service.projectId === createForm.projectId)
-  }, [createForm.projectId, filters.services])
+    if (!createForm.projectId) return []
+    return services.filter((service) => service.project_id === createForm.projectId)
+  }, [createForm.projectId, services])
 
   const openCreateDialog = () => {
-    setCreateForm(getInitialForm(filters))
+    const defaultProjectId = projects[0]?.id ?? ''
+    const defaultServiceId = defaultProjectId
+      ? services.find((service) => service.project_id === defaultProjectId)?.id
+      : undefined
+
+    setCreateForm({
+      title: '',
+      projectId: defaultProjectId,
+      serviceIds: defaultServiceId ? [defaultServiceId] : []
+    })
     setCreateDialogOpen(true)
   }
 
@@ -194,11 +303,12 @@ export default function RequirementListPage() {
   }
 
   const handleFormProjectChange = (projectId: string) => {
-    const nextServiceIds = filters.services
-      .filter((service) => service.projectId === projectId)
-      .slice(0, 1)
-      .map((service) => service.id)
-    setCreateForm((prev) => ({ ...prev, projectId, serviceIds: nextServiceIds }))
+    const firstService = services.find((service) => service.project_id === projectId)
+    setCreateForm((prev) => ({
+      ...prev,
+      projectId,
+      serviceIds: firstService ? [firstService.id] : []
+    }))
   }
 
   const handleCreateRequirement = async () => {
@@ -278,12 +388,12 @@ export default function RequirementListPage() {
         </div>
         <div className="flex flex-wrap gap-2 md:items-center">
           <Select value={selectedProject} onValueChange={handleProjectChange}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="选择项目" />
+            <SelectTrigger className="w-40" disabled={optionsLoading || projects.length === 0}>
+              <SelectValue placeholder={optionsLoading ? '项目加载中...' : '选择项目'} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">全部项目</SelectItem>
-              {filters.projects.map((project) => (
+              {projects.map((project) => (
                 <SelectItem key={project.id} value={project.id}>
                   {project.name}
                 </SelectItem>
@@ -291,8 +401,11 @@ export default function RequirementListPage() {
             </SelectContent>
           </Select>
           <Select value={selectedService} onValueChange={(value) => setSelectedService(value)}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="选择服务" />
+            <SelectTrigger
+              className="w-40"
+              disabled={optionsLoading || (selectedProject !== 'ALL' && filteredServices.length === 0)}
+            >
+              <SelectValue placeholder={optionsLoading ? '服务加载中...' : '选择服务'} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">全部服务</SelectItem>
@@ -419,15 +532,19 @@ export default function RequirementListPage() {
             <div className="space-y-2">
               <label className="text-sm font-medium text-gray-700">关联项目</label>
               <Select value={createForm.projectId} onValueChange={handleFormProjectChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder="请选择项目" />
+                <SelectTrigger disabled={optionsLoading || projects.length === 0}>
+                  <SelectValue placeholder={optionsLoading ? '项目加载中...' : '请选择项目'} />
                 </SelectTrigger>
                 <SelectContent>
-                  {filters.projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.name}
-                    </SelectItem>
-                  ))}
+                  {projects.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-gray-400">暂无可用项目，请先创建项目</div>
+                  ) : (
+                    projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.name}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -435,7 +552,11 @@ export default function RequirementListPage() {
               <label className="text-sm font-medium text-gray-700">关联服务</label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="w-full justify-between">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-between"
+                    disabled={optionsLoading || !createForm.projectId}
+                  >
                     {createForm.serviceIds.length > 0 ? `已选择 ${createForm.serviceIds.length} 个服务` : '选择服务'}
                     <span className="text-xs text-gray-400">点击展开</span>
                   </Button>
