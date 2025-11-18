@@ -2461,6 +2461,67 @@ class K8sService {
     })
   }
 
+  async getServiceNetworkInfo(
+    serviceName: string,
+    namespace: string
+  ): Promise<
+    | {
+        serviceType: string | null
+        ports: Array<{
+          name: string | null
+          port: number | null
+          targetPort: number | null
+          nodePort: number | null
+          protocol: string | null
+        }>
+      }
+    | null
+  > {
+    const normalizedName = serviceName?.trim()
+    const targetNamespace = namespace?.trim() || 'default'
+
+    if (!normalizedName) {
+      return null
+    }
+
+    try {
+      const service = await this.coreApi.readNamespacedService({
+        name: normalizedName,
+        namespace: targetNamespace
+      })
+
+      const spec = service?.spec
+      if (!spec) {
+        return null
+      }
+
+      const ports = (spec.ports ?? []).map((port) => ({
+        name: port.name ?? null,
+        port: typeof port.port === 'number' ? port.port : null,
+        targetPort:
+          typeof port.targetPort === 'number'
+            ? port.targetPort
+            : typeof port.targetPort === 'string'
+              ? Number.parseInt(port.targetPort, 10) || null
+              : null,
+        nodePort: typeof port.nodePort === 'number' ? port.nodePort : null,
+        protocol: port.protocol ?? null
+      }))
+
+      return {
+        serviceType: spec.type ?? null,
+        ports
+      }
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) === 404) {
+        return null
+      }
+
+      const message = this.getErrorMessage(error)
+      throw new Error(`获取 Kubernetes Service 信息失败: ${message}`)
+    }
+  }
+
   private async createServiceFromConfig(
     service: Service,
     namespace: string,

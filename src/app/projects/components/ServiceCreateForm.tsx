@@ -73,7 +73,6 @@ interface ServiceFormValues {
   command?: string
   auto_deploy?: string
   version?: string
-  external_port?: string
   username?: string
   password?: string
   root_password?: string
@@ -684,9 +683,6 @@ export default function ServiceCreateForm({
         const parsedPort = data.port ? Number.parseInt(data.port, 10) : NaN
         const port = Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : metadata.defaultPort
 
-        const parsedExternalPort = data.external_port ? Number.parseInt(data.external_port, 10) : NaN
-        const externalPort = Number.isInteger(parsedExternalPort) && parsedExternalPort > 0 ? parsedExternalPort : undefined
-
         const version = (data.version ?? '').trim() || 'latest'
         const volumeSize = (data.volume_size ?? '').trim() || '10Gi'
 
@@ -703,11 +699,6 @@ export default function ServiceCreateForm({
         serviceData.database_type = selectedDatabaseType
         serviceData.version = version
         serviceData.port = port
-        if (externalPort !== undefined) {
-          serviceData.external_port = externalPort
-        } else {
-          delete serviceData.external_port
-        }
         serviceData.password = password
         serviceData.volume_size = volumeSize
         serviceData.internal_host = internalHost
@@ -1417,7 +1408,7 @@ export default function ServiceCreateForm({
           </TabsContent>
 
           <TabsContent value="advanced" className="space-y-4 mt-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="port">内部端口</Label>
                 <Input
@@ -1428,13 +1419,10 @@ export default function ServiceCreateForm({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="external_port">外部端口</Label>
-                <Input
-                  id="external_port"
-                  type="number"
-                  {...register('external_port')}
-                  placeholder="可选"
-                />
+                <Label>外部访问</Label>
+                <div className="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-sm text-gray-600">
+                  服务创建后可在详情页开启外部访问，平台将自动分配端口并避免冲突。
+                </div>
               </div>
             </div>
 

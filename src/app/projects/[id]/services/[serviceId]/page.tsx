@@ -304,6 +304,7 @@ export default function ServiceDetailPage() {
   const [deployImagePage, setDeployImagePage] = useState(1)
   const [deployImageTotal, setDeployImageTotal] = useState(0)
   const [deployImageLoading, setDeployImageLoading] = useState(false)
+  const [externalAccessUpdating, setExternalAccessUpdating] = useState(false)
   const [selectedDeployImageId, setSelectedDeployImageId] = useState<string | null>(null)
   const DEPLOY_IMAGE_PAGE_SIZE = 5
   const [k8sStatusInfo, setK8sStatusInfo] = useState<K8sServiceStatus | null>(null)
@@ -337,6 +338,31 @@ export default function ServiceDetailPage() {
   const isRedisDatabase = normalizedDatabaseType === DatabaseType.REDIS
   const supportedDatabaseType: SupportedDatabaseType | null =
     isMysqlDatabase || isRedisDatabase ? (normalizedDatabaseType as SupportedDatabaseType) : null
+  const databaseNetworkConfig = databaseService?.network_config as Record<string, unknown> | null
+  const databaseNetworkServiceType = (() => {
+    if (!databaseNetworkConfig || typeof databaseNetworkConfig !== 'object') {
+      return ''
+    }
+    const snakeCase = databaseNetworkConfig as { service_type?: unknown }
+    if (typeof snakeCase.service_type === 'string') {
+      return snakeCase.service_type
+    }
+    const camelCase = databaseNetworkConfig as { serviceType?: unknown }
+    if (typeof camelCase.serviceType === 'string') {
+      return camelCase.serviceType
+    }
+    return ''
+  })()
+  const externalAccessEnabled = useMemo(() => {
+    if (!databaseService) {
+      return false
+    }
+    const normalized = databaseNetworkServiceType.trim().toLowerCase()
+    if (normalized === 'nodeport') {
+      return true
+    }
+    return typeof databaseService.external_port === 'number' && databaseService.external_port > 0
+  }, [databaseNetworkServiceType, databaseService?.external_port, databaseService?.id])
   const databaseTypeLabel = supportedDatabaseType
     ? DATABASE_TYPE_METADATA[supportedDatabaseType].label
     : databaseService?.database_type ?? '-'
@@ -1814,6 +1840,29 @@ export default function ServiceDetailPage() {
     updatePortField(id, 'enableDomain', enabled)
   }
 
+  const handleToggleExternalAccess = useCallback(async () => {
+    if (!service || !service.id) {
+      toast.error('服务信息缺失，无法更新外部访问配置。')
+      return
+    }
+
+    const targetEnabled = !externalAccessEnabled
+
+    setExternalAccessUpdating(true)
+
+    try {
+      const result = await serviceSvc.toggleDatabaseExternalAccess(service.id, targetEnabled)
+      await loadService()
+      toast.success(result.message || (targetEnabled ? '外部访问已开启' : '已关闭外部访问'))
+      setIsEditing(false)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '更新外部访问配置失败'
+      toast.error(message)
+    } finally {
+      setExternalAccessUpdating(false)
+    }
+  }, [externalAccessEnabled, loadService, service, setIsEditing])
+
   // 添加环境变量
   const addEnvVar = () => {
     setEnvVars([...envVars, { key: '', value: '' }])
@@ -2929,29 +2978,75 @@ export default function ServiceDetailPage() {
                         </Button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label>内部端口</Label>
                         <Input value={databaseService?.port ?? '-'} disabled />
                       </div>
                       <div className="space-y-2">
-                        <Label>外部端口</Label>
-                        <Input
-                          type="number"
-                          value={
-                            isEditing
-                              ? editedDatabaseService?.external_port ?? ''
-                              : databaseService?.external_port ?? '-'
-                          }
-                          onChange={(e) => {
-                            const value = Number.parseInt(e.target.value, 10)
-                            setEditedService({
-                              ...editedService,
-                              external_port: Number.isNaN(value) ? undefined : value
-                            })
-                          }}
-                          disabled={!isEditing}
-                        />
+                        <Label>外部访问</Label>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={externalAccessEnabled ? 'default' : 'secondary'}>
+                                {externalAccessEnabled ? '已开启' : '未开启'}
+                              </Badge>
+                              {externalAccessEnabled && (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    value={databaseService?.external_port ?? '-'}
+                                    disabled
+                                    className="w-28"
+                                  />
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!(databaseService?.external_port && databaseService.external_port > 0)}
+                                    onClick={() => {
+                                      const value = databaseService?.external_port
+                                      if (!value) return
+                                      navigator.clipboard.writeText(String(value))
+                                      toast.success('已复制')
+                                    }}
+                                  >
+                                    复制
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                            {!externalAccessEnabled && (
+                              <span className="text-sm text-gray-500">当前未对外开放访问</span>
+                            )}
+                            {externalAccessEnabled && (
+                              <span className="text-xs text-gray-500">
+                                如需关闭，请点击下方按钮，Kubernetes 将释放分配的端口。
+                              </span>
+                            )}
+                          </div>
+                          <Button
+                            type="button"
+                            variant={externalAccessEnabled ? 'outline' : 'default'}
+                            onClick={() => {
+                              void handleToggleExternalAccess()
+                            }}
+                            disabled={externalAccessUpdating}
+                            className="gap-2"
+                          >
+                            {externalAccessUpdating ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Globe className="h-4 w-4" />
+                            )}
+                            {externalAccessUpdating
+                              ? '处理中…'
+                              : externalAccessEnabled
+                                ? '关闭外部访问'
+                                : '开启外部访问'}
+                          </Button>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          开启后平台会自动创建 NodePort 服务并回填外部访问端口。
+                        </p>
                       </div>
                     </div>
                   </CardContent>
