@@ -702,6 +702,16 @@ export default function ServiceCreateForm({
         serviceData.password = password
         serviceData.volume_size = volumeSize
         serviceData.internal_host = internalHost
+        serviceData.network_config = {
+          service_type: 'NodePort',
+          ports: [
+            {
+              container_port: port,
+              service_port: port,
+              protocol: 'TCP'
+            }
+          ]
+        }
 
         if (isMysql) {
           serviceData.username = username
