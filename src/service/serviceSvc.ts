@@ -421,6 +421,55 @@ export const serviceSvc = {
   },
 
   /**
+   * 切换数据库服务外部访问能力
+   */
+  async toggleDatabaseExternalAccess(
+    id: string,
+    enabled: boolean
+  ): Promise<{ service: Service; enabled: boolean; message?: string }> {
+    const response = await fetch(`${API_BASE}/${id}/external-access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    })
+
+    const payload = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+          ? ((payload as { error?: string }).error as string)
+          : '外部访问配置更新失败'
+      throw new Error(message)
+    }
+
+    const service =
+      payload && typeof payload === 'object' && 'service' in payload
+        ? ((payload as { service?: Service }).service ?? null)
+        : null
+
+    if (!service) {
+      throw new Error('外部访问配置已更新，但返回数据格式无效。')
+    }
+
+    const message =
+      payload && typeof payload === 'object' && typeof (payload as { message?: unknown }).message === 'string'
+        ? ((payload as { message?: string }).message as string)
+        : undefined
+
+    const responseEnabled =
+      payload && typeof payload === 'object' && typeof (payload as { enabled?: unknown }).enabled === 'boolean'
+        ? ((payload as { enabled?: boolean }).enabled as boolean)
+        : enabled
+
+    return {
+      service,
+      enabled: responseEnabled,
+      message
+    }
+  },
+
+  /**
    * 获取服务日志
    */
   async getServiceLogs(id: string, lines: number = 100): Promise<{ logs?: string; error?: string }> {

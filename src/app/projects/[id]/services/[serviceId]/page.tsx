@@ -33,8 +33,8 @@ import { findVolumeTemplate, generateNFSSubpath } from '@/lib/volume-templates'
 import { cn } from '@/lib/utils'
 import { parseImageReference, formatImageReference, isImageReferenceEqual } from '@/lib/service-image'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
-import { ServiceType, GitProvider } from '@/types/project'
-import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus } from '@/types/project'
+import { ServiceType, GitProvider, DatabaseType, DATABASE_TYPE_METADATA } from '@/types/project'
+import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus, DatabaseService, SupportedDatabaseType } from '@/types/project'
 import type { K8sServiceStatus } from '@/types/k8s'
 import type { GitProviderConfig } from '@/types/system'
 
@@ -218,6 +218,34 @@ const combineResourceValue = (value: string, unit: string) => {
   return `${trimmedValue}${unit}`
 }
 
+const buildDatabaseConnectionUrl = (
+  type: SupportedDatabaseType,
+  host: string,
+  port: number,
+  username: string,
+  password: string,
+  databaseName: string
+): string => {
+  const normalizedHost = host.trim()
+  const normalizedPort = Number.isFinite(port) ? port : Number(port)
+
+  if (!normalizedHost || !Number.isFinite(normalizedPort) || normalizedPort <= 0) {
+    return ''
+  }
+
+  if (type === DatabaseType.MYSQL) {
+    const encodedUser = encodeURIComponent(username || 'root')
+    const encodedPassword = encodeURIComponent(password || '')
+    const encodedDatabase = databaseName ? `/${encodeURIComponent(databaseName)}` : ''
+    return `mysql://${encodedUser}:${encodedPassword}@${normalizedHost}:${normalizedPort}${encodedDatabase}`
+  }
+
+  const encodedPassword = password ? encodeURIComponent(password) : ''
+  return encodedPassword
+    ? `redis://:${encodedPassword}@${normalizedHost}:${normalizedPort}`
+    : `redis://${normalizedHost}:${normalizedPort}`
+}
+
 export default function ServiceDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -276,6 +304,7 @@ export default function ServiceDetailPage() {
   const [deployImagePage, setDeployImagePage] = useState(1)
   const [deployImageTotal, setDeployImageTotal] = useState(0)
   const [deployImageLoading, setDeployImageLoading] = useState(false)
+  const [externalAccessUpdating, setExternalAccessUpdating] = useState(false)
   const [selectedDeployImageId, setSelectedDeployImageId] = useState<string | null>(null)
   const DEPLOY_IMAGE_PAGE_SIZE = 5
   const [k8sStatusInfo, setK8sStatusInfo] = useState<K8sServiceStatus | null>(null)
@@ -296,6 +325,61 @@ export default function ServiceDetailPage() {
     fullImage: null
   })
   const serviceType = service?.type
+
+  const databaseService =
+    serviceType === ServiceType.DATABASE && service ? (service as DatabaseService) : null
+  const editedDatabaseService =
+    isEditing && serviceType === ServiceType.DATABASE ? (editedService as DatabaseService) : null
+  const normalizedDatabaseType = (() => {
+    const rawType = databaseService?.database_type
+    return typeof rawType === 'string' ? rawType.toLowerCase() : ''
+  })()
+  const isMysqlDatabase = normalizedDatabaseType === DatabaseType.MYSQL
+  const isRedisDatabase = normalizedDatabaseType === DatabaseType.REDIS
+  const supportedDatabaseType: SupportedDatabaseType | null =
+    isMysqlDatabase || isRedisDatabase ? (normalizedDatabaseType as SupportedDatabaseType) : null
+  const databaseNetworkConfig = databaseService?.network_config as Record<string, unknown> | null
+  const databaseNetworkServiceType = (() => {
+    if (!databaseNetworkConfig || typeof databaseNetworkConfig !== 'object') {
+      return ''
+    }
+    const snakeCase = databaseNetworkConfig as { service_type?: unknown }
+    if (typeof snakeCase.service_type === 'string') {
+      return snakeCase.service_type
+    }
+    const camelCase = databaseNetworkConfig as { serviceType?: unknown }
+    if (typeof camelCase.serviceType === 'string') {
+      return camelCase.serviceType
+    }
+    return ''
+  })()
+  const externalAccessEnabled = useMemo(() => {
+    if (!databaseService) {
+      return false
+    }
+    const normalized = databaseNetworkServiceType.trim().toLowerCase()
+    if (normalized === 'nodeport') {
+      return true
+    }
+    return typeof databaseService.external_port === 'number' && databaseService.external_port > 0
+  }, [databaseNetworkServiceType, databaseService?.external_port, databaseService?.id])
+  const databaseTypeLabel = supportedDatabaseType
+    ? DATABASE_TYPE_METADATA[supportedDatabaseType].label
+    : databaseService?.database_type ?? '-'
+  const databaseUsernameValue =
+    (isEditing ? editedDatabaseService?.username : databaseService?.username) ?? ''
+  const databasePasswordValue =
+    (isEditing ? editedDatabaseService?.password : databaseService?.password) ?? ''
+  const databaseRootPasswordValue =
+    (isEditing ? editedDatabaseService?.root_password : databaseService?.root_password) ?? ''
+  const databaseNameInputValue = isEditing
+    ? editedDatabaseService?.database_name ?? databaseService?.database_name ?? ''
+    : databaseService?.database_name ?? '-'
+  const databaseVersionValue = databaseService?.version ?? 'latest'
+  const databaseVolumeSizeValue = databaseService?.volume_size ?? '10Gi'
+  const databaseVolumeSizeInputValue = isEditing
+    ? editedDatabaseService?.volume_size ?? databaseVolumeSizeValue
+    : databaseVolumeSizeValue
 
   useEffect(() => {
     if (!serviceType || serviceType.toLowerCase() !== ServiceType.APPLICATION) {
@@ -1597,6 +1681,108 @@ export default function ServiceDetailPage() {
         updateData.network_config = null
       }
 
+      if (service && service.type === ServiceType.DATABASE) {
+        const originalDatabase = service as DatabaseService
+        const rawType =
+          typeof updateData.database_type === 'string'
+            ? updateData.database_type.toLowerCase()
+            : typeof originalDatabase.database_type === 'string'
+              ? originalDatabase.database_type.toLowerCase()
+              : ''
+
+        const supportedType: SupportedDatabaseType | null =
+          rawType === DatabaseType.MYSQL || rawType === DatabaseType.REDIS
+            ? (rawType as SupportedDatabaseType)
+            : null
+
+        if (supportedType) {
+          updateData.database_type = supportedType
+
+          const hostValue =
+            typeof updateData.internal_host === 'string' && updateData.internal_host.trim().length > 0
+              ? updateData.internal_host.trim()
+              : originalDatabase.internal_host ?? ''
+          const portValue =
+            typeof updateData.port === 'number'
+              ? updateData.port
+              : typeof originalDatabase.port === 'number'
+                ? originalDatabase.port
+                : DATABASE_TYPE_METADATA[supportedType].defaultPort
+          let usernameValue =
+            supportedType === DatabaseType.MYSQL
+              ? (typeof updateData.username === 'string'
+                  ? updateData.username
+                  : originalDatabase.username ?? '')
+              : ''
+          let passwordValue =
+            typeof updateData.password === 'string'
+              ? updateData.password
+              : originalDatabase.password ?? ''
+          let databaseNameValue =
+            supportedType === DatabaseType.MYSQL
+              ? (typeof updateData.database_name === 'string'
+                  ? updateData.database_name
+                  : originalDatabase.database_name ?? '')
+              : ''
+
+          if (supportedType === DatabaseType.MYSQL) {
+            usernameValue = usernameValue.trim()
+            if (!usernameValue) {
+              usernameValue = (originalDatabase.username ?? 'admin').trim()
+            }
+            updateData.username = usernameValue
+
+            databaseNameValue = databaseNameValue.trim()
+            if (!databaseNameValue) {
+              databaseNameValue = (
+                originalDatabase.database_name ??
+                originalDatabase.name ??
+                ''
+              ).trim()
+            }
+            updateData.database_name = databaseNameValue
+
+            if (typeof updateData.root_password === 'string') {
+              updateData.root_password = updateData.root_password.trim()
+            }
+          } else {
+            delete updateData.username
+            delete updateData.database_name
+            delete updateData.root_password
+            usernameValue = ''
+            databaseNameValue = ''
+          }
+
+          if (typeof updateData.password === 'string') {
+            passwordValue = updateData.password.trim()
+            updateData.password = passwordValue
+          } else {
+            passwordValue = passwordValue.trim()
+          }
+
+          const connectionUrl = buildDatabaseConnectionUrl(
+            supportedType,
+            hostValue,
+            portValue,
+            usernameValue,
+            passwordValue,
+            databaseNameValue
+          )
+
+          if (connectionUrl) {
+            updateData.internal_connection_url = connectionUrl
+          }
+
+          if (hostValue) {
+            updateData.internal_host = hostValue
+          } else {
+            delete updateData.internal_host
+          }
+        } else {
+          delete updateData.database_type
+        }
+      }
+
       if (service && service.type === ServiceType.IMAGE) {
         const imageService = service as any
         const rawImage =
@@ -1653,6 +1839,29 @@ export default function ServiceDetailPage() {
   const handleToggleDomain = (id: string, enabled: boolean) => {
     updatePortField(id, 'enableDomain', enabled)
   }
+
+  const handleToggleExternalAccess = useCallback(async () => {
+    if (!service || !service.id) {
+      toast.error('服务信息缺失，无法更新外部访问配置。')
+      return
+    }
+
+    const targetEnabled = !externalAccessEnabled
+
+    setExternalAccessUpdating(true)
+
+    try {
+      const result = await serviceSvc.toggleDatabaseExternalAccess(service.id, targetEnabled)
+      await loadService()
+      toast.success(result.message || (targetEnabled ? '外部访问已开启' : '已关闭外部访问'))
+      setIsEditing(false)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '更新外部访问配置失败'
+      toast.error(message)
+    } finally {
+      setExternalAccessUpdating(false)
+    }
+  }, [externalAccessEnabled, loadService, service, setIsEditing])
 
   // 添加环境变量
   const addEnvVar = () => {
@@ -2527,32 +2736,201 @@ export default function ServiceDetailPage() {
                     <CardTitle>数据库信息</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label>数据库类型</Label>
-                        <Input value={service.database_type?.toUpperCase() || '-'} disabled />
+                        <Input value={databaseTypeLabel} disabled />
                       </div>
                       <div className="space-y-2">
                         <Label>版本</Label>
-                        <Input value={service.version || 'latest'} disabled />
+                        <Input
+                          value={
+                            isEditing
+                              ? editedDatabaseService?.version ?? databaseVersionValue
+                              : databaseVersionValue
+                          }
+                          onChange={(e) => setEditedService({ ...editedService, version: e.target.value })}
+                          disabled={!isEditing}
+                        />
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>数据库名</Label>
-                        <Input value={service.database_name || '-'} disabled />
-                      </div>
+                    <div
+                      className={`grid gap-4 grid-cols-1 ${isMysqlDatabase ? 'md:grid-cols-2' : ''}`}
+                    >
+                      {isMysqlDatabase && (
+                        <div className="space-y-2">
+                          <Label>数据库名</Label>
+                          <Input
+                            value={databaseNameInputValue}
+                            onChange={(e) =>
+                              setEditedService({ ...editedService, database_name: e.target.value })
+                            }
+                            disabled={!isEditing}
+                            placeholder="与服务名相同"
+                          />
+                        </div>
+                      )}
                       <div className="space-y-2">
                         <Label>存储大小</Label>
                         <Input
-                          value={isEditing ? (editedService.volume_size || '10Gi') : (service.volume_size || '10Gi')}
-                          onChange={(e) => setEditedService({ ...editedService, volume_size: e.target.value })}
+                          value={databaseVolumeSizeInputValue}
+                          onChange={(e) =>
+                            setEditedService({ ...editedService, volume_size: e.target.value })
+                          }
                           disabled={!isEditing}
                         />
                       </div>
                     </div>
                   </CardContent>
                 </Card>
+
+                {(isMysqlDatabase || isRedisDatabase) && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>认证信息</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {isMysqlDatabase && (
+                        <>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label>用户名</Label>
+                              {isEditing ? (
+                                <Input
+                                  value={databaseUsernameValue}
+                                  onChange={(e) =>
+                                    setEditedService({ ...editedService, username: e.target.value })
+                                  }
+                                />
+                              ) : (
+                                <div className="flex gap-2">
+                                  <Input value={databaseUsernameValue || '-'} disabled className="flex-1" />
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!databaseUsernameValue}
+                                    onClick={() => {
+                                      const value = databaseUsernameValue
+                                      if (!value) return
+                                      navigator.clipboard.writeText(value)
+                                      toast.success('已复制')
+                                    }}
+                                  >
+                                    复制
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                            <div className="space-y-2">
+                              <Label>数据库密码</Label>
+                              {isEditing ? (
+                                <Input
+                                  type="text"
+                                  value={databasePasswordValue}
+                                  onChange={(e) =>
+                                    setEditedService({ ...editedService, password: e.target.value })
+                                  }
+                                />
+                              ) : (
+                                <div className="flex gap-2">
+                                  <Input
+                                    type="password"
+                                    value={databasePasswordValue || '-'}
+                                    disabled
+                                    className="flex-1"
+                                  />
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!databasePasswordValue}
+                                    onClick={() => {
+                                      const value = databasePasswordValue
+                                      if (!value) return
+                                      navigator.clipboard.writeText(value)
+                                      toast.success('已复制')
+                                    }}
+                                  >
+                                    复制
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Root 密码</Label>
+                            {isEditing ? (
+                              <Input
+                                type="text"
+                                value={databaseRootPasswordValue}
+                                onChange={(e) =>
+                                  setEditedService({ ...editedService, root_password: e.target.value })
+                                }
+                              />
+                            ) : (
+                              <div className="flex gap-2">
+                                <Input
+                                  type="password"
+                                  value={databaseRootPasswordValue || '-'}
+                                  disabled
+                                  className="flex-1"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!databaseRootPasswordValue}
+                                  onClick={() => {
+                                    const value = databaseRootPasswordValue
+                                    if (!value) return
+                                    navigator.clipboard.writeText(value)
+                                    toast.success('已复制')
+                                  }}
+                                >
+                                  复制
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                      {isRedisDatabase && (
+                        <div className="space-y-2">
+                          <Label>访问密码</Label>
+                          {isEditing ? (
+                            <Input
+                              type="text"
+                              value={databasePasswordValue}
+                              onChange={(e) =>
+                                setEditedService({ ...editedService, password: e.target.value })
+                              }
+                            />
+                          ) : (
+                            <div className="flex gap-2">
+                              <Input
+                                type="password"
+                                value={databasePasswordValue || '-'}
+                                disabled
+                                className="flex-1"
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!databasePasswordValue}
+                                onClick={() => {
+                                  const value = databasePasswordValue
+                                  if (!value) return
+                                  navigator.clipboard.writeText(value)
+                                  toast.success('已复制')
+                                }}
+                              >
+                                复制
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
 
                 <Card>
                   <CardHeader>
@@ -2562,11 +2940,17 @@ export default function ServiceDetailPage() {
                     <div className="space-y-2">
                       <Label>内部主机</Label>
                       <div className="flex gap-2">
-                        <Input value={service.internal_host || '-'} disabled className="flex-1" />
-                        <Button size="sm" variant="outline" onClick={() => {
-                          navigator.clipboard.writeText(service.internal_host || '')
-                          toast.success('已复制')
-                        }}>
+                        <Input value={databaseService?.internal_host || '-'} disabled className="flex-1" />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const value = databaseService?.internal_host ?? ''
+                            if (!value) return
+                            navigator.clipboard.writeText(value)
+                            toast.success('已复制')
+                          }}
+                        >
                           复制
                         </Button>
                       </div>
@@ -2575,32 +2959,94 @@ export default function ServiceDetailPage() {
                       <Label>连接 URL</Label>
                       <div className="flex gap-2">
                         <Input
-                          value={service.internal_connection_url || '-'}
+                          value={databaseService?.internal_connection_url || '-'}
                           disabled
                           className="flex-1"
                           type="password"
                         />
-                        <Button size="sm" variant="outline" onClick={() => {
-                          navigator.clipboard.writeText(service.internal_connection_url || '')
-                          toast.success('已复制')
-                        }}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const value = databaseService?.internal_connection_url ?? ''
+                            if (!value) return
+                            navigator.clipboard.writeText(value)
+                            toast.success('已复制')
+                          }}
+                        >
                           复制
                         </Button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label>内部端口</Label>
-                        <Input value={service.port || '-'} disabled />
+                        <Input value={databaseService?.port ?? '-'} disabled />
                       </div>
                       <div className="space-y-2">
-                        <Label>外部端口</Label>
-                        <Input
-                          type="number"
-                          value={isEditing ? (editedService.external_port || '') : (service.external_port || '-')}
-                          onChange={(e) => setEditedService({ ...editedService, external_port: parseInt(e.target.value) })}
-                          disabled={!isEditing}
-                        />
+                        <Label>外部访问</Label>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={externalAccessEnabled ? 'default' : 'secondary'}>
+                                {externalAccessEnabled ? '已开启' : '未开启'}
+                              </Badge>
+                              {externalAccessEnabled && (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    value={databaseService?.external_port ?? '-'}
+                                    disabled
+                                    className="w-28"
+                                  />
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!(databaseService?.external_port && databaseService.external_port > 0)}
+                                    onClick={() => {
+                                      const value = databaseService?.external_port
+                                      if (!value) return
+                                      navigator.clipboard.writeText(String(value))
+                                      toast.success('已复制')
+                                    }}
+                                  >
+                                    复制
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                            {!externalAccessEnabled && (
+                              <span className="text-sm text-gray-500">当前未对外开放访问</span>
+                            )}
+                            {externalAccessEnabled && (
+                              <span className="text-xs text-gray-500">
+                                如需关闭，请点击下方按钮，Kubernetes 将释放分配的端口。
+                              </span>
+                            )}
+                          </div>
+                          <Button
+                            type="button"
+                            variant={externalAccessEnabled ? 'outline' : 'default'}
+                            onClick={() => {
+                              void handleToggleExternalAccess()
+                            }}
+                            disabled={externalAccessUpdating}
+                            className="gap-2"
+                          >
+                            {externalAccessUpdating ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Globe className="h-4 w-4" />
+                            )}
+                            {externalAccessUpdating
+                              ? '处理中…'
+                              : externalAccessEnabled
+                                ? '关闭外部访问'
+                                : '开启外部访问'}
+                          </Button>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          开启后平台会自动创建 NodePort 服务并回填外部访问端口。
+                        </p>
                       </div>
                     </div>
                   </CardContent>

@@ -24,6 +24,15 @@ export enum DatabaseType {
   MARIADB = 'mariadb'
 }
 
+export const SUPPORTED_DATABASE_TYPES = [DatabaseType.MYSQL, DatabaseType.REDIS] as const
+
+export type SupportedDatabaseType = (typeof SUPPORTED_DATABASE_TYPES)[number]
+
+export const DATABASE_TYPE_METADATA: Record<SupportedDatabaseType, { label: string; defaultPort: number }> = {
+  [DatabaseType.MYSQL]: { label: 'MySQL', defaultPort: 3306 },
+  [DatabaseType.REDIS]: { label: 'Redis', defaultPort: 6379 }
+} as const
+
 // Git 提供商
 export enum GitProvider {
   GITHUB = 'github',

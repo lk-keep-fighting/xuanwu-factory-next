@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { ServiceType, SUPPORTED_DATABASE_TYPES } from '@/types/project'
 import {
   ServicePayload,
   sanitizeServiceData,
@@ -87,6 +88,21 @@ export async function POST(request: NextRequest) {
   payload.project_id = projectId
   payload.name = name
   payload.type = normalizedType
+
+  if (normalizedType === ServiceType.DATABASE) {
+    const rawDatabaseType =
+      typeof body.database_type === 'string' ? body.database_type.trim().toLowerCase() : ''
+    const matchedDatabaseType = SUPPORTED_DATABASE_TYPES.find((type) => type === rawDatabaseType)
+
+    if (!matchedDatabaseType) {
+      return NextResponse.json(
+        { error: '当前仅支持创建 MySQL 或 Redis 数据库服务。' },
+        { status: 400 }
+      )
+    }
+
+    payload.database_type = matchedDatabaseType
+  }
 
   try {
     const service = await prisma.service.create({
