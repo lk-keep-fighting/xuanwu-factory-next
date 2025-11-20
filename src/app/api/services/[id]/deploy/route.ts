@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { k8sService } from '@/lib/k8s'
-import { ServiceType, type Service, type ApplicationService } from '@/types/project'
+import { ServiceType, type Service, type ApplicationService, DATABASE_TYPE_METADATA, type SupportedDatabaseType } from '@/types/project'
 
 const resolveDeploymentTag = (service: Service): string | null => {
   switch (service.type) {
@@ -20,6 +20,8 @@ const resolveDeploymentTag = (service: Service): string | null => {
 type DeployRequestPayload = {
   service_image_id?: string
 }
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export async function POST(
   request: NextRequest,
@@ -197,6 +199,133 @@ export async function POST(
         where: { id },
         data: { status: 'running' }
       })
+
+      if ((typedService.type ?? '').toLowerCase() === ServiceType.DATABASE) {
+        const shouldEnsureNodePort = (() => {
+          const config = typedService.network_config as
+            | { service_type?: unknown; serviceType?: unknown }
+            | null
+            | undefined
+
+          if (!config || typeof config !== 'object') {
+            return true
+          }
+
+          const rawType = (config.service_type ?? config.serviceType)
+          if (typeof rawType === 'string') {
+            return rawType.trim().toLowerCase() === 'nodeport'
+          }
+
+          return true
+        })()
+
+        if (shouldEnsureNodePort) {
+          const basePort = (() => {
+            if (typeof typedService.port === 'number' && Number.isInteger(typedService.port) && typedService.port > 0) {
+              return typedService.port
+            }
+
+            const numeric = Number((typedService as { port?: unknown }).port)
+            if (Number.isInteger(numeric) && numeric > 0) {
+              return numeric
+            }
+
+            const rawType = ((typedService as { database_type?: string }).database_type ?? '').trim().toLowerCase()
+            const metadata = DATABASE_TYPE_METADATA[rawType as SupportedDatabaseType]
+            return metadata?.defaultPort ?? 3306
+          })()
+
+          const serviceName = serviceWithoutProject.name?.trim()
+          let assignedNodePort: number | null = null
+
+          if (serviceName) {
+            const maxAttempts = 6
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+              try {
+                const networkInfo = await k8sService.getServiceNetworkInfo(serviceName, namespace)
+                const matchedPort = networkInfo?.ports?.find((port) => {
+                  const targetPort = typeof port.targetPort === 'number' ? port.targetPort : port.port
+                  return typeof targetPort === 'number' && targetPort === basePort
+                })
+
+                if (matchedPort?.nodePort) {
+                  assignedNodePort = matchedPort.nodePort
+                  break
+                }
+              } catch (networkError) {
+                console.error('[Services][Deploy] 获取数据库服务网络信息失败:', networkError)
+                break
+              }
+
+              await wait(500)
+            }
+          }
+
+          if (assignedNodePort) {
+            const finalNetworkConfig = (() => {
+              const existing = typedService.network_config
+
+              if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+                const portsValue = (existing as { ports?: unknown }).ports
+                if (Array.isArray(portsValue) && portsValue.length > 0) {
+                  const existingPort = portsValue[0] as Record<string, unknown>
+                  const protocolRaw = existingPort.protocol
+                  const portProtocol = typeof protocolRaw === 'string' && protocolRaw.trim().toUpperCase() === 'UDP'
+                    ? 'UDP'
+                    : 'TCP'
+                  const nameRaw = existingPort.name
+                  const portName = typeof nameRaw === 'string' && nameRaw.trim().length ? nameRaw.trim() : undefined
+                  const domainValue = existingPort.domain
+                  const domain = domainValue && typeof domainValue === 'object' ? domainValue : undefined
+
+                  return {
+                    service_type: 'NodePort' as const,
+                    ports: [
+                      {
+                        ...(portName ? { name: portName } : {}),
+                        container_port: basePort,
+                        service_port: basePort,
+                        protocol: portProtocol,
+                        node_port: assignedNodePort,
+                        ...(domain ? { domain } : {})
+                      }
+                    ]
+                  }
+                }
+              }
+
+              return {
+                service_type: 'NodePort' as const,
+                ports: [
+                  {
+                    container_port: basePort,
+                    service_port: basePort,
+                    protocol: 'TCP' as const,
+                    node_port: assignedNodePort
+                  }
+                ]
+              }
+            })()
+
+            try {
+              await prisma.service.update({
+                where: { id },
+                data: {
+                  port: basePort,
+                  external_port: assignedNodePort,
+                  network_config: finalNetworkConfig as Prisma.JsonValue
+                }
+              })
+
+              typedService.port = basePort
+              typedService.external_port = assignedNodePort
+              typedService.network_config = finalNetworkConfig as typeof typedService.network_config
+            } catch (syncError: unknown) {
+              console.error('[Services][Deploy] 同步数据库外部端口信息失败:', syncError)
+            }
+          }
+        }
+      }
 
       if (deploymentRecordId) {
         await prisma.deployment.update({

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { ServiceType, SUPPORTED_DATABASE_TYPES } from '@/types/project'
+import { ServiceType, SUPPORTED_DATABASE_TYPES, DATABASE_TYPE_METADATA } from '@/types/project'
 import {
   ServicePayload,
   sanitizeServiceData,
@@ -102,6 +102,46 @@ export async function POST(request: NextRequest) {
     }
 
     payload.database_type = matchedDatabaseType
+
+    const metadata = DATABASE_TYPE_METADATA[matchedDatabaseType]
+
+    let normalizedPort: number
+    if (typeof payload.port === 'number') {
+      normalizedPort = payload.port
+    } else if (typeof body.port === 'number') {
+      normalizedPort = body.port
+    } else if (typeof body.port === 'string') {
+      const parsed = Number.parseInt(body.port, 10)
+      normalizedPort = Number.isInteger(parsed) && parsed > 0 ? parsed : metadata.defaultPort
+    } else {
+      const parsedPayloadPort = Number(payload.port)
+      normalizedPort = Number.isInteger(parsedPayloadPort) && parsedPayloadPort > 0 ? parsedPayloadPort : metadata.defaultPort
+    }
+
+    if (!Number.isInteger(normalizedPort) || normalizedPort <= 0) {
+      normalizedPort = metadata.defaultPort
+    }
+
+    payload.port = normalizedPort
+
+    if (typeof payload.volume_size !== 'string' || !payload.volume_size.trim()) {
+      payload.volume_size = '10Gi'
+    } else {
+      payload.volume_size = payload.volume_size.trim()
+    }
+
+    if (!payload.network_config) {
+      payload.network_config = {
+        service_type: 'NodePort',
+        ports: [
+          {
+            container_port: normalizedPort,
+            service_port: normalizedPort,
+            protocol: 'TCP'
+          }
+        ]
+      } as Prisma.JsonValue
+    }
   }
 
   try {

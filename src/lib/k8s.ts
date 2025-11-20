@@ -9,7 +9,9 @@ import {
   type ImageService,
   type CreateServiceRequest,
   ServiceType,
-  type NetworkConfigV2
+  type NetworkConfigV2,
+  DATABASE_TYPE_METADATA,
+  type SupportedDatabaseType
 } from '@/types/project'
 import type { K8sImportCandidate, K8sWorkloadKind, K8sImportVolumeInfo } from '@/types/k8s'
 import * as yaml from 'js-yaml'
@@ -40,6 +42,11 @@ type IngressRuleConfig = {
 type ImageInfo = {
   repository: string
   tag: string
+}
+
+const DATABASE_DATA_PATHS: Partial<Record<SupportedDatabaseType, string>> = {
+  mysql: '/var/lib/mysql',
+  redis: '/data'
 }
 
 class K8sService {
@@ -277,63 +284,244 @@ class K8sService {
     }
 
     const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
+    const effectiveNetwork =
+      normalizedNetwork ??
+      (service.type === ServiceType.DATABASE
+        ? this.buildDefaultDatabaseNetworkConfig(service as DatabaseService)
+        : null)
 
-    const deployment: k8s.V1Deployment = {
-      metadata: {
-        name: service.name,
-        labels: { app: service.name },
-        namespace: targetNamespace
-      },
-      spec: {
-        replicas,
-        selector: {
-          matchLabels: { app: service.name }
+    if (service.type === ServiceType.DATABASE) {
+      await this.deployDatabaseStatefulSet(service as DatabaseService, targetNamespace, effectiveNetwork)
+    } else {
+      const deployment: k8s.V1Deployment = {
+        metadata: {
+          name: service.name,
+          labels: { app: service.name },
+          namespace: targetNamespace
         },
-        template: {
-          metadata: {
-            labels: { app: service.name }
+        spec: {
+          replicas,
+          selector: {
+            matchLabels: { app: service.name }
           },
-          spec: {
-            containers: [{
-              name: service.name,
-              image: this.getImage(service),
-              ports: normalizedNetwork
-                ? normalizedNetwork.ports.map((port, index) => ({
-                    containerPort: port.containerPort,
-                    protocol: port.protocol,
-                    name: `port-${port.containerPort}-${index}`
-                  }))
-                : undefined,
-              env: this.buildEnvVars(service),
-              resources: this.buildResources(service.resource_limits),
-              volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
-            }],
-            volumes: this.buildVolumes(service.volumes)
+          template: {
+            metadata: {
+              labels: { app: service.name }
+            },
+            spec: {
+              containers: [{
+                name: service.name,
+                image: this.getImage(service),
+                ports: effectiveNetwork
+                  ? effectiveNetwork.ports.map((port, index) => ({
+                      containerPort: port.containerPort,
+                      protocol: port.protocol,
+                      name: `port-${port.containerPort}-${index}`
+                    }))
+                  : undefined,
+                env: this.buildEnvVars(service),
+                resources: this.buildResources(service.resource_limits),
+                volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
+              }],
+              volumes: this.buildVolumes(service.volumes)
+            }
           }
+        }
+      }
+
+      try {
+        await this.appsApi.createNamespacedDeployment({ namespace: targetNamespace, body: deployment })
+      } catch (error: unknown) {
+        if (this.getStatusCode(error) === 409) {
+          await this.appsApi.replaceNamespacedDeployment({
+            name: service.name,
+            namespace: targetNamespace,
+            body: deployment
+          })
+        } else {
+          throw error
         }
       }
     }
 
+    // 使用 network_config 创建 K8s Service
+    if (effectiveNetwork) {
+      await this.createServiceFromConfig(service, targetNamespace, effectiveNetwork)
+    }
+
+    return { success: true }
+  }
+
+  private buildDefaultDatabaseNetworkConfig(service: DatabaseService): NormalizedNetworkConfig {
+    const port = this.resolveDatabasePort(service)
+    const nodePort = typeof service.external_port === 'number' && service.external_port > 0
+      ? service.external_port
+      : undefined
+
+    return {
+      serviceType: 'NodePort',
+      ports: [
+        {
+          containerPort: port,
+          servicePort: port,
+          protocol: 'TCP',
+          ...(nodePort ? { nodePort } : {})
+        }
+      ]
+    }
+  }
+
+  private resolveDatabasePort(service: DatabaseService): number {
+    if (typeof service.port === 'number' && Number.isInteger(service.port) && service.port > 0) {
+      return service.port
+    }
+
+    const parsedPort = Number(service.port)
+    if (Number.isInteger(parsedPort) && parsedPort > 0) {
+      return parsedPort
+    }
+
+    const rawType = (service.database_type ?? '').toLowerCase()
+    const metadata = DATABASE_TYPE_METADATA[rawType as SupportedDatabaseType]
+
+    if (metadata) {
+      return metadata.defaultPort
+    }
+
+    return 3306
+  }
+
+  private getDatabaseDataMountPath(service: DatabaseService): string | null {
+    const rawType = (service.database_type ?? '').toLowerCase()
+    if (!rawType) {
+      return null
+    }
+
+    return DATABASE_DATA_PATHS[rawType as SupportedDatabaseType] ?? null
+  }
+
+  private async deployDatabaseStatefulSet(
+    service: DatabaseService,
+    namespace: string,
+    networkConfig: NormalizedNetworkConfig | null
+  ): Promise<void> {
+    const serviceName = service.name?.trim()
+
+    if (!serviceName) {
+      throw new Error('数据库服务名称缺失，无法部署。')
+    }
+
+    const containerPorts = networkConfig
+      ? networkConfig.ports.map((port, index) => ({
+          containerPort: port.containerPort,
+          protocol: port.protocol,
+          name: `port-${port.containerPort}-${index}`
+        }))
+      : undefined
+
+    const rawReplicas = (service as { replicas?: number | null }).replicas
+    const replicas = typeof rawReplicas === 'number' && Number.isInteger(rawReplicas) && rawReplicas > 0
+      ? rawReplicas
+      : 1
+
+    const baseVolumeMounts = this.buildVolumeMounts(service.volumes, serviceName) ?? []
+    const volumeMounts = [...baseVolumeMounts]
+
+    const volumeSize = typeof service.volume_size === 'string' ? service.volume_size.trim() : ''
+    const dataMountPath = this.getDatabaseDataMountPath(service)
+
+    let volumeClaimTemplates: k8s.V1PersistentVolumeClaim[] | undefined
+
+    if (volumeSize && dataMountPath) {
+      volumeClaimTemplates = [
+        {
+          metadata: {
+            name: 'data',
+            labels: {
+              app: serviceName,
+              'managed-by': 'xuanwu-platform'
+            }
+          },
+          spec: {
+            accessModes: ['ReadWriteOnce'],
+            resources: {
+              requests: {
+                storage: volumeSize
+              }
+            }
+          }
+        }
+      ]
+
+      const hasDataMount = volumeMounts.some((mount) => mount.name === 'data' || mount.mountPath === dataMountPath)
+      if (!hasDataMount) {
+        volumeMounts.push({
+          name: 'data',
+          mountPath: dataMountPath
+        })
+      }
+    }
+
+    const statefulSet: k8s.V1StatefulSet = {
+      metadata: {
+        name: serviceName,
+        namespace,
+        labels: {
+          app: serviceName,
+          'managed-by': 'xuanwu-platform'
+        }
+      },
+      spec: {
+        serviceName: serviceName,
+        replicas,
+        selector: {
+          matchLabels: { app: serviceName }
+        },
+        template: {
+          metadata: {
+            labels: { app: serviceName }
+          },
+          spec: {
+            containers: [
+              {
+                name: serviceName,
+                image: this.getImage(service),
+                ports: containerPorts,
+                env: this.buildEnvVars(service),
+                resources: this.buildResources(service.resource_limits),
+                volumeMounts: volumeMounts.length ? volumeMounts : undefined
+              }
+            ],
+            volumes: this.buildVolumes(service.volumes)
+          }
+        },
+        ...(volumeClaimTemplates ? { volumeClaimTemplates } : {})
+      }
+    }
+
     try {
-      await this.appsApi.createNamespacedDeployment({ namespace: targetNamespace, body: deployment })
+      await this.appsApi.createNamespacedStatefulSet({ namespace, body: statefulSet })
     } catch (error: unknown) {
       if (this.getStatusCode(error) === 409) {
-        await this.appsApi.replaceNamespacedDeployment({
-          name: service.name,
-          namespace: targetNamespace,
-          body: deployment
+        const existing = await this.appsApi.readNamespacedStatefulSet({ name: serviceName, namespace })
+        const resourceVersion = existing.metadata?.resourceVersion
+        const updatedStatefulSet: k8s.V1StatefulSet = {
+          ...statefulSet,
+          metadata: {
+            ...statefulSet.metadata,
+            resourceVersion
+          }
+        }
+
+        await this.appsApi.replaceNamespacedStatefulSet({
+          name: serviceName,
+          namespace,
+          body: updatedStatefulSet
         })
       } else {
         throw error
       }
     }
-
-    // 使用 network_config 创建 K8s Service
-    if (normalizedNetwork) {
-      await this.createServiceFromConfig(service, targetNamespace, normalizedNetwork)
-    }
-
-    return { success: true }
   }
 
   /**
@@ -368,9 +556,42 @@ class K8sService {
       })
 
       return { success: true, message: '服务已停止' }
-    } catch (error: unknown) {
-      console.error('Failed to stop service:', error)
-      throw new Error(`停止服务失败: ${this.getErrorMessage(error)}`)
+    } catch (deploymentError: unknown) {
+      if (this.getStatusCode(deploymentError) !== 404) {
+        console.error('Failed to stop service:', deploymentError)
+        throw new Error(`停止服务失败: ${this.getErrorMessage(deploymentError)}`)
+      }
+    }
+
+    try {
+      const statefulSet = await this.appsApi.readNamespacedStatefulSet({ name: serviceName, namespace: targetNamespace })
+      const originalReplicas = statefulSet.spec?.replicas || 1
+
+      const updatedStatefulSet = {
+        ...statefulSet,
+        metadata: {
+          ...statefulSet.metadata,
+          annotations: {
+            ...statefulSet.metadata?.annotations,
+            'xuanwu.io/original-replicas': String(originalReplicas)
+          }
+        },
+        spec: {
+          ...statefulSet.spec,
+          replicas: 0
+        }
+      }
+
+      await this.appsApi.replaceNamespacedStatefulSet({
+        name: serviceName,
+        namespace: targetNamespace,
+        body: updatedStatefulSet as k8s.V1StatefulSet
+      })
+
+      return { success: true, message: '服务已停止' }
+    } catch (statefulError: unknown) {
+      console.error('Failed to stop service:', statefulError)
+      throw new Error(`停止服务失败: ${this.getErrorMessage(statefulError)}`)
     }
   }
 
@@ -390,7 +611,7 @@ class K8sService {
         ...deployment,
         spec: {
           ...deployment.spec,
-          replicas: originalReplicas
+          replicas: Number.isInteger(originalReplicas) && originalReplicas > 0 ? originalReplicas : 1
         }
       }
 
@@ -401,9 +622,39 @@ class K8sService {
       })
 
       return { success: true, message: '服务已启动' }
-    } catch (error: unknown) {
-      console.error('Failed to start service:', error)
-      throw new Error(`启动服务失败: ${this.getErrorMessage(error)}`)
+    } catch (deploymentError: unknown) {
+      if (this.getStatusCode(deploymentError) !== 404) {
+        console.error('Failed to start service:', deploymentError)
+        throw new Error(`启动服务失败: ${this.getErrorMessage(deploymentError)}`)
+      }
+    }
+
+    try {
+      const statefulSet = await this.appsApi.readNamespacedStatefulSet({ name: serviceName, namespace: targetNamespace })
+      const annotationValue = statefulSet.metadata?.annotations?.['xuanwu.io/original-replicas'] || '1'
+      const parsedAnnotation = Number.parseInt(annotationValue, 10)
+      const originalReplicas = Number.isInteger(parsedAnnotation) && parsedAnnotation > 0
+        ? parsedAnnotation
+        : 1
+
+      const updatedStatefulSet = {
+        ...statefulSet,
+        spec: {
+          ...statefulSet.spec,
+          replicas: originalReplicas
+        }
+      }
+
+      await this.appsApi.replaceNamespacedStatefulSet({
+        name: serviceName,
+        namespace: targetNamespace,
+        body: updatedStatefulSet as k8s.V1StatefulSet
+      })
+
+      return { success: true, message: '服务已启动' }
+    } catch (statefulError: unknown) {
+      console.error('Failed to start service:', statefulError)
+      throw new Error(`启动服务失败: ${this.getErrorMessage(statefulError)}`)
     }
   }
 
@@ -445,10 +696,59 @@ class K8sService {
 
       console.log(`[K8s] ✅ 服务 ${serviceName} 重启成功`)
       return { success: true, message: '服务正在重启' }
-    } catch (error: unknown) {
-      console.error(`[K8s] ❌ 重启服务失败: ${serviceName}`, error)
+    } catch (deploymentError: unknown) {
+      if (this.getStatusCode(deploymentError) !== 404) {
+        console.error(`[K8s] ❌ 重启服务失败: ${serviceName}`, deploymentError)
 
-      const rawMessage = this.getErrorMessage(error)
+        const rawMessage = this.getErrorMessage(deploymentError)
+        let errorMessage = rawMessage
+
+        if (rawMessage.includes('HTTP protocol is not allowed')) {
+          errorMessage = 'Kubernetes 配置错误：API Server 地址不可访问。请检查 kubeconfig 中的 server 地址是否正确。'
+        } else if (rawMessage.includes('ENOTFOUND') || rawMessage.includes('ECONNREFUSED')) {
+          errorMessage = '无法连接到 Kubernetes 集群。请确保集群运行中且网络可访问。'
+        } else if (rawMessage.includes('404') || rawMessage.includes('not found')) {
+          errorMessage = `服务 "${serviceName}" 在 Kubernetes 集群中不存在。请先部署服务。`
+        }
+
+        throw new Error(errorMessage)
+      }
+    }
+
+    try {
+      console.log(`[K8s] 尝试以 StatefulSet 方式重启服务: ${serviceName}`)
+
+      const statefulSet = await this.appsApi.readNamespacedStatefulSet({ name: serviceName, namespace: targetNamespace })
+
+      const updatedStatefulSet = {
+        ...statefulSet,
+        spec: {
+          ...statefulSet.spec,
+          template: {
+            ...statefulSet.spec?.template,
+            metadata: {
+              ...statefulSet.spec?.template?.metadata,
+              annotations: {
+                ...statefulSet.spec?.template?.metadata?.annotations,
+                'xuanwu.io/restartedAt': new Date().toISOString()
+              }
+            }
+          }
+        }
+      }
+
+      await this.appsApi.replaceNamespacedStatefulSet({
+        name: serviceName,
+        namespace: targetNamespace,
+        body: updatedStatefulSet as k8s.V1StatefulSet
+      })
+
+      console.log(`[K8s] ✅ StatefulSet 服务 ${serviceName} 重启成功`)
+      return { success: true, message: '服务正在重启' }
+    } catch (statefulError: unknown) {
+      console.error(`[K8s] ❌ StatefulSet 重启服务失败: ${serviceName}`, statefulError)
+
+      const rawMessage = this.getErrorMessage(statefulError)
       let errorMessage = rawMessage
 
       if (rawMessage.includes('HTTP protocol is not allowed')) {
@@ -487,9 +787,34 @@ class K8sService {
       })
 
       return { success: true, message: `服务已扩缩至 ${replicas} 个副本` }
-    } catch (error: unknown) {
-      console.error('Failed to scale service:', error)
-      throw new Error(`扩缩容失败: ${this.getErrorMessage(error)}`)
+    } catch (deploymentError: unknown) {
+      if (this.getStatusCode(deploymentError) !== 404) {
+        console.error('Failed to scale service:', deploymentError)
+        throw new Error(`扩缩容失败: ${this.getErrorMessage(deploymentError)}`)
+      }
+    }
+
+    try {
+      const statefulSet = await this.appsApi.readNamespacedStatefulSet({ name: serviceName, namespace: targetNamespace })
+
+      const updatedStatefulSet = {
+        ...statefulSet,
+        spec: {
+          ...statefulSet.spec,
+          replicas
+        }
+      }
+
+      await this.appsApi.replaceNamespacedStatefulSet({
+        name: serviceName,
+        namespace: targetNamespace,
+        body: updatedStatefulSet as k8s.V1StatefulSet
+      })
+
+      return { success: true, message: `服务已扩缩至 ${replicas} 个副本` }
+    } catch (statefulError: unknown) {
+      console.error('Failed to scale service:', statefulError)
+      throw new Error(`扩缩容失败: ${this.getErrorMessage(statefulError)}`)
     }
   }
 
@@ -504,6 +829,15 @@ class K8sService {
     } catch (error: unknown) {
       if (this.getStatusCode(error) !== 404) {
         console.error('Failed to delete deployment:', error)
+        throw new Error(`删除服务失败: ${this.getErrorMessage(error)}`)
+      }
+    }
+
+    try {
+      await this.appsApi.deleteNamespacedStatefulSet({ name: serviceName, namespace: targetNamespace })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        console.error('Failed to delete statefulset:', error)
         throw new Error(`删除服务失败: ${this.getErrorMessage(error)}`)
       }
     }
@@ -551,11 +885,42 @@ class K8sService {
         updatedReplicas,
         conditions: deployment.status?.conditions || []
       }
-    } catch (error: unknown) {
-      if (this.getStatusCode(error) === 404) {
+    } catch (deploymentError: unknown) {
+      if (this.getStatusCode(deploymentError) !== 404) {
+        return { status: 'error' as const, error: this.getErrorMessage(deploymentError) }
+      }
+    }
+
+    try {
+      const statefulSet = await this.appsApi.readNamespacedStatefulSet({ name: serviceName, namespace: targetNamespace })
+      const replicas = statefulSet.spec?.replicas || 0
+      const readyReplicas = statefulSet.status?.readyReplicas || 0
+      const currentReplicas = statefulSet.status?.currentReplicas || readyReplicas
+      const updatedReplicas = statefulSet.status?.updatedReplicas || readyReplicas
+
+      let status: 'running' | 'pending' | 'stopped' | 'error' = 'pending'
+
+      if (replicas === 0) {
+        status = 'stopped'
+      } else if (readyReplicas === replicas && currentReplicas === replicas) {
+        status = 'running'
+      } else if (readyReplicas === 0) {
+        status = 'error'
+      }
+
+      return {
+        status,
+        replicas,
+        availableReplicas: currentReplicas,
+        readyReplicas,
+        updatedReplicas,
+        conditions: statefulSet.status?.conditions || []
+      }
+    } catch (statefulError: unknown) {
+      if (this.getStatusCode(statefulError) === 404) {
         return { status: 'error' as const, error: '服务不存在' }
       }
-      return { status: 'error' as const, error: this.getErrorMessage(error) }
+      return { status: 'error' as const, error: this.getErrorMessage(statefulError) }
     }
   }
 
