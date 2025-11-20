@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 
-import { Prisma } from '@prisma/client'
+import { Prisma, type PrismaClient } from '@prisma/client'
 
 import { prisma } from '@/lib/prisma'
 import { aiMockStore } from '@/service/aiMockStore'
@@ -211,8 +211,11 @@ const syncServiceLinks = async (
   }
 }
 
-const fetchRequirementDetail = async (id: string): Promise<RequirementDetail | null> => {
-  const record = await prisma.requirement.findUnique({
+const fetchRequirementDetail = async (
+  id: string,
+  dbClient: Prisma.TransactionClient | PrismaClient = prisma
+): Promise<RequirementDetail | null> => {
+  const record = await dbClient.requirement.findUnique({
     where: { id },
     include: {
       project: true,
@@ -296,7 +299,7 @@ export const requirementService = {
         })
       }
 
-      const detail = await fetchRequirementDetail(requirement.id)
+      const detail = await fetchRequirementDetail(requirement.id, tx)
       if (!detail) {
         throw new Error('创建需求失败')
       }
@@ -335,7 +338,7 @@ export const requirementService = {
         await syncServiceLinks(tx, id, resolved)
       }
 
-      return fetchRequirementDetail(id)
+      return fetchRequirementDetail(id, tx)
     })
   },
 
