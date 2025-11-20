@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -317,6 +317,12 @@ export default function ServiceDetailPage() {
   const [branchError, setBranchError] = useState<string | null>(null)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
   const [branchSearch, setBranchSearch] = useState('')
+  const [hasPendingNetworkDeploy, setHasPendingNetworkDeploy] = useState(false)
+  const [pendingNetworkDeployMarkedAt, setPendingNetworkDeployMarkedAt] = useState<number | null>(null)
+  const pendingNetworkDeployStorageKey = useMemo(
+    () => (serviceId ? `service:${serviceId}:pending-network-deploy` : null),
+    [serviceId]
+  )
   const branchInitialLoadRef = useRef(false)
   const gitBranchRef = useRef<string>('')
   const imageSelectionManuallyChangedRef = useRef(false)
@@ -325,6 +331,74 @@ export default function ServiceDetailPage() {
     fullImage: null
   })
   const serviceType = service?.type
+
+  useEffect(() => {
+    if (!pendingNetworkDeployStorageKey) {
+      setHasPendingNetworkDeploy(false)
+      setPendingNetworkDeployMarkedAt(null)
+      return
+    }
+
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    try {
+      const rawValue = window.localStorage.getItem(pendingNetworkDeployStorageKey)
+      if (!rawValue) {
+        setHasPendingNetworkDeploy(false)
+        setPendingNetworkDeployMarkedAt(null)
+        return
+      }
+      const parsed = JSON.parse(rawValue) as { markedAt?: number }
+      if (parsed && typeof parsed.markedAt === 'number') {
+        setHasPendingNetworkDeploy(true)
+        setPendingNetworkDeployMarkedAt(parsed.markedAt)
+      } else {
+        setHasPendingNetworkDeploy(true)
+        setPendingNetworkDeployMarkedAt(null)
+      }
+    } catch (error) {
+      console.error('[ServiceDetail] Failed to read pending network deploy flag:', error)
+      setHasPendingNetworkDeploy(false)
+      setPendingNetworkDeployMarkedAt(null)
+    }
+  }, [pendingNetworkDeployStorageKey])
+
+  const persistPendingNetworkDeployFlag = useCallback(
+    (markedAt: number | null) => {
+      if (!pendingNetworkDeployStorageKey || typeof window === 'undefined') {
+        return
+      }
+
+      try {
+        if (markedAt === null) {
+          window.localStorage.removeItem(pendingNetworkDeployStorageKey)
+        } else {
+          window.localStorage.setItem(
+            pendingNetworkDeployStorageKey,
+            JSON.stringify({ markedAt })
+          )
+        }
+      } catch (error) {
+        console.error('[ServiceDetail] Failed to persist pending network deploy flag:', error)
+      }
+    },
+    [pendingNetworkDeployStorageKey]
+  )
+
+  const markPendingNetworkDeploy = useCallback(() => {
+    const timestamp = Date.now()
+    setHasPendingNetworkDeploy(true)
+    setPendingNetworkDeployMarkedAt(timestamp)
+    persistPendingNetworkDeployFlag(timestamp)
+  }, [persistPendingNetworkDeployFlag])
+
+  const clearPendingNetworkDeploy = useCallback(() => {
+    setHasPendingNetworkDeploy(false)
+    setPendingNetworkDeployMarkedAt(null)
+    persistPendingNetworkDeployFlag(null)
+  }, [persistPendingNetworkDeployFlag])
 
   const databaseService =
     serviceType === ServiceType.DATABASE && service ? (service as DatabaseService) : null
@@ -712,6 +786,38 @@ export default function ServiceDetailPage() {
 
   const ongoingDeploymentFullImage = ongoingDeploymentInfo?.fullImage ?? null
   const latestDeployment = useMemo(() => deployments[0] ?? null, [deployments])
+
+  useEffect(() => {
+    if (!hasPendingNetworkDeploy) {
+      return
+    }
+
+    const deploymentTimestamp = (() => {
+      if (latestSuccessfulDeployment?.completed_at) {
+        const parsed = Date.parse(latestSuccessfulDeployment.completed_at)
+        return Number.isNaN(parsed) ? null : parsed
+      }
+      if (latestSuccessfulDeployment?.created_at) {
+        const parsed = Date.parse(latestSuccessfulDeployment.created_at)
+        return Number.isNaN(parsed) ? null : parsed
+      }
+      return null
+    })()
+
+    if (!deploymentTimestamp) {
+      return
+    }
+
+    if (!pendingNetworkDeployMarkedAt || deploymentTimestamp > pendingNetworkDeployMarkedAt) {
+      clearPendingNetworkDeploy()
+    }
+  }, [
+    clearPendingNetworkDeploy,
+    hasPendingNetworkDeploy,
+    latestSuccessfulDeployment?.completed_at,
+    latestSuccessfulDeployment?.created_at,
+    pendingNetworkDeployMarkedAt
+  ])
 
   const activeServiceImageRecord = currentDeploymentInfo?.record ?? null
   const activeServiceImageId = currentDeploymentInfo?.id ?? activeServiceImageRecord?.id ?? null
@@ -1576,6 +1682,7 @@ export default function ServiceDetailPage() {
     if (!serviceId) return
 
     try {
+      const previousNetworkConfigSerialized = JSON.stringify(service?.network_config ?? null)
       // 合并环境变量
       const envVarsObj: Record<string, string> = {}
       envVars.forEach(({ key, value }) => {
@@ -1680,6 +1787,9 @@ export default function ServiceDetailPage() {
       } else {
         updateData.network_config = null
       }
+
+      const nextNetworkConfigSerialized = JSON.stringify(updateData.network_config ?? null)
+      const networkConfigChanged = previousNetworkConfigSerialized !== nextNetworkConfigSerialized
 
       if (service && service.type === ServiceType.DATABASE) {
         const originalDatabase = service as DatabaseService
@@ -1807,6 +1917,12 @@ export default function ServiceDetailPage() {
 
       await serviceSvc.updateService(serviceId, updateData)
       toast.success('配置保存成功')
+
+      if (networkConfigChanged) {
+        markPendingNetworkDeploy()
+        toast.info('网络配置已更新，需要重新部署后才能生效。')
+      }
+
       setIsEditing(false)
       loadService()
     } catch (error: any) {
@@ -3272,6 +3388,29 @@ export default function ServiceDetailPage() {
 
           {/* 网络配置 */}
           <TabsContent value="network" className="space-y-6">
+            {hasPendingNetworkDeploy ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-amber-900 font-semibold">
+                  <AlertTriangle className="h-4 w-4" />
+                  网络配置尚未部署到 Kubernetes
+                </div>
+                <p className="text-sm text-amber-900/80">
+                  保存的网络配置会在执行部署后才会生效
+                  {service?.type === ServiceType.APPLICATION ? '，应用服务需要先选择镜像版本' : ''}
+                  ，点击下方按钮即可立即触发部署。
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-2 w-fit"
+                  onClick={handleDeploy}
+                  disabled={deploying}
+                >
+                  <Rocket className="w-4 h-4" />
+                  立即部署
+                </Button>
+              </div>
+            ) : null}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
