@@ -331,6 +331,7 @@ export default function ServiceDetailPage() {
     fullImage: null
   })
   const serviceType = service?.type
+  const isApplicationService = serviceType === ServiceType.APPLICATION
 
   useEffect(() => {
     if (!pendingNetworkDeployStorageKey) {
@@ -1665,6 +1666,9 @@ export default function ServiceDetailPage() {
   }
 
   const handleOpenBuildDialog = () => {
+    if (!isApplicationService) {
+      return
+    }
     const generated = generateImageTag()
     setCustomBuildTag(generated)
     setBuildDialogOpen(true)
@@ -1676,6 +1680,12 @@ export default function ServiceDetailPage() {
       setCustomBuildTag(generated)
     }
   }, [buildTagType, buildDialogOpen])
+
+  useEffect(() => {
+    if (!isApplicationService && buildDialogOpen) {
+      setBuildDialogOpen(false)
+    }
+  }, [isApplicationService, buildDialogOpen])
 
   // 保存配置
   const handleSave = async () => {
@@ -2145,15 +2155,17 @@ export default function ServiceDetailPage() {
 
             {/* 操作按钮 */}
             <div className="flex items-center gap-2">
-              <Button
-                onClick={handleOpenBuildDialog}
-                disabled={buildingImage}
-                variant="outline"
-                className="gap-2"
-              >
-                <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
-                {buildingImage ? '构建中...' : '构建'}
-              </Button>
+              {isApplicationService && (
+                <Button
+                  onClick={handleOpenBuildDialog}
+                  disabled={buildingImage}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
+                  {buildingImage ? '构建中...' : '构建'}
+                </Button>
+              )}
               {/* 部署按钮 - 所有服务类型都支持 */}
               <Button
                 onClick={handleDeploy}
@@ -3789,74 +3801,76 @@ export default function ServiceDetailPage() {
       </div>
 
       {/* 构建对话框 */}
-      <Dialog open={buildDialogOpen} onOpenChange={setBuildDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>触发镜像构建</DialogTitle>
-            <DialogDescription>
-              配置构建参数，平台将调用 Jenkins 构建新镜像。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label className="text-sm font-medium text-gray-700">构建分支</Label>
-              <Input
-                value={(service?.type === 'application' ? (service as any)?.git_branch : '') || 'main'}
-                disabled
-                className="bg-gray-50"
-              />
-              <p className="text-xs text-gray-500">使用当前配置的分支进行构建</p>
+      {isApplicationService && (
+        <Dialog open={buildDialogOpen} onOpenChange={setBuildDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>触发镜像构建</DialogTitle>
+              <DialogDescription>
+                配置构建参数，平台将调用 Jenkins 构建新镜像。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-gray-700">构建分支</Label>
+                <Input
+                  value={(service?.type === 'application' ? (service as any)?.git_branch : '') || 'main'}
+                  disabled
+                  className="bg-gray-50"
+                />
+                <p className="text-xs text-gray-500">使用当前配置的分支进行构建</p>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-gray-700">镜像版本类型</Label>
+                <Select
+                  value={buildTagType}
+                  onValueChange={(value: 'dev' | 'test' | 'release') => setBuildTagType(value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="dev">开发版 (dev-*)</SelectItem>
+                    <SelectItem value="test">测试版 (test-*)</SelectItem>
+                    <SelectItem value="release">发布版 (release-*)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500">
+                  {buildTagType === 'dev' && '用于开发环境的镜像版本'}
+                  {buildTagType === 'test' && '用于测试环境的镜像版本'}
+                  {buildTagType === 'release' && '用于生产环境的镜像版本'}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
+                <Input
+                  value={customBuildTag}
+                  onChange={(e) => setCustomBuildTag(e.target.value)}
+                  placeholder="例如：dev-20241112120000"
+                />
+                <p className="text-xs text-gray-500">系统已自动生成标签，可根据需要修改</p>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label className="text-sm font-medium text-gray-700">镜像版本类型</Label>
-              <Select
-                value={buildTagType}
-                onValueChange={(value: 'dev' | 'test' | 'release') => setBuildTagType(value)}
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setBuildDialogOpen(false)}
+                disabled={buildingImage}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="dev">开发版 (dev-*)</SelectItem>
-                  <SelectItem value="test">测试版 (test-*)</SelectItem>
-                  <SelectItem value="release">发布版 (release-*)</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-gray-500">
-                {buildTagType === 'dev' && '用于开发环境的镜像版本'}
-                {buildTagType === 'test' && '用于测试环境的镜像版本'}
-                {buildTagType === 'release' && '用于生产环境的镜像版本'}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
-              <Input
-                value={customBuildTag}
-                onChange={(e) => setCustomBuildTag(e.target.value)}
-                placeholder="例如：dev-20241112120000"
-              />
-              <p className="text-xs text-gray-500">系统已自动生成标签，可根据需要修改</p>
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setBuildDialogOpen(false)}
-              disabled={buildingImage}
-            >
-              取消
-            </Button>
-            <Button
-              onClick={handleBuildImage}
-              disabled={buildingImage || !customBuildTag.trim()}
-              className="gap-2"
-            >
-              <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
-              {buildingImage ? '构建中...' : '开始构建'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                取消
+              </Button>
+              <Button
+                onClick={handleBuildImage}
+                disabled={buildingImage || !customBuildTag.trim()}
+                className="gap-2"
+              >
+                <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
+                {buildingImage ? '构建中...' : '开始构建'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* 部署对话框 */}
       <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>
