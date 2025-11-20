@@ -12,9 +12,9 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # 配置变量（请根据实际情况修改）
-# 默认 IMAGE_TAG 使用当前日期和时分秒（格式：YYYYMMDD-HHMMSS），例如 20251103-141530
+# 默认 IMAGE_TAG 使用当前日期和时分秒（格式：YYMMDD-HHMMSS），例如 251103-141530
 IMAGE_NAME="${IMAGE_NAME:-xuanwu-factory}"
-IMAGE_TAG="${IMAGE_TAG:-$(date +%Y%m%d-%H%M%S)}"
+IMAGE_TAG="${IMAGE_TAG:-$(date +%y%m%d-%H%M%S)}"
 REGISTRY="${REGISTRY:-nexus.aimstek.cn}"  # 替换为实际的镜像仓库地址
 FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
 PUSH_IMAGE="${PUSH_IMAGE:-true}"  # 是否推送镜像到仓库
