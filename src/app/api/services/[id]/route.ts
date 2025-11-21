@@ -119,12 +119,16 @@ export async function PUT(
         return NextResponse.json({ error: '仅未部署的服务可以重命名。' }, { status: 400 })
       }
 
-      const deploymentCount = await prisma.deployment.count({
-        where: { service_id: id }
+      const successfulDeployment = await prisma.deployment.findFirst({
+        where: {
+          service_id: id,
+          status: 'success'
+        },
+        select: { id: true }
       })
 
-      if (deploymentCount > 0) {
-        return NextResponse.json({ error: '服务已有部署记录，无法重命名。' }, { status: 400 })
+      if (successfulDeployment) {
+        return NextResponse.json({ error: '服务已有成功部署记录，无法重命名。' }, { status: 400 })
       }
     } else {
       delete updateData.name
