@@ -2178,18 +2178,18 @@ export default function ServiceDetailPage() {
               <div className="flex flex-wrap items-start gap-3">
                 <div className="flex items-center gap-2">
                   <h1 className="text-2xl font-bold text-gray-900">{service.name}</h1>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="gap-1 text-sm text-gray-600"
-                    onClick={handleOpenRenameDialog}
-                    disabled={!canRenameService}
-                    title={canRenameService ? undefined : renameDisabledReason}
-                  >
-                    <PencilLine className="h-4 w-4" />
-                    重命名
-                  </Button>
+                  {canRenameService ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1 text-sm text-gray-600"
+                      onClick={handleOpenRenameDialog}
+                    >
+                      <PencilLine className="h-4 w-4" />
+                      重命名
+                    </Button>
+                  ) : null}
                 </div>
                 <Badge variant="outline">
                   {service.type === ServiceType.APPLICATION && 'Application'}
