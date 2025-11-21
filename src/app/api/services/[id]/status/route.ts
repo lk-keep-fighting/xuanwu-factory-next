@@ -43,13 +43,29 @@ export async function GET(
       )
     }
 
+    const normalizedDbStatus = (service.status ?? '').trim().toLowerCase()
+    const isPendingStatus = normalizedDbStatus.length === 0 || normalizedDbStatus === 'pending'
+
+    if (isPendingStatus) {
+      return NextResponse.json({
+        status: 'pending',
+        replicas: 0,
+        availableReplicas: 0,
+        readyReplicas: 0,
+        updatedReplicas: 0,
+        conditions: [],
+        namespace,
+        serviceName,
+        dbStatus: service.status ?? null
+      })
+    }
+
     const statusResult = await k8sService.getServiceStatus(serviceName, namespace)
 
     // 自动同步K8s状态到数据库
     const k8sStatus = statusResult.status?.toLowerCase()?.trim()
-    const dbStatus = service.status?.toLowerCase()?.trim()
-    
-    if (k8sStatus && k8sStatus !== dbStatus) {
+
+    if (k8sStatus && k8sStatus !== normalizedDbStatus) {
       // 异步更新数据库状态，不阻塞响应
       prisma.service.update({
         where: { id },
