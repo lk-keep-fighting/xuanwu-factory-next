@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { AlertTriangle, ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink, PencilLine } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -310,6 +310,9 @@ export default function ServiceDetailPage() {
   const [deleteActionLoading, setDeleteActionLoading] = useState<DeleteMode | null>(null)
   const [externalAccessUpdating, setExternalAccessUpdating] = useState(false)
   const [selectedDeployImageId, setSelectedDeployImageId] = useState<string | null>(null)
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameLoading, setRenameLoading] = useState(false)
   const DEPLOY_IMAGE_PAGE_SIZE = 5
   const [k8sStatusInfo, setK8sStatusInfo] = useState<K8sServiceStatus | null>(null)
   const [k8sStatusLoading, setK8sStatusLoading] = useState(false)
@@ -2019,6 +2022,45 @@ export default function ServiceDetailPage() {
     }
   }, [externalAccessEnabled, loadService, service, setIsEditing])
 
+  const handleOpenRenameDialog = () => {
+    if (!service) {
+      return
+    }
+    setRenameValue(service.name ?? '')
+    setRenameDialogOpen(true)
+  }
+
+  const handleConfirmRename = async () => {
+    if (!serviceId || !service) {
+      return
+    }
+
+    const nextName = renameValue.trim()
+    if (!nextName) {
+      toast.error('服务名称不能为空')
+      return
+    }
+
+    const currentName = (service.name || '').trim()
+    if (nextName === currentName) {
+      toast.info('名称未发生变化')
+      setRenameDialogOpen(false)
+      return
+    }
+
+    try {
+      setRenameLoading(true)
+      await serviceSvc.updateService(serviceId, { name: nextName })
+      toast.success('服务名称已更新')
+      setRenameDialogOpen(false)
+      await loadService()
+    } catch (error: any) {
+      toast.error('重命名失败：' + (error?.message || '未知错误'))
+    } finally {
+      setRenameLoading(false)
+    }
+  }
+
   // 添加环境变量
   const addEnvVar = () => {
     setEnvVars([...envVars, { key: '', value: '' }])
@@ -2102,6 +2144,25 @@ export default function ServiceDetailPage() {
   const statusMismatch = normalizedK8sStatus !== null && normalizedK8sStatus !== normalizedDbStatus
   const k8sStatusErrorMessage = typeof k8sStatusError === 'string' ? k8sStatusError.trim() : ''
   const hasK8sStatusError = k8sStatusErrorMessage.length > 0
+  const renameDeploymentsError = typeof deploymentsError === 'string' ? deploymentsError.trim() : ''
+  const renameDisabledReason = (() => {
+    if (normalizedDbStatus !== 'pending') {
+      return '仅未部署的服务可以重命名。'
+    }
+    if (deploymentsLoading) {
+      return '正在加载部署信息，请稍后重试。'
+    }
+    if (renameDeploymentsError) {
+      return '部署信息加载失败，暂时无法重命名。'
+    }
+    if (deployments.length > 0) {
+      return '服务已有部署记录，无法重命名。'
+    }
+    return ''
+  })()
+  const canRenameService = renameDisabledReason === ''
+  const renameInputTrimmed = renameValue.trim()
+  const renameConfirmDisabled = renameLoading || !renameInputTrimmed || renameInputTrimmed === (service.name ?? '')
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -2120,8 +2181,22 @@ export default function ServiceDetailPage() {
                 返回
               </Button>
 
-              <div className="flex items-start gap-3">
-                <h1 className="text-2xl font-bold text-gray-900">{service.name}</h1>
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-bold text-gray-900">{service.name}</h1>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1 text-sm text-gray-600"
+                    onClick={handleOpenRenameDialog}
+                    disabled={!canRenameService}
+                    title={canRenameService ? undefined : renameDisabledReason}
+                  >
+                    <PencilLine className="h-4 w-4" />
+                    重命名
+                  </Button>
+                </div>
                 <Badge variant="outline">
                   {service.type === ServiceType.APPLICATION && 'Application'}
                   {service.type === ServiceType.DATABASE && 'Database'}
@@ -3834,6 +3909,55 @@ export default function ServiceDetailPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* 重命名服务 */}
+      <Dialog
+        open={renameDialogOpen}
+        onOpenChange={(open) => {
+          if (renameLoading) return
+          setRenameDialogOpen(open)
+          if (open) {
+            setRenameValue(service.name ?? '')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>重命名服务</DialogTitle>
+            <DialogDescription>仅支持尚未部署的服务，重命名前请确认新名称符合命名规范。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="rename-input">新的服务名称</Label>
+              <Input
+                id="rename-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="输入新的服务名称"
+                autoFocus
+              />
+            </div>
+            <p className="text-xs text-gray-500">重命名后需重新使用此名称进行部署和后续管理。</p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setRenameDialogOpen(false)}
+              disabled={renameLoading}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleConfirmRename}
+              disabled={renameConfirmDisabled}
+              className="gap-2"
+            >
+              {renameLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {renameLoading ? '保存中...' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 构建对话框 */}
       {isApplicationService && (

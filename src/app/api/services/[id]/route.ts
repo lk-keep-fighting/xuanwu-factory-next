@@ -63,6 +63,8 @@ export async function PUT(
 
   const body = rawBody as ServicePayload
   const updateData = sanitizeServiceData(body)
+  let renameRequested = false
+  let requestedName: string | null = null
 
   if (Object.prototype.hasOwnProperty.call(body, 'type')) {
     const normalizedType = normalizeServiceType(body.type)
@@ -83,6 +85,8 @@ export async function PUT(
     }
 
     updateData.name = body.name.trim()
+    requestedName = updateData.name
+    renameRequested = true
   }
 
   if (Object.prototype.hasOwnProperty.call(body, 'project_id')) {
@@ -91,6 +95,40 @@ export async function PUT(
     }
 
     updateData.project_id = body.project_id.trim()
+  }
+
+  if (renameRequested && requestedName) {
+    const existingService = await prisma.service.findUnique({
+      where: { id },
+      select: {
+        name: true,
+        status: true
+      }
+    })
+
+    if (!existingService) {
+      return NextResponse.json({ error: '服务不存在' }, { status: 404 })
+    }
+
+    const currentName = existingService.name?.trim() ?? ''
+
+    if (currentName !== requestedName) {
+      const normalizedStatus = (existingService.status ?? '').trim().toLowerCase()
+
+      if (normalizedStatus !== 'pending') {
+        return NextResponse.json({ error: '仅未部署的服务可以重命名。' }, { status: 400 })
+      }
+
+      const deploymentCount = await prisma.deployment.count({
+        where: { service_id: id }
+      })
+
+      if (deploymentCount > 0) {
+        return NextResponse.json({ error: '服务已有部署记录，无法重命名。' }, { status: 400 })
+      }
+    } else {
+      delete updateData.name
+    }
   }
 
   const dataEntries = Object.entries(updateData).filter(([, value]) => value !== undefined)
