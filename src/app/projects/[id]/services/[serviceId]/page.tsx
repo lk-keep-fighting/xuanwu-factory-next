@@ -115,6 +115,8 @@ type DeploymentImageInfo = {
   record: ServiceImageRecord | null
 }
 
+type DeleteMode = 'deployment-only' | 'full'
+
 const generatePortId = () =>
   typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()
@@ -304,6 +306,8 @@ export default function ServiceDetailPage() {
   const [deployImagePage, setDeployImagePage] = useState(1)
   const [deployImageTotal, setDeployImageTotal] = useState(0)
   const [deployImageLoading, setDeployImageLoading] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteActionLoading, setDeleteActionLoading] = useState<DeleteMode | null>(null)
   const [externalAccessUpdating, setExternalAccessUpdating] = useState(false)
   const [selectedDeployImageId, setSelectedDeployImageId] = useState<string | null>(null)
   const DEPLOY_IMAGE_PAGE_SIZE = 5
@@ -1416,18 +1420,38 @@ export default function ServiceDetailPage() {
   }
 
   // 删除服务
-  const handleDelete = async () => {
-    if (!serviceId || !confirm('确定要删除这个服务吗？')) return
+  const handleDelete = async (mode: DeleteMode) => {
+    if (!serviceId) return
+
+    setDeleteActionLoading(mode)
 
     try {
-      const result = await serviceSvc.deleteService(serviceId)
-      toast.success(result.message || '服务删除成功')
+      const result = await serviceSvc.deleteService(
+        serviceId,
+        mode === 'deployment-only' ? { mode } : undefined
+      )
+      const fallbackMessage =
+        mode === 'deployment-only' ? '部署删除成功，服务配置已保留。' : '服务删除成功'
+
+      toast.success(result.message || fallbackMessage)
       if (result.warning) {
         toast.warning(result.warning)
       }
-      router.push(`/projects/${projectId}`)
+
+      if (mode === 'deployment-only') {
+        await loadService()
+        await fetchK8sStatus({ showToast: true })
+        await loadDeployments()
+        setDeleteDialogOpen(false)
+      } else {
+        setDeleteDialogOpen(false)
+        router.push(`/projects/${projectId}`)
+      }
     } catch (error: any) {
-      toast.error('删除失败：' + error.message)
+      const message = error?.message || '未知错误'
+      toast.error('删除失败：' + message)
+    } finally {
+      setDeleteActionLoading((current) => (current === mode ? null : current))
     }
   }
 
@@ -2198,7 +2222,12 @@ export default function ServiceDetailPage() {
                 <RefreshCw className="w-4 h-4" />
                 重启
               </Button>
-              <Button onClick={handleDelete} variant="destructive" className="gap-2">
+              <Button
+                onClick={() => setDeleteDialogOpen(true)}
+                variant="destructive"
+                className="gap-2"
+                disabled={Boolean(deleteActionLoading)}
+              >
                 <Trash2 className="w-4 h-4" />
                 删除
               </Button>
@@ -4008,6 +4037,96 @@ export default function ServiceDetailPage() {
             >
               <Rocket className={`w-4 h-4 ${deploying ? 'animate-spin' : ''}`} />
               {deploying ? '部署中...' : '开始部署'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 删除服务对话框 */}
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          if (deleteActionLoading) return
+          setDeleteDialogOpen(open)
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>删除服务</DialogTitle>
+            <DialogDescription>请选择删除方式，操作不可逆，请谨慎执行。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-gray-200 p-2 text-gray-700">
+                  <HardDrive className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-gray-900">删除部署，保留配置</p>
+                  <p className="text-sm text-gray-500">
+                    仅删除 Kubernetes 集群中的部署与服务资源，保留数据库中的服务配置，稍后可以重新部署。
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full justify-center gap-2"
+                onClick={() => void handleDelete('deployment-only')}
+                disabled={Boolean(deleteActionLoading)}
+              >
+                {deleteActionLoading === 'deployment-only' ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    正在删除部署...
+                  </>
+                ) : (
+                  <>
+                    <HardDrive className="h-4 w-4" />
+                    删除部署
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="rounded-lg border border-red-200 bg-red-50/80 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-red-100 p-2 text-red-600">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-red-700">完全删除</p>
+                  <p className="text-sm text-red-600">
+                    删除 Kubernetes 资源并移除数据库中的服务配置，操作完成后无法恢复。
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                className="w-full justify-center gap-2"
+                onClick={() => void handleDelete('full')}
+                disabled={Boolean(deleteActionLoading)}
+              >
+                {deleteActionLoading === 'full' ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    正在完全删除...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    完全删除
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+          <DialogFooter className="justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setDeleteDialogOpen(false)}
+              disabled={Boolean(deleteActionLoading)}
+            >
+              取消
             </Button>
           </DialogFooter>
         </DialogContent>

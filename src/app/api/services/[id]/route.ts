@@ -129,10 +129,16 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const searchParams = request.nextUrl.searchParams
+  const modeParam = (searchParams.get('mode') || '').trim().toLowerCase()
+  const preserveParam = (searchParams.get('preserve_config') || '').trim().toLowerCase()
+  const preserveConfig = ['true', '1', 'yes', 'y', 'on'].includes(preserveParam)
+  const deleteMode: 'deployment-only' | 'full' =
+    modeParam === 'deployment-only' || preserveConfig ? 'deployment-only' : 'full'
 
   let serviceWithProject: ServiceWithProject | null = null
 
@@ -201,6 +207,14 @@ export async function DELETE(
         { status: 500 }
       )
     }
+  }
+
+  if (deleteMode === 'deployment-only') {
+    return NextResponse.json({
+      success: true,
+      message: '部署删除成功，服务配置已保留。',
+      warning
+    })
   }
 
   try {
