@@ -36,7 +36,8 @@ import {
   Service,
   SUPPORTED_DATABASE_TYPES,
   DATABASE_TYPE_METADATA,
-  type SupportedDatabaseType
+  type SupportedDatabaseType,
+  type NetworkConfigV2
 } from '@/types/project'
 import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Database as DatabaseIcon, Plus, Trash2, Loader2, RefreshCcw } from 'lucide-react'
@@ -60,6 +61,8 @@ type NetworkPortFormState = {
   enableDomain: boolean
   domainPrefix: string
 }
+
+type ServiceNetworkType = NonNullable<NetworkConfigV2['service_type']>
 
 interface ServiceFormValues {
   name: string
@@ -153,7 +156,7 @@ export default function ServiceCreateForm({
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
   
   // 网络配置（镜像服务）
-  const [networkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
+  const [networkServiceType] = useState<ServiceNetworkType>('ClusterIP')
   const [networkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [imageReference, setImageReference] = useState<ImageReferenceValue>({ optionId: null, image: '', tag: 'latest' })
 

@@ -106,6 +106,8 @@ type NetworkPortFormState = {
   domainPrefix: string
 }
 
+type ServiceNetworkType = NonNullable<NetworkConfigV2['service_type']>
+
 type DeploymentImageInfo = {
   id: string | null
   fullImage: string | null
@@ -267,7 +269,7 @@ export default function ServiceDetailPage() {
   const [cpuUnit, setCpuUnit] = useState<'m' | 'core'>('core')
   const [memoryValue, setMemoryValue] = useState('')
   const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Mi')
-  const [networkServiceType, setNetworkServiceType] = useState<'ClusterIP' | 'NodePort' | 'LoadBalancer'>('ClusterIP')
+  const [networkServiceType, setNetworkServiceType] = useState<ServiceNetworkType>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [deploying, setDeploying] = useState(false)
   const [deployments, setDeployments] = useState<Deployment[]>([])
@@ -916,6 +918,7 @@ export default function ServiceDetailPage() {
     return service.name || 'service'
   })()
   const defaultDomainPrefix = sanitizeDomainLabel(derivedDefaultDomainSource)
+  const isHeadlessNetwork = networkServiceType === 'Headless'
 
   const initializeNetworkState = useCallback((svc: Service) => {
     const config = svc.network_config as NetworkConfig | undefined
@@ -1795,6 +1798,11 @@ export default function ServiceDetailPage() {
           }
         }
 
+        if (isHeadlessNetwork && port.enableDomain) {
+          networkError = 'Headless Service 不支持域名访问，请关闭域名选项。'
+          break
+        }
+
         if (port.enableDomain) {
           if (!projectIdentifier) {
             networkError = '启用域名访问前，请先在项目中配置项目编号。'
@@ -1973,6 +1981,30 @@ export default function ServiceDetailPage() {
     }
   }
 
+  const handleNetworkServiceTypeChange = (value: ServiceNetworkType) => {
+    setNetworkServiceType(value)
+
+    if (value === 'Headless') {
+      let disabledDomain = false
+      setNetworkPorts((ports) => {
+        let mutated = false
+        const nextPorts = ports.map((port) => {
+          if (port.enableDomain) {
+            disabledDomain = true
+            mutated = true
+            return { ...port, enableDomain: false }
+          }
+          return port
+        })
+        return mutated ? nextPorts : ports
+      })
+
+      if (disabledDomain) {
+        toast.info('已关闭域名访问：Headless Service 仅支持集群内部通过服务名访问。')
+      }
+    }
+  }
+
   const addNetworkPort = () => {
     setNetworkPorts((ports) => [...ports, createEmptyPort()])
   }
@@ -1996,7 +2028,12 @@ export default function ServiceDetailPage() {
   }
 
   const handleToggleDomain = (id: string, enabled: boolean) => {
-    updatePortField(id, 'enableDomain', enabled)
+    if (isHeadlessNetwork && enabled) {
+      toast.error('Headless Service 不支持域名访问，请选择其他 Service 类型。')
+      return
+    }
+
+    updatePortField(id, 'enableDomain', enabled && !isHeadlessNetwork)
   }
 
   const handleToggleExternalAccess = useCallback(async () => {
@@ -3546,7 +3583,7 @@ export default function ServiceDetailPage() {
                   <Select
                     value={networkServiceType}
                     onValueChange={(value) =>
-                      setNetworkServiceType(value as 'ClusterIP' | 'NodePort' | 'LoadBalancer')
+                      handleNetworkServiceTypeChange(value as ServiceNetworkType)
                     }
                   >
                     <SelectTrigger>
@@ -3556,8 +3593,14 @@ export default function ServiceDetailPage() {
                       <SelectItem value="ClusterIP">ClusterIP（集群内部）</SelectItem>
                       <SelectItem value="NodePort">NodePort（节点端口）</SelectItem>
                       <SelectItem value="LoadBalancer">LoadBalancer（负载均衡）</SelectItem>
+                      <SelectItem value="Headless">Headless（Pod 直连）</SelectItem>
                     </SelectContent>
                   </Select>
+                  {networkServiceType === 'Headless' && (
+                    <p className="text-xs text-amber-600">
+                      Headless Service 不会创建 ClusterIP，可通过服务名解析到 Pod IP，实现同命名空间内的直接访问。
+                    </p>
+                  )}
                 </div>
 
                 {networkPorts.length === 0 ? (
@@ -3654,17 +3697,22 @@ export default function ServiceDetailPage() {
                             <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
                               <input
                                 type="checkbox"
-                                className="h-4 w-4"
+                                className="h-4 w-4 disabled:cursor-not-allowed disabled:opacity-50"
                                 checked={port.enableDomain}
                                 onChange={(e) => handleToggleDomain(port.id, e.target.checked)}
+                                disabled={isHeadlessNetwork}
                               />
                               启用域名访问
                             </label>
-                            <p className="text-xs text-gray-500">
-                              启用后可通过{' '}
-                              <span className="font-mono text-gray-700">{previewDomain}</span> 访问该端口
-                            </p>
-                            {port.enableDomain && (
+                            {isHeadlessNetwork ? (
+                              <p className="text-xs text-gray-500">Headless Service 不支持域名访问。</p>
+                            ) : (
+                              <p className="text-xs text-gray-500">
+                                启用后可通过{' '}
+                                <span className="font-mono text-gray-700">{previewDomain}</span> 访问该端口
+                              </p>
+                            )}
+                            {port.enableDomain && !isHeadlessNetwork && (
                               <div className="space-y-3">
                                 <div className="space-y-2">
                                   <Label className="text-sm font-medium text-gray-700">域名前缀</Label>
