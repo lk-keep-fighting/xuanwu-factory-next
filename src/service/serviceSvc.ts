@@ -144,8 +144,17 @@ export const serviceSvc = {
   /**
    * 删除服务
    */
-  async deleteService(id: string): Promise<DeleteServiceResult> {
-    const response = await fetch(`${API_BASE}/${id}`, {
+  async deleteService(
+    id: string,
+    options?: {
+      mode?: 'deployment-only' | 'full'
+    }
+  ): Promise<DeleteServiceResult> {
+    const normalizedMode = options?.mode === 'deployment-only' ? options.mode : undefined
+    const query = normalizedMode ? `?mode=${normalizedMode}` : ''
+    const url = `${API_BASE}/${id}${query}`
+
+    const response = await fetch(url, {
       method: 'DELETE'
     })
 
