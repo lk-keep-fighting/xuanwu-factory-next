@@ -30,7 +30,7 @@ type NormalizedPortConfig = {
 }
 
 type NormalizedNetworkConfig = {
-  serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
+  serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'Headless'
   ports: NormalizedPortConfig[]
 }
 
@@ -2025,6 +2025,9 @@ class K8sService {
         if (normalized === 'loadbalancer') {
           return 'LoadBalancer'
         }
+        if (normalized === 'headless') {
+          return 'Headless'
+        }
       }
       return 'ClusterIP'
     })() as NormalizedNetworkConfig['serviceType']
@@ -2547,10 +2550,26 @@ class K8sService {
     return Object.entries(selector).every(([key, value]) => labels[key] === value)
   }
 
+  private isHeadlessService(service: k8s.V1Service): boolean {
+    const clusterIP = service.spec?.clusterIP
+    if (typeof clusterIP === 'string' && clusterIP.trim().toLowerCase() === 'none') {
+      return true
+    }
+
+    const clusterIPs = service.spec?.clusterIPs
+    if (Array.isArray(clusterIPs)) {
+      return clusterIPs.some(
+        (ip) => typeof ip === 'string' && ip.trim().toLowerCase() === 'none'
+      )
+    }
+
+    return false
+  }
+
   private toMatchedService(
     service: k8s.V1Service,
     containers: k8s.V1Container[]
-  ): { name: string; type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName'; ports: Array<{ name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number }> } | null {
+  ): { name: string; type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName' | 'Headless'; ports: Array<{ name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number }> } | null {
     const rawPorts = (service.spec?.ports ?? [])
       .map((port) => {
         const targetPort = this.resolveTargetPort(port, containers)
@@ -2573,9 +2592,12 @@ class K8sService {
       return null
     }
 
+    const normalizedType = this.normalizeServiceType(service.spec?.type)
+    const type = this.isHeadlessService(service) ? 'Headless' : normalizedType
+
     return {
       name: service.metadata?.name ?? 'service',
-      type: this.normalizeServiceType(service.spec?.type),
+      type,
       ports
     }
   }
@@ -2614,7 +2636,7 @@ class K8sService {
   }
 
   private buildNetworkConfigFromServices(
-    services: Array<{ name: string; type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName'; ports: Array<{ name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number }> }>
+    services: Array<{ name: string; type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName' | 'Headless'; ports: Array<{ name?: string; port: number; targetPort: number; protocol: 'TCP' | 'UDP'; nodePort?: number }> }>
   ): NetworkConfigV2 | null {
     if (!services.length) {
       return null
@@ -2636,8 +2658,15 @@ class K8sService {
       return null
     }
 
+    const normalizedServiceType: NetworkConfigV2['service_type'] =
+      serviceType === 'NodePort' || serviceType === 'LoadBalancer'
+        ? serviceType
+        : serviceType === 'Headless'
+          ? 'Headless'
+          : 'ClusterIP'
+
     return {
-      service_type: serviceType === 'NodePort' || serviceType === 'LoadBalancer' ? serviceType : 'ClusterIP',
+      service_type: normalizedServiceType,
       ports: validPorts
     }
   }
@@ -2687,6 +2716,10 @@ class K8sService {
   }
 
   private getIngressRules(config: NormalizedNetworkConfig): IngressRuleConfig[] {
+    if (config.serviceType === 'Headless') {
+      return []
+    }
+
     const rules: IngressRuleConfig[] = []
     const seenHosts = new Set<string>()
 
@@ -2873,8 +2906,12 @@ class K8sService {
         protocol: port.protocol ?? null
       }))
 
+      const resolvedServiceType = this.isHeadlessService(service)
+        ? 'Headless'
+        : spec.type ?? null
+
       return {
-        serviceType: spec.type ?? null,
+        serviceType: resolvedServiceType,
         ports
       }
     } catch (error: unknown) {
@@ -2905,6 +2942,9 @@ class K8sService {
       return
     }
 
+    const isHeadlessService = config.serviceType === 'Headless'
+    const serviceSpecType: k8s.V1ServiceSpec['type'] = isHeadlessService ? 'ClusterIP' : config.serviceType
+
     const ports: k8s.V1ServicePort[] = config.ports.map((port, index) => {
       const servicePort: k8s.V1ServicePort = {
         name: `port-${port.containerPort}-${index}`,
@@ -2934,7 +2974,14 @@ class K8sService {
       spec: {
         selector: { app: serviceName },
         ports,
-        type: config.serviceType
+        type: serviceSpecType,
+        ...(isHeadlessService
+          ? {
+              clusterIP: 'None',
+              clusterIPs: ['None'],
+              publishNotReadyAddresses: true
+            }
+          : {})
       }
     }
 
@@ -2977,6 +3024,12 @@ class K8sService {
       }
     }
 
+    const nextClusterIP = isHeadlessService ? 'None' : existingService.spec?.clusterIP
+    const nextClusterIPs = isHeadlessService ? ['None'] : existingService.spec?.clusterIPs
+    const nextPublishNotReady = isHeadlessService
+      ? true
+      : existingService.spec?.publishNotReadyAddresses
+
     const updatedService: k8s.V1Service = {
       ...existingService,
       apiVersion: desiredService.apiVersion,
@@ -2993,10 +3046,11 @@ class K8sService {
       spec: {
         ...existingService.spec,
         selector: desiredService.spec?.selector,
-        type: desiredService.spec?.type,
+        type: serviceSpecType,
         ports,
-        clusterIP: existingService.spec?.clusterIP,
-        clusterIPs: existingService.spec?.clusterIPs,
+        clusterIP: nextClusterIP,
+        clusterIPs: nextClusterIPs,
+        publishNotReadyAddresses: nextPublishNotReady,
         ipFamilies: existingService.spec?.ipFamilies,
         ipFamilyPolicy: existingService.spec?.ipFamilyPolicy,
         sessionAffinity: existingService.spec?.sessionAffinity,

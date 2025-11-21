@@ -65,14 +65,14 @@ export interface NetworkPortConfig {
 }
 
 export interface NetworkConfigV2 {
-  service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
+  service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'Headless'
   ports: NetworkPortConfig[]
 }
 
 export interface LegacyNetworkConfig {
   container_port: number
   service_port?: number
-  service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
+  service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'Headless'
   node_port?: number
   protocol?: 'TCP' | 'UDP'
 }
