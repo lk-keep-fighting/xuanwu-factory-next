@@ -8,8 +8,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,7 +34,16 @@ import { toast } from 'sonner'
 import { projectSvc } from '@/service/projectSvc'
 import { serviceSvc } from '@/service/serviceSvc'
 import { ServiceType } from '@/types/project'
-import type { ApplicationService, DatabaseService, ImageService, Project, Service } from '@/types/project'
+import type {
+  ApplicationService,
+  DatabaseService,
+  ImageService,
+  LegacyNetworkConfig,
+  NetworkConfig,
+  NetworkConfigV2,
+  Project,
+  Service
+} from '@/types/project'
 import ServiceCreateForm from '../components/ServiceCreateForm'
 import { ImportK8sServiceDialog } from '../components/ImportK8sServiceDialog'
 
@@ -71,18 +87,207 @@ const isImageService = (
   type: ServiceType | null
 ): service is ImageService => type === ServiceType.IMAGE
 
+type ServiceSubtitle = {
+  label: string
+  href?: string
+}
+
+const normalizeNumericValue = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value.trim())
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  return null
+}
+
+const formatDateTime = (value?: string) => {
+  if (!value) {
+    return '-'
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+const isNetworkConfigV2 = (
+  config: NetworkConfig | null | undefined
+): config is NetworkConfigV2 => {
+  if (!config || typeof config !== 'object') {
+    return false
+  }
+
+  return Array.isArray((config as NetworkConfigV2).ports)
+}
+
+const isLegacyNetworkConfig = (
+  config: NetworkConfig | null | undefined
+): config is LegacyNetworkConfig => {
+  if (!config || typeof config !== 'object') {
+    return false
+  }
+
+  return 'container_port' in config
+}
+
+const extractNetworkPorts = (config?: NetworkConfig | null): number[] => {
+  if (!config) {
+    return []
+  }
+
+  if (isNetworkConfigV2(config)) {
+    return config.ports
+      .map((port) => normalizeNumericValue(port.service_port ?? port.container_port))
+      .filter((value): value is number => value !== null)
+  }
+
+  if (isLegacyNetworkConfig(config)) {
+    const port = normalizeNumericValue(config.service_port ?? config.container_port)
+    return port !== null ? [port] : []
+  }
+
+  return []
+}
+
+const getServiceSubtitle = (
+  service: Service,
+  normalizedType: ServiceType | null,
+  applicationService: ApplicationService | null,
+  databaseService: DatabaseService | null,
+  imageService: ImageService | null
+): ServiceSubtitle => {
+  if (applicationService) {
+    const repoUrl = applicationService.git_repository?.trim() ?? ''
+    const normalizedRepoUrl = repoUrl.replace(/\/+$/, '')
+    const repoNameCandidate = normalizedRepoUrl ? normalizedRepoUrl.split('/').pop() ?? normalizedRepoUrl : ''
+    const cleanRepoName = repoNameCandidate ? repoNameCandidate.replace(/\.git$/i, '') : ''
+    const branch = applicationService.git_branch?.trim() ?? ''
+    const parts: string[] = []
+
+    if (cleanRepoName) {
+      parts.push(cleanRepoName)
+    }
+    if (branch) {
+      parts.push(branch)
+    }
+
+    const fallbackLabel = branch || '未配置仓库'
+    const label = parts.length > 0 ? parts.join(' · ') : fallbackLabel
+
+    return {
+      label,
+      href: repoUrl || undefined
+    }
+  }
+
+  if (databaseService) {
+    const typeLabel = databaseService.database_type
+      ? databaseService.database_type.toUpperCase()
+      : 'Database'
+    const version = databaseService.version?.trim()
+    const label = version ? `${typeLabel} · ${version}` : typeLabel
+    return { label }
+  }
+
+  if (imageService) {
+    const imageName = imageService.image?.trim() || '未配置镜像'
+    const tag = imageService.tag?.trim()
+    const label = tag ? `${imageName}:${tag}` : imageName
+    return { label }
+  }
+
+  if (normalizedType) {
+    return { label: SERVICE_TYPE_LABELS[normalizedType] ?? UNKNOWN_SERVICE_TYPE_LABEL }
+  }
+
+  return {
+    label:
+      typeof service.type === 'string' && service.type.trim().length > 0
+        ? service.type
+        : UNKNOWN_SERVICE_TYPE_LABEL
+  }
+}
+
+const getConnectivityLabel = (
+  service: Service,
+  applicationService: ApplicationService | null,
+  databaseService: DatabaseService | null,
+  imageService: ImageService | null
+) => {
+  const networkPorts = extractNetworkPorts(service.network_config)
+  const primaryNetworkPort = typeof networkPorts[0] === 'number' ? networkPorts[0] : null
+
+  if (applicationService) {
+    const portValue = normalizeNumericValue(applicationService.port) ?? primaryNetworkPort
+    return portValue !== null ? `端口 ${portValue}` : '-'
+  }
+
+  if (databaseService) {
+    const internalPort = normalizeNumericValue(databaseService.port)
+    const externalPort = normalizeNumericValue(databaseService.external_port)
+    const labels: string[] = []
+
+    if (internalPort !== null) {
+      labels.push(`内 ${internalPort}`)
+    }
+    if (externalPort !== null) {
+      labels.push(`外 ${externalPort}`)
+    }
+
+    if (labels.length > 0) {
+      return labels.join(' / ')
+    }
+
+    return primaryNetworkPort !== null ? `端口 ${primaryNetworkPort}` : '-'
+  }
+
+  if (imageService) {
+    return primaryNetworkPort !== null ? `端口 ${primaryNetworkPort}` : '-'
+  }
+
+  return primaryNetworkPort !== null ? `端口 ${primaryNetworkPort}` : '-'
+}
+
+const getReplicasLabel = (
+  applicationService: ApplicationService | null,
+  imageService: ImageService | null
+) => {
+  const candidates = [
+    applicationService ? normalizeNumericValue(applicationService.replicas) : null,
+    imageService ? normalizeNumericValue(imageService.replicas) : null
+  ]
+
+  for (const value of candidates) {
+    if (typeof value === 'number') {
+      return String(value)
+    }
+  }
+
+  return '-'
+}
+
 const STATUS_COLORS: Record<string, string> = {
   running: 'bg-green-500',
   pending: 'bg-yellow-500',
   stopped: 'bg-gray-500',
-  error: 'bg-red-500'
+  error: 'bg-red-500',
+  building: 'bg-blue-500'
 }
 
 const STATUS_LABELS: Record<string, string> = {
   running: '运行中',
   pending: '待启动',
   stopped: '已停止',
-  error: '错误'
+  error: '错误',
+  building: '构建中'
 }
 
 type ProjectFormState = {
@@ -444,163 +649,161 @@ export default function ProjectDetailPage() {
             <p className="text-gray-500">暂无服务</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredServices.map((service) => {
-              const normalizedType = normalizeServiceType(service.type)
-              const Icon = normalizedType ? SERVICE_TYPE_ICONS[normalizedType] : Package
-              const serviceTypeLabel =
-                normalizedType
-                  ? SERVICE_TYPE_LABELS[normalizedType]
-                  : typeof service.type === 'string' && service.type.trim().length
-                    ? service.type
-                    : UNKNOWN_SERVICE_TYPE_LABEL
-              const statusKey =
-                typeof service.status === 'string' ? service.status.trim().toLowerCase() : 'pending'
-              const statusColor = STATUS_COLORS[statusKey] ?? 'bg-gray-500'
-              const statusLabel =
-                STATUS_LABELS[statusKey] ??
-                (typeof service.status === 'string' && service.status.trim().length
-                  ? service.status
-                  : '未知状态')
-              const applicationService = isApplicationService(service, normalizedType) ? service : null
-              const databaseService = isDatabaseService(service, normalizedType) ? service : null
-              const imageService = isImageService(service, normalizedType) ? service : null
+          <div className="bg-white rounded-lg shadow-sm">
+            <div className="p-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>服务</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>副本</TableHead>
+                    <TableHead>网络/端口</TableHead>
+                    <TableHead>最近更新</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredServices.map((service) => {
+                    const normalizedType = normalizeServiceType(service.type)
+                    const Icon = normalizedType ? SERVICE_TYPE_ICONS[normalizedType] : Package
+                    const serviceTypeLabel =
+                      normalizedType
+                        ? SERVICE_TYPE_LABELS[normalizedType]
+                        : typeof service.type === 'string' && service.type.trim().length
+                          ? service.type
+                          : UNKNOWN_SERVICE_TYPE_LABEL
+                    const statusKey =
+                      typeof service.status === 'string' ? service.status.trim().toLowerCase() : 'pending'
+                    const statusColor = STATUS_COLORS[statusKey] ?? 'bg-gray-500'
+                    const statusLabel =
+                      STATUS_LABELS[statusKey] ??
+                      (typeof service.status === 'string' && service.status.trim().length
+                        ? service.status
+                        : '未知状态')
+                    const applicationService = isApplicationService(service, normalizedType) ? service : null
+                    const databaseService = isDatabaseService(service, normalizedType) ? service : null
+                    const imageService = isImageService(service, normalizedType) ? service : null
+                    const subtitle = getServiceSubtitle(
+                      service,
+                      normalizedType,
+                      applicationService,
+                      databaseService,
+                      imageService
+                    )
+                    const connectivityLabel = getConnectivityLabel(
+                      service,
+                      applicationService,
+                      databaseService,
+                      imageService
+                    )
+                    const replicasLabel = getReplicasLabel(applicationService, imageService)
+                    const updatedAtLabel = formatDateTime(service.updated_at ?? service.created_at)
 
-              return (
-                <Card
-                  key={service.id}
-                  className="hover:shadow-lg transition-all duration-200 cursor-pointer"
-                  onClick={() => router.push(`/projects/${id}/services/${service.id}`)}
-                >
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-gray-100 rounded-lg">
-                          <Icon className="w-5 h-5 text-gray-700" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-gray-900">{service.name}</h3>
-                          <Badge variant="outline" className="mt-1">
-                            {serviceTypeLabel}
-                          </Badge>
-                        </div>
-                      </div>
-
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="sm">
-                            <MoreVertical className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={(e) => {
-                            e.stopPropagation()
-                            // TODO: 启动服务
-                          }}>
-                            <Play className="w-4 h-4 mr-2" />
-                            启动
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => {
-                            e.stopPropagation()
-                            // TODO: 停止服务
-                          }}>
-                            <Square className="w-4 h-4 mr-2" />
-                            停止
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (service.id) {
-                                void handleDeleteService(service.id)
-                              }
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            删除
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">状态</span>
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-                          <span className="text-gray-900">{statusLabel}</span>
-                        </div>
-                      </div>
-
-                      {applicationService && (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-500">仓库</span>
-
-
-                            <a 
-                              href={applicationService.git_repository || '#'} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:text-blue-800 hover:underline text-right truncate ml-2 max-w-[250px]" 
-                              title={applicationService.git_repository || '-'}
-                              onClick={(e) => {
-                                if (!applicationService.git_repository) {
-                                  e.preventDefault()
-                                }
-                                e.stopPropagation()
-                              }}
-                            >
-                              {applicationService.git_repository ? applicationService.git_repository.split('/').pop() || applicationService.git_repository : '-'}
-                            </a>
-                          </div>
-                          {/* {applicationService.port && (
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-500">端口</span>
-                              <span className="text-gray-900">{applicationService.port}</span>
+                    return (
+                      <TableRow
+                        key={service.id ?? service.name}
+                        className="cursor-pointer"
+                        onClick={() => {
+                          if (service.id) {
+                            router.push(`/projects/${id}/services/${service.id}`)
+                          }
+                        }}
+                      >
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-50">
+                              <Icon className="h-5 w-5 text-gray-700" />
                             </div>
-                          )} */}
-                        </>
-                      )}
-
-                      {databaseService && (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-500">类型</span>
-                            <span className="text-gray-900 uppercase">{databaseService.database_type}</span>
-                          </div>
-                          {databaseService.version && (
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-500">版本</span>
-                              <span className="text-gray-900">{databaseService.version}</span>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-gray-900">{service.name}</span>
+                                <Badge variant="outline">{serviceTypeLabel}</Badge>
+                              </div>
+                              {subtitle.href ? (
+                                <a
+                                  href={subtitle.href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline"
+                                  title={subtitle.label}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  {subtitle.label}
+                                </a>
+                              ) : (
+                                <span className="text-xs text-gray-500" title={subtitle.label}>
+                                  {subtitle.label}
+                                </span>
+                              )}
                             </div>
-                          )}
-                        </>
-                      )}
-
-                      {imageService && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-500">镜像</span>
-                          <span className="text-gray-900 truncate ml-2">
-                            {imageService.image}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                            <span className="text-gray-900">{statusLabel}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-gray-900">{replicasLabel}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-gray-900" title={connectivityLabel}>
+                            {connectivityLabel}
                           </span>
-                        </div>
-                      )}
-                      {imageService && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-500">标签</span>
-                          <span className="text-gray-900 truncate ml-2">
-                            {imageService.tag && `${imageService.tag}`}
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-gray-500" title={updatedAtLabel}>
+                            {updatedAtLabel}
                           </span>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild onClick={(event) => event.stopPropagation()}>
+                              <Button variant="ghost" size="icon">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  // TODO: 启动服务
+                                }}
+                              >
+                                <Play className="w-4 h-4 mr-2" />
+                                启动
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  // TODO: 停止服务
+                                }}
+                              >
+                                <Square className="w-4 h-4 mr-2" />
+                                停止
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-red-600"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  if (service.id) {
+                                    void handleDeleteService(service.id)
+                                  }
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                删除
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         )}
       </div>
