@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { k8sService } from '@/lib/k8s'
 import { prisma } from '@/lib/prisma'
+import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
 
 type ServiceWithProject = Prisma.ServiceGetPayload<{
   include: {
@@ -22,6 +23,247 @@ import { INVALID_SERVICE_TYPE_MESSAGE, normalizeServiceType } from '../service-t
 
 const UPDATE_ERROR_MESSAGE = '服务更新失败，请稍后重试。'
 const DELETE_ERROR_MESSAGE = '删除服务失败'
+
+const SERVICE_RESOURCE_KEYS = ['service', 'services', 'k8s_service', 'kubernetes_service'] as const
+const INGRESS_RESOURCE_KEYS = ['ingress', 'ingresses', 'k8s_ingress', 'kubernetes_ingress'] as const
+
+type JsonValue = Prisma.JsonValue
+
+type DomainUpdateContext = {
+  oldPrefix: string
+  newPrefix: string
+  domainSuffix: string | null
+  normalizedSuffix: string | null
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value))
+
+const replaceExactStringValues = (
+  candidate: unknown,
+  oldValue: string,
+  newValue: string
+): boolean => {
+  if (!isRecord(candidate)) {
+    return false
+  }
+
+  let mutated = false
+  for (const key of Object.keys(candidate)) {
+    const raw = candidate[key]
+    if (typeof raw === 'string' && raw.trim() === oldValue) {
+      candidate[key] = newValue
+      mutated = true
+    }
+  }
+  return mutated
+}
+
+const updateIngressBackendServiceReferences = (
+  specCandidate: unknown,
+  oldName: string,
+  newName: string
+): boolean => {
+  if (!isRecord(specCandidate)) {
+    return false
+  }
+  const rules = specCandidate.rules
+  if (!Array.isArray(rules)) {
+    return false
+  }
+
+  let mutated = false
+  for (const rule of rules) {
+    if (!isRecord(rule)) continue
+    const http = rule.http
+    if (!isRecord(http)) continue
+    const paths = http.paths
+    if (!Array.isArray(paths)) continue
+
+    for (const path of paths) {
+      if (!isRecord(path)) continue
+      const backend = path.backend
+      if (!isRecord(backend)) continue
+      const serviceRef = backend.service
+      if (!isRecord(serviceRef)) continue
+      const current = typeof serviceRef.name === 'string' ? serviceRef.name.trim() : ''
+      if (current === oldName) {
+        serviceRef.name = newName
+        mutated = true
+      }
+    }
+  }
+
+  return mutated
+}
+
+const updateResourceDefinition = (
+  resourceCandidate: unknown,
+  type: 'service' | 'ingress',
+  oldName: string,
+  newName: string
+): boolean => {
+  const updateSingle = (resource: unknown): boolean => {
+    if (!isRecord(resource)) {
+      return false
+    }
+
+    let mutated = false
+    const metadataCandidate = resource['metadata']
+    if (isRecord(metadataCandidate)) {
+      const rawName = typeof metadataCandidate['name'] === 'string' ? metadataCandidate['name'].trim() : ''
+      if (rawName) {
+        if (rawName === oldName) {
+          metadataCandidate['name'] = newName
+          mutated = true
+        } else if (type === 'ingress' && rawName === `${oldName}-ingress`) {
+          metadataCandidate['name'] = `${newName}-ingress`
+          mutated = true
+        }
+      }
+
+      if (
+        isRecord(metadataCandidate['labels']) &&
+        replaceExactStringValues(metadataCandidate['labels'], oldName, newName)
+      ) {
+        mutated = true
+      }
+    }
+
+    const specCandidate = resource['spec']
+    if (isRecord(specCandidate)) {
+      if (type === 'service') {
+        if (
+          isRecord(specCandidate['selector']) &&
+          replaceExactStringValues(specCandidate['selector'], oldName, newName)
+        ) {
+          mutated = true
+        }
+        const templateCandidate = specCandidate['template']
+        if (
+          isRecord(templateCandidate) &&
+          isRecord(templateCandidate['metadata']) &&
+          isRecord(templateCandidate['metadata']['labels']) &&
+          replaceExactStringValues(templateCandidate['metadata']['labels'], oldName, newName)
+        ) {
+          mutated = true
+        }
+      } else if (type === 'ingress') {
+        if (updateIngressBackendServiceReferences(specCandidate, oldName, newName)) {
+          mutated = true
+        }
+      }
+    }
+
+    return mutated
+  }
+
+  if (Array.isArray(resourceCandidate)) {
+    let mutated = false
+    for (const item of resourceCandidate) {
+      if (updateSingle(item)) {
+        mutated = true
+      }
+    }
+    return mutated
+  }
+
+  return updateSingle(resourceCandidate)
+}
+
+const updateDomainEntry = (domainCandidate: unknown, context: DomainUpdateContext): boolean => {
+  if (!isRecord(domainCandidate)) {
+    return false
+  }
+
+  if (!context.oldPrefix || !context.newPrefix) {
+    return false
+  }
+
+  const domain = domainCandidate as Record<string, unknown>
+  const rawPrefix = typeof domain['prefix'] === 'string' ? sanitizeDomainLabel(domain['prefix']) : ''
+  const rawHost = typeof domain['host'] === 'string' ? (domain['host'] as string).trim() : ''
+  const normalizedHost = rawHost.toLowerCase()
+  const matchesPrefix = rawPrefix === context.oldPrefix
+  const matchesHost =
+    Boolean(context.normalizedSuffix) &&
+    normalizedHost === `${context.oldPrefix}.${context.normalizedSuffix}`
+
+  if (!matchesPrefix && !matchesHost) {
+    return false
+  }
+
+  domain['prefix'] = context.newPrefix
+
+  if (context.domainSuffix) {
+    domain['host'] = `${context.newPrefix}.${context.domainSuffix}`
+  } else if (normalizedHost.includes('.')) {
+    const [, ...rest] = normalizedHost.split('.')
+    domain['host'] = `${context.newPrefix}.${rest.join('.')}`
+  } else {
+    domain['host'] = context.newPrefix
+  }
+
+  return true
+}
+
+const updateNetworkConfigAssociations = (
+  config: JsonValue | null,
+  oldName: string,
+  newName: string,
+  projectIdentifier?: string | null
+): { changed: boolean; value: JsonValue | null } => {
+  if (!config || !isRecord(config)) {
+    return { changed: false, value: config }
+  }
+
+  const cloned = cloneJson(config) as Record<string, unknown>
+  const oldPrefix = sanitizeDomainLabel(oldName)
+  const newPrefix = sanitizeDomainLabel(newName)
+  const trimmedProject = projectIdentifier?.trim()
+  const domainSuffix = trimmedProject ? `${trimmedProject}.${DEFAULT_DOMAIN_ROOT}` : null
+  const normalizedSuffix = domainSuffix?.toLowerCase() ?? null
+  let changed = false
+
+  const domainContext: DomainUpdateContext = {
+    oldPrefix,
+    newPrefix,
+    domainSuffix,
+    normalizedSuffix
+  }
+
+  const portsCandidate = cloned['ports']
+  if (Array.isArray(portsCandidate)) {
+    for (const port of portsCandidate) {
+      if (!isRecord(port)) continue
+      if (updateDomainEntry(port['domain'], domainContext)) {
+        changed = true
+      }
+    }
+  } else if (updateDomainEntry(cloned['domain'], domainContext)) {
+    changed = true
+  }
+
+  for (const key of SERVICE_RESOURCE_KEYS) {
+    if (key in cloned) {
+      if (updateResourceDefinition(cloned[key], 'service', oldName, newName)) {
+        changed = true
+      }
+    }
+  }
+
+  for (const key of INGRESS_RESOURCE_KEYS) {
+    if (key in cloned) {
+      if (updateResourceDefinition(cloned[key], 'ingress', oldName, newName)) {
+        changed = true
+      }
+    }
+  }
+
+  return { changed, value: changed ? (cloned as JsonValue) : config }
+}
 
 export async function GET(
   _request: NextRequest,
@@ -102,7 +344,11 @@ export async function PUT(
       where: { id },
       select: {
         name: true,
-        status: true
+        status: true,
+        network_config: true,
+        project: {
+          select: { identifier: true }
+        }
       }
     })
 
@@ -129,6 +375,17 @@ export async function PUT(
 
       if (successfulDeployment) {
         return NextResponse.json({ error: '服务已有成功部署记录，无法重命名。' }, { status: 400 })
+      }
+
+      const networkUpdate = updateNetworkConfigAssociations(
+        existingService.network_config as JsonValue | null,
+        currentName,
+        requestedName,
+        existingService.project?.identifier ?? null
+      )
+
+      if (networkUpdate.changed) {
+        updateData.network_config = networkUpdate.value ?? null
       }
     } else {
       delete updateData.name

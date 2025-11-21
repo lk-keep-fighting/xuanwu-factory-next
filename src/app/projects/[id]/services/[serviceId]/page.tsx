@@ -2144,7 +2144,16 @@ export default function ServiceDetailPage() {
   const statusMismatch = normalizedK8sStatus !== null && normalizedK8sStatus !== normalizedDbStatus
   const k8sStatusErrorMessage = typeof k8sStatusError === 'string' ? k8sStatusError.trim() : ''
   const hasK8sStatusError = k8sStatusErrorMessage.length > 0
-  const renameDisabledReason = normalizedDbStatus === 'pending' ? '' : '仅未部署的服务可以重命名。'
+  const hasSuccessfulDeployment = deployments.some((deployment) => deployment.status === 'success')
+  const renameDisabledReason = (() => {
+    if (normalizedDbStatus !== 'pending') {
+      return '仅未部署的服务可以重命名。'
+    }
+    if (hasSuccessfulDeployment) {
+      return '服务已有成功部署记录，无法重命名。'
+    }
+    return ''
+  })()
   const canRenameService = renameDisabledReason === ''
   const renameInputTrimmed = renameValue.trim()
   const renameConfirmDisabled = renameLoading || !renameInputTrimmed || renameInputTrimmed === (service.name ?? '')
