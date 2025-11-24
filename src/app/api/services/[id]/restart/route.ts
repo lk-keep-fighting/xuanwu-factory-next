@@ -48,11 +48,8 @@ export async function POST(
     // 重启 K8s 服务
     const result = await k8sService.restartService(service.name, namespace)
 
-    // 更新数据库状态
-    await prisma.service.update({
-      where: { id },
-      data: { status: 'pending' }
-    })
+    // 重启操作不改变数据库状态，让状态查询自然从 K8s 同步
+    // K8s 的重启实际上是滚动更新 pod，服务会持续运行
 
     return NextResponse.json(result)
   } catch (error: unknown) {
