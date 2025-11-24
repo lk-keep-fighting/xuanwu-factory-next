@@ -3040,16 +3040,16 @@ export default function ServiceDetailPage() {
                     )}
                   </div>
                 )}
-                {service.command && (
-                  <div className="space-y-2">
-                    <Label>启动命令</Label>
-                    <Input
-                      value={isEditing ? (editedService.command || '') : (service.command || '')}
-                      onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
-                      disabled={!isEditing}
-                    />
-                  </div>
-                )}
+                <div className="space-y-2">
+                  <Label>启动命令</Label>
+                  <Input
+                    placeholder="如: npm start 或 sh -c 'echo start && node index.js'"
+                    value={isEditing ? (editedService.command || '') : (service.command || '')}
+                    onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
+                    disabled={!isEditing}
+                  />
+                  <p className="text-xs text-gray-500">可选。覆盖容器镜像的默认启动命令</p>
+                </div>
                 <div className="border-t border-gray-200 pt-4 mt-4">
                       <h4 className="text-sm font-medium text-gray-700 mb-3">资源配置</h4>
                       
