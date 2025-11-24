@@ -62,7 +62,7 @@ type NetworkPortFormState = {
   domainPrefix: string
 }
 
-type ServiceNetworkType = NonNullable<NetworkConfigV2['service_type']>
+type ServiceNetworkType = Exclude<NonNullable<NetworkConfigV2['service_type']>, 'Headless'>
 
 interface ServiceFormValues {
   name: string

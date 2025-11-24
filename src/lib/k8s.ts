@@ -30,8 +30,9 @@ type NormalizedPortConfig = {
 }
 
 type NormalizedNetworkConfig = {
-  serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'Headless'
+  serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer'
   ports: NormalizedPortConfig[]
+  headlessServiceEnabled: boolean
 }
 
 type IngressRuleConfig = {
@@ -360,6 +361,7 @@ class K8sService {
 
     return {
       serviceType: 'NodePort',
+      headlessServiceEnabled: false,
       ports: [
         {
           containerPort: port,
@@ -850,6 +852,8 @@ class K8sService {
         throw new Error(`删除服务失败: ${this.getErrorMessage(error)}`)
       }
     }
+
+    await this.deleteK8sServiceIfExists(this.getHeadlessServiceName(serviceName), targetNamespace)
 
     return { success: true, message: '服务已删除' }
   }
@@ -2012,6 +2016,45 @@ class K8sService {
 
     const rawConfig = config as unknown as Record<string, unknown>
 
+    const isTruthy = (value: unknown): boolean => {
+      if (typeof value === 'boolean') {
+        return value
+      }
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase()
+        if (!normalized) {
+          return false
+        }
+        return ['true', '1', 'yes', 'y', 'on'].includes(normalized)
+      }
+      if (typeof value === 'number') {
+        return value !== 0
+      }
+      return false
+    }
+
+    let headlessServiceEnabled = false
+
+    const headlessCandidates = [
+      rawConfig['headless_service_enabled'],
+      rawConfig['headlessServiceEnabled'],
+      rawConfig['enable_headless_service'],
+      rawConfig['enableHeadlessService']
+    ]
+
+    if (headlessCandidates.some((candidate) => isTruthy(candidate))) {
+      headlessServiceEnabled = true
+    }
+
+    const nestedHeadless = rawConfig['headless_service']
+    if (
+      nestedHeadless &&
+      typeof nestedHeadless === 'object' &&
+      isTruthy((nestedHeadless as { enabled?: unknown }).enabled)
+    ) {
+      headlessServiceEnabled = true
+    }
+
     const serviceType = (() => {
       const rawServiceType = rawConfig['service_type']
       if (typeof rawServiceType === 'string') {
@@ -2026,7 +2069,8 @@ class K8sService {
           return 'LoadBalancer'
         }
         if (normalized === 'headless') {
-          return 'Headless'
+          headlessServiceEnabled = true
+          return 'ClusterIP'
         }
       }
       return 'ClusterIP'
@@ -2113,7 +2157,8 @@ class K8sService {
 
       return {
         serviceType,
-        ports
+        ports,
+        headlessServiceEnabled
       }
     }
 
@@ -2124,7 +2169,8 @@ class K8sService {
 
     return {
       serviceType,
-      ports: [legacyPort]
+      ports: [legacyPort],
+      headlessServiceEnabled
     }
   }
 
@@ -2642,15 +2688,20 @@ class K8sService {
       return null
     }
 
-    const serviceType = services[0]?.type ?? 'ClusterIP'
-    const ports = services.flatMap((service) =>
-      service.ports.map((port) => ({
-        container_port: port.targetPort,
-        service_port: port.port,
-        protocol: port.protocol,
-        node_port: port.nodePort
-      }))
-    )
+    const headlessService = services.find((service) => service.type === 'Headless')
+    const primaryService = services.find((service) => service.type !== 'Headless' && service.type !== 'ExternalName')
+    const portsSource = primaryService ?? headlessService
+
+    if (!portsSource) {
+      return null
+    }
+
+    const ports = portsSource.ports.map((port) => ({
+      container_port: port.targetPort,
+      service_port: port.port,
+      protocol: port.protocol,
+      node_port: port.nodePort
+    }))
 
     const validPorts = ports.filter((port) => Number.isInteger(port.container_port) && port.container_port > 0)
 
@@ -2658,15 +2709,15 @@ class K8sService {
       return null
     }
 
+    const baseType = primaryService ? this.normalizeServiceType(primaryService.type) : 'ClusterIP'
     const normalizedServiceType: NetworkConfigV2['service_type'] =
-      serviceType === 'NodePort' || serviceType === 'LoadBalancer'
-        ? serviceType
-        : serviceType === 'Headless'
-          ? 'Headless'
-          : 'ClusterIP'
+      baseType === 'NodePort' || baseType === 'LoadBalancer' ? baseType : 'ClusterIP'
+
+    const headlessEnabled = Boolean(headlessService)
 
     return {
       service_type: normalizedServiceType,
+      headless_service_enabled: headlessEnabled || undefined,
       ports: validPorts
     }
   }
@@ -2716,10 +2767,6 @@ class K8sService {
   }
 
   private getIngressRules(config: NormalizedNetworkConfig): IngressRuleConfig[] {
-    if (config.serviceType === 'Headless') {
-      return []
-    }
-
     const rules: IngressRuleConfig[] = []
     const seenHosts = new Set<string>()
 
@@ -2859,6 +2906,106 @@ class K8sService {
     })
   }
 
+  private getHeadlessServiceName(serviceName: string): string {
+    return `${serviceName}-headless`
+  }
+
+  private async syncHeadlessService(
+    service: Service,
+    namespace: string,
+    config: NormalizedNetworkConfig
+  ): Promise<void> {
+    const serviceName = service.name?.trim()
+    const targetNamespace = namespace?.trim()
+
+    if (!serviceName || !targetNamespace) {
+      return
+    }
+
+    const headlessName = this.getHeadlessServiceName(serviceName)
+
+    if (!config.headlessServiceEnabled || !config.ports.length) {
+      await this.deleteK8sServiceIfExists(headlessName, targetNamespace)
+      return
+    }
+
+    const ports: k8s.V1ServicePort[] = config.ports.map((port, index) => ({
+      name: `headless-port-${port.containerPort}-${index}`,
+      port: port.servicePort,
+      targetPort: port.containerPort,
+      protocol: port.protocol
+    }))
+
+    const desiredService: k8s.V1Service = {
+      apiVersion: 'v1',
+      kind: 'Service',
+      metadata: {
+        name: headlessName,
+        namespace: targetNamespace,
+        labels: {
+          app: serviceName,
+          'managed-by': 'xuanwu-platform',
+          'xuanwu.io/headless-service': 'true'
+        }
+      },
+      spec: {
+        selector: { app: serviceName },
+        ports,
+        type: 'ClusterIP',
+        clusterIP: 'None',
+        clusterIPs: ['None'],
+        publishNotReadyAddresses: true
+      }
+    }
+
+    let existingService: k8s.V1Service | null = null
+    try {
+      existingService = await this.coreApi.readNamespacedService({
+        name: headlessName,
+        namespace: targetNamespace
+      })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        throw error
+      }
+    }
+
+    if (!existingService) {
+      await this.coreApi.createNamespacedService({ namespace: targetNamespace, body: desiredService })
+      return
+    }
+
+    const updatedService: k8s.V1Service = {
+      ...existingService,
+      apiVersion: desiredService.apiVersion,
+      kind: desiredService.kind,
+      metadata: {
+        ...existingService.metadata,
+        name: headlessName,
+        namespace: targetNamespace,
+        labels: {
+          ...(existingService.metadata?.labels ?? {}),
+          ...(desiredService.metadata?.labels ?? {})
+        }
+      },
+      spec: {
+        ...existingService.spec,
+        selector: desiredService.spec?.selector,
+        type: 'ClusterIP',
+        ports,
+        clusterIP: 'None',
+        clusterIPs: ['None'],
+        publishNotReadyAddresses: true
+      }
+    }
+
+    await this.coreApi.replaceNamespacedService({
+      name: headlessName,
+      namespace: targetNamespace,
+      body: updatedService
+    })
+  }
+
   async getServiceNetworkInfo(
     serviceName: string,
     namespace: string
@@ -2938,12 +3085,10 @@ class K8sService {
 
     if (!config.ports.length) {
       await this.deleteK8sServiceIfExists(serviceName, targetNamespace)
+      await this.deleteK8sServiceIfExists(this.getHeadlessServiceName(serviceName), targetNamespace)
       await this.syncIngressResources(service, targetNamespace, config)
       return
     }
-
-    const isHeadlessService = config.serviceType === 'Headless'
-    const serviceSpecType: k8s.V1ServiceSpec['type'] = isHeadlessService ? 'ClusterIP' : config.serviceType
 
     const ports: k8s.V1ServicePort[] = config.ports.map((port, index) => {
       const servicePort: k8s.V1ServicePort = {
@@ -2974,14 +3119,7 @@ class K8sService {
       spec: {
         selector: { app: serviceName },
         ports,
-        type: serviceSpecType,
-        ...(isHeadlessService
-          ? {
-              clusterIP: 'None',
-              clusterIPs: ['None'],
-              publishNotReadyAddresses: true
-            }
-          : {})
+        type: config.serviceType
       }
     }
 
@@ -3000,6 +3138,7 @@ class K8sService {
     if (!existingService) {
       await this.coreApi.createNamespacedService({ namespace: targetNamespace, body: desiredService })
       await this.syncIngressResources(service, targetNamespace, config)
+      await this.syncHeadlessService(service, targetNamespace, config)
       return
     }
 
@@ -3024,11 +3163,30 @@ class K8sService {
       }
     }
 
-    const nextClusterIP = isHeadlessService ? 'None' : existingService.spec?.clusterIP
-    const nextClusterIPs = isHeadlessService ? ['None'] : existingService.spec?.clusterIPs
-    const nextPublishNotReady = isHeadlessService
-      ? true
-      : existingService.spec?.publishNotReadyAddresses
+    const updatedSpec: k8s.V1ServiceSpec = {
+      selector: desiredService.spec?.selector,
+      type: desiredService.spec?.type,
+      ports,
+      publishNotReadyAddresses: existingService.spec?.publishNotReadyAddresses,
+      ipFamilies: existingService.spec?.ipFamilies,
+      ipFamilyPolicy: existingService.spec?.ipFamilyPolicy,
+      sessionAffinity: existingService.spec?.sessionAffinity,
+      externalIPs: existingService.spec?.externalIPs,
+      externalName: existingService.spec?.externalName,
+      externalTrafficPolicy: existingService.spec?.externalTrafficPolicy,
+      internalTrafficPolicy: existingService.spec?.internalTrafficPolicy,
+      loadBalancerIP: existingService.spec?.loadBalancerIP,
+      loadBalancerSourceRanges: existingService.spec?.loadBalancerSourceRanges,
+      healthCheckNodePort: existingService.spec?.healthCheckNodePort
+    }
+
+    const existingClusterIP = existingService.spec?.clusterIP
+    if (existingClusterIP && existingClusterIP.toLowerCase() !== 'none') {
+      updatedSpec.clusterIP = existingClusterIP
+      if (existingService.spec?.clusterIPs) {
+        updatedSpec.clusterIPs = existingService.spec.clusterIPs
+      }
+    }
 
     const updatedService: k8s.V1Service = {
       ...existingService,
@@ -3043,25 +3201,7 @@ class K8sService {
           ...(desiredService.metadata?.labels ?? {})
         }
       },
-      spec: {
-        ...existingService.spec,
-        selector: desiredService.spec?.selector,
-        type: serviceSpecType,
-        ports,
-        clusterIP: nextClusterIP,
-        clusterIPs: nextClusterIPs,
-        publishNotReadyAddresses: nextPublishNotReady,
-        ipFamilies: existingService.spec?.ipFamilies,
-        ipFamilyPolicy: existingService.spec?.ipFamilyPolicy,
-        sessionAffinity: existingService.spec?.sessionAffinity,
-        externalIPs: existingService.spec?.externalIPs,
-        externalName: existingService.spec?.externalName,
-        externalTrafficPolicy: existingService.spec?.externalTrafficPolicy,
-        internalTrafficPolicy: existingService.spec?.internalTrafficPolicy,
-        loadBalancerIP: existingService.spec?.loadBalancerIP,
-        loadBalancerSourceRanges: existingService.spec?.loadBalancerSourceRanges,
-        healthCheckNodePort: existingService.spec?.healthCheckNodePort
-      }
+      spec: updatedSpec
     }
 
     await this.coreApi.replaceNamespacedService({
@@ -3071,6 +3211,7 @@ class K8sService {
     })
 
     await this.syncIngressResources(service, targetNamespace, config)
+    await this.syncHeadlessService(service, targetNamespace, config)
   }
 }
 

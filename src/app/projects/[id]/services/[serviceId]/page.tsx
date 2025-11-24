@@ -106,7 +106,7 @@ type NetworkPortFormState = {
   domainPrefix: string
 }
 
-type ServiceNetworkType = NonNullable<NetworkConfigV2['service_type']>
+type ServiceNetworkType = Exclude<NonNullable<NetworkConfigV2['service_type']>, 'Headless'>
 
 type DeploymentImageInfo = {
   id: string | null
@@ -271,6 +271,7 @@ export default function ServiceDetailPage() {
   const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Mi')
   const [networkServiceType, setNetworkServiceType] = useState<ServiceNetworkType>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
+  const [headlessServiceEnabled, setHeadlessServiceEnabled] = useState(false)
   const [deploying, setDeploying] = useState(false)
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const [deploymentsLoading, setDeploymentsLoading] = useState(true)
@@ -918,13 +919,59 @@ export default function ServiceDetailPage() {
     return service.name || 'service'
   })()
   const defaultDomainPrefix = sanitizeDomainLabel(derivedDefaultDomainSource)
-  const isHeadlessNetwork = networkServiceType === 'Headless'
 
   const initializeNetworkState = useCallback((svc: Service) => {
     const config = svc.network_config as NetworkConfig | undefined
 
+    const resolveHeadlessEnabled = (candidate?: NetworkConfig): boolean => {
+      if (!candidate) {
+        return false
+      }
+
+      const record = candidate as Record<string, unknown>
+      const flagKeys: unknown[] = [
+        record['headless_service_enabled'],
+        record['headlessServiceEnabled'],
+        record['enable_headless_service'],
+        record['enableHeadlessService']
+      ]
+
+      for (const value of flagKeys) {
+        if (typeof value === 'boolean') {
+          if (value) return true
+        } else if (typeof value === 'string') {
+          const normalized = value.trim().toLowerCase()
+          if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+            return true
+          }
+        }
+      }
+
+      const nested = record['headless_service']
+      if (
+        nested &&
+        typeof nested === 'object' &&
+        typeof (nested as { enabled?: unknown }).enabled === 'boolean'
+      ) {
+        return Boolean((nested as { enabled?: boolean }).enabled)
+      }
+
+      if (isNetworkConfigV2(candidate)) {
+        const rawType = (candidate.service_type ?? '').toLowerCase()
+        return rawType === 'headless'
+      }
+
+      const legacyType = (record['service_type'] as string | undefined)?.toLowerCase()
+      return legacyType === 'headless'
+    }
+
+    const headlessEnabled = resolveHeadlessEnabled(config)
+    setHeadlessServiceEnabled(headlessEnabled)
+
     if (config && isNetworkConfigV2(config) && config.ports.length > 0) {
-      setNetworkServiceType(config.service_type ?? 'ClusterIP')
+      const rawType = config.service_type ?? 'ClusterIP'
+      const normalizedType = rawType === 'Headless' ? 'ClusterIP' : rawType
+      setNetworkServiceType((normalizedType ?? 'ClusterIP') as ServiceNetworkType)
       setNetworkPorts(
         config.ports.map((port) => ({
           id: generatePortId(),
@@ -941,7 +988,9 @@ export default function ServiceDetailPage() {
 
     if (config && !isNetworkConfigV2(config)) {
       const legacy = config
-      setNetworkServiceType(legacy.service_type ?? 'ClusterIP')
+      const rawType = legacy.service_type ?? 'ClusterIP'
+      const normalizedType = rawType === 'Headless' ? 'ClusterIP' : rawType
+      setNetworkServiceType((normalizedType ?? 'ClusterIP') as ServiceNetworkType)
       setNetworkPorts([
         {
           id: generatePortId(),
@@ -1798,11 +1847,6 @@ export default function ServiceDetailPage() {
           }
         }
 
-        if (isHeadlessNetwork && port.enableDomain) {
-          networkError = 'Headless Service 不支持域名访问，请关闭域名选项。'
-          break
-        }
-
         if (port.enableDomain) {
           if (!projectIdentifier) {
             networkError = '启用域名访问前，请先在项目中配置项目编号。'
@@ -1830,10 +1874,16 @@ export default function ServiceDetailPage() {
         return
       }
 
+      if (headlessServiceEnabled && portsPayload.length === 0) {
+        toast.error('启用 Headless Service 前请至少配置一个端口。')
+        return
+      }
+
       if (portsPayload.length > 0) {
         updateData.network_config = {
           service_type: networkServiceType,
-          ports: portsPayload
+          ports: portsPayload,
+          headless_service_enabled: headlessServiceEnabled
         }
       } else {
         updateData.network_config = null
@@ -1983,26 +2033,6 @@ export default function ServiceDetailPage() {
 
   const handleNetworkServiceTypeChange = (value: ServiceNetworkType) => {
     setNetworkServiceType(value)
-
-    if (value === 'Headless') {
-      let disabledDomain = false
-      setNetworkPorts((ports) => {
-        let mutated = false
-        const nextPorts = ports.map((port) => {
-          if (port.enableDomain) {
-            disabledDomain = true
-            mutated = true
-            return { ...port, enableDomain: false }
-          }
-          return port
-        })
-        return mutated ? nextPorts : ports
-      })
-
-      if (disabledDomain) {
-        toast.info('已关闭域名访问：Headless Service 仅支持集群内部通过服务名访问。')
-      }
-    }
   }
 
   const addNetworkPort = () => {
@@ -2028,12 +2058,7 @@ export default function ServiceDetailPage() {
   }
 
   const handleToggleDomain = (id: string, enabled: boolean) => {
-    if (isHeadlessNetwork && enabled) {
-      toast.error('Headless Service 不支持域名访问，请选择其他 Service 类型。')
-      return
-    }
-
-    updatePortField(id, 'enableDomain', enabled && !isHeadlessNetwork)
+    updatePortField(id, 'enableDomain', enabled)
   }
 
   const handleToggleExternalAccess = useCallback(async () => {
@@ -3593,14 +3618,24 @@ export default function ServiceDetailPage() {
                       <SelectItem value="ClusterIP">ClusterIP（集群内部）</SelectItem>
                       <SelectItem value="NodePort">NodePort（节点端口）</SelectItem>
                       <SelectItem value="LoadBalancer">LoadBalancer（负载均衡）</SelectItem>
-                      <SelectItem value="Headless">Headless（Pod 直连）</SelectItem>
                     </SelectContent>
                   </Select>
-                  {networkServiceType === 'Headless' && (
-                    <p className="text-xs text-amber-600">
-                      Headless Service 不会创建 ClusterIP，可通过服务名解析到 Pod IP，实现同命名空间内的直接访问。
-                    </p>
-                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={headlessServiceEnabled}
+                      onChange={(e) => setHeadlessServiceEnabled(e.target.checked)}
+                    />
+                    启用 Headless Service
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    启用后平台会额外创建 {service?.name ? `${service.name}-headless` : 'Headless Service'}，
+                    用于在同一命名空间内通过服务名直接访问所有 Pod，原有域名与端口配置保持不变。
+                  </p>
                 </div>
 
                 {networkPorts.length === 0 ? (
@@ -3697,22 +3732,17 @@ export default function ServiceDetailPage() {
                             <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
                               <input
                                 type="checkbox"
-                                className="h-4 w-4 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="h-4 w-4"
                                 checked={port.enableDomain}
                                 onChange={(e) => handleToggleDomain(port.id, e.target.checked)}
-                                disabled={isHeadlessNetwork}
                               />
                               启用域名访问
                             </label>
-                            {isHeadlessNetwork ? (
-                              <p className="text-xs text-gray-500">Headless Service 不支持域名访问。</p>
-                            ) : (
-                              <p className="text-xs text-gray-500">
-                                启用后可通过{' '}
-                                <span className="font-mono text-gray-700">{previewDomain}</span> 访问该端口
-                              </p>
-                            )}
-                            {port.enableDomain && !isHeadlessNetwork && (
+                            <p className="text-xs text-gray-500">
+                              启用后可通过{' '}
+                              <span className="font-mono text-gray-700">{previewDomain}</span> 访问该端口
+                            </p>
+                            {port.enableDomain && (
                               <div className="space-y-3">
                                 <div className="space-y-2">
                                   <Label className="text-sm font-medium text-gray-700">域名前缀</Label>

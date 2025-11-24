@@ -67,6 +67,7 @@ export interface NetworkPortConfig {
 export interface NetworkConfigV2 {
   service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'Headless'
   ports: NetworkPortConfig[]
+  headless_service_enabled?: boolean
 }
 
 export interface LegacyNetworkConfig {
@@ -75,6 +76,7 @@ export interface LegacyNetworkConfig {
   service_type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'Headless'
   node_port?: number
   protocol?: 'TCP' | 'UDP'
+  headless_service_enabled?: boolean
 }
 
 export type NetworkConfig = NetworkConfigV2 | LegacyNetworkConfig
