@@ -2651,8 +2651,9 @@ class K8sService {
 
   private buildVolumeMounts(volumes?: Array<{ nfs_subpath?: string; container_path: string; read_only?: boolean }>, serviceName?: string): k8s.V1VolumeMount[] | undefined {
     if (!volumes || volumes.length === 0) return undefined
-    return volumes.map((v, i) => ({
-      name: `volume-${i}`,
+    // 所有挂载使用同一个 volume (shared-volume)，通过 subPath 区分不同路径
+    return volumes.map((v) => ({
+      name: 'shared-volume',
       mountPath: v.container_path,
       subPath: this.generateSubPath(serviceName || 'unknown', v.nfs_subpath, v.container_path),
       readOnly: v.read_only
@@ -2689,13 +2690,13 @@ class K8sService {
 
   private buildVolumes(volumes?: Array<{ nfs_subpath?: string; container_path: string }>): k8s.V1Volume[] | undefined {
     if (!volumes || volumes.length === 0) return undefined
-    // 所有卷都使用 shared-nfs-pvc
-    return volumes.map((v, i) => ({
-      name: `volume-${i}`,
+    // 只创建一个 volume，多个 volumeMount 通过 subPath 共享同一个 PVC
+    return [{
+      name: 'shared-volume',
       persistentVolumeClaim: {
         claimName: 'shared-nfs-pvc'
       }
-    }))
+    }]
   }
 
   private buildImportCandidateFromWorkload(
