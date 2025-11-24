@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { AlertTriangle, ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink, PencilLine } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink, PencilLine, Folder } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -25,6 +25,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
+import { ServiceFileManager } from '@/components/services/ServiceFileManager'
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { projectSvc } from '@/service/projectSvc'
@@ -2405,6 +2406,10 @@ export default function ServiceDetailPage() {
               <Terminal className="w-4 h-4" />
               日志
             </TabsTrigger>
+            <TabsTrigger value="files" className="gap-2">
+              <Folder className="w-4 h-4" />
+              文件管理
+            </TabsTrigger>
           </TabsList>
 
           {/* 通用配置 */}
@@ -3984,6 +3989,11 @@ export default function ServiceDetailPage() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* 文件管理 */}
+          <TabsContent value="files">
+            <ServiceFileManager serviceId={serviceId} active={activeTab === 'files'} />
           </TabsContent>
         </Tabs>
       </div>
