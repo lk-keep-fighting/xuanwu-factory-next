@@ -68,3 +68,18 @@ export interface K8sServiceStatus {
   dbStatus?: BaseService['status']
   error?: string
 }
+
+export type K8sFileEntryType = 'file' | 'directory' | 'other'
+
+export interface K8sFileEntry {
+  name: string
+  path: string
+  type: K8sFileEntryType
+  isHidden: boolean
+}
+
+export interface K8sFileListResult {
+  path: string
+  parentPath: string | null
+  entries: K8sFileEntry[]
+}

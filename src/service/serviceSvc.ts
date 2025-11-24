@@ -6,7 +6,7 @@ import type {
   ServiceImageRecord,
   ServiceImageStatus
 } from '@/types/project'
-import type { K8sServiceStatus } from '@/types/k8s'
+import type { K8sFileListResult, K8sServiceStatus } from '@/types/k8s'
 
 const API_BASE = '/api/services'
 
@@ -526,6 +526,68 @@ export const serviceSvc = {
     }
 
     return payload as K8sServiceStatus
+  },
+
+  /**
+   * 获取服务容器中的文件列表
+   */
+  async listServiceFiles(serviceId: string, path: string = '/'): Promise<K8sFileListResult> {
+    const params = new URLSearchParams()
+    if (typeof path === 'string') {
+      params.set('path', path)
+    }
+    const query = params.toString()
+    const response = await fetch(`${API_BASE}/${serviceId}/files${query ? `?${query}` : ''}`)
+    const payload = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+          ? ((payload as { error?: string }).error as string)
+          : '获取文件列表失败'
+      throw new Error(message)
+    }
+
+    return (payload as K8sFileListResult) || { path: '/', parentPath: null, entries: [] }
+  },
+
+  /**
+   * 上传文件到服务容器
+   */
+  async uploadServiceFile(serviceId: string, directoryPath: string, file: File | Blob): Promise<{ success: boolean; path?: string }> {
+    const formData = new FormData()
+    formData.append('path', directoryPath || '/')
+    formData.append('file', file)
+
+    const response = await fetch(`${API_BASE}/${serviceId}/files`, {
+      method: 'POST',
+      body: formData
+    })
+
+    const payload = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+          ? ((payload as { error?: string }).error as string)
+          : '上传文件失败'
+      throw new Error(message)
+    }
+
+    return {
+      success: Boolean((payload as { success?: boolean })?.success ?? true),
+      path: (payload as { path?: string })?.path
+    }
+  },
+
+  /**
+   * 获取文件下载链接
+   */
+  getServiceFileDownloadUrl(serviceId: string, filePath: string): string {
+    const params = new URLSearchParams()
+    params.set('path', filePath)
+    const query = params.toString()
+    return `${API_BASE}/${serviceId}/files/download${query ? `?${query}` : ''}`
   },
 
   /**
