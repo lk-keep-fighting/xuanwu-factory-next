@@ -6,6 +6,10 @@ export interface Project {
   description?: string
   created_at?: string
   updated_at?: string
+  _count?: {
+    services?: number
+    requirements?: number
+  }
 }
 
 // 服务类型枚举

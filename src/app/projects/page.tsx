@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, FolderOpen, Calendar, MoreVertical, Pencil, Trash2, Tag, Sparkles, Search, ClipboardList } from 'lucide-react'
+import { Plus, FolderOpen, MoreVertical, Pencil, Trash2, Sparkles, Search, ClipboardList } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -63,16 +65,46 @@ const validateProjectForm = (form: ProjectFormState): string | null => {
   return null
 }
 
-const formatDate = (dateString?: string) => {
-  if (!dateString) return ''
-  const date = new Date(dateString)
-  const now = new Date()
-  const diffInHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60))
+const formatDateTime = (dateString?: string) => {
+  if (!dateString) return '--'
 
-  if (diffInHours < 1) return '刚刚创建'
-  if (diffInHours < 24) return `创建于 ${diffInHours} 小时前`
-  if (diffInHours < 48) return '创建于 1 天前'
-  return `创建于 ${Math.floor(diffInHours / 24)} 天前`
+  const date = new Date(dateString)
+  if (Number.isNaN(date.getTime())) return '--'
+
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  const hours = `${date.getHours()}`.padStart(2, '0')
+  const minutes = `${date.getMinutes()}`.padStart(2, '0')
+
+  return `${year}-${month}-${day} ${hours}:${minutes}`
+}
+
+const formatRelativeTime = (dateString?: string) => {
+  if (!dateString) return '暂无记录'
+
+  const date = new Date(dateString)
+  if (Number.isNaN(date.getTime())) return '暂无记录'
+
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+
+  if (diffMs <= 0) return '刚刚'
+
+  const diffMinutes = Math.floor(diffMs / (1000 * 60))
+  if (diffMinutes < 1) return '刚刚'
+  if (diffMinutes < 60) return `${diffMinutes} 分钟前`
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours} 小时前`
+
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 30) return `${diffDays} 天前`
+
+  const diffMonths = Math.floor(diffDays / 30)
+  if (diffMonths < 12) return `${diffMonths} 个月前`
+
+  return `${Math.floor(diffMonths / 12)} 年前`
 }
 
 const getErrorMessage = (error: unknown) =>
@@ -256,6 +288,22 @@ export default function ProjectsPage() {
 
   const hasActiveSearch = searchValue !== ''
 
+  const projectStats = useMemo(() => {
+    const totals = projects.reduce(
+      (acc, project) => {
+        acc.totalServices += project._count?.services ?? 0
+        acc.totalRequirements += project._count?.requirements ?? 0
+        return acc
+      },
+      { totalServices: 0, totalRequirements: 0 }
+    )
+
+    return {
+      totalProjects: projects.length,
+      ...totals
+    }
+  }, [projects])
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -317,6 +365,38 @@ export default function ProjectsPage() {
           </div>
         </div>
 
+        {!loading && projects.length > 0 && (
+          <div className="grid gap-4 mb-6 sm:grid-cols-2 lg:grid-cols-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>项目总数</CardDescription>
+                <CardTitle className="text-3xl">{projectStats.totalProjects}</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 text-sm text-gray-500">
+                当前系统中的项目数量
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>服务总数</CardDescription>
+                <CardTitle className="text-3xl">{projectStats.totalServices}</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 text-sm text-gray-500">
+                所有关联项目下的服务实例数量
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>关联需求</CardDescription>
+                <CardTitle className="text-3xl">{projectStats.totalRequirements}</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 text-sm text-gray-500">
+                需求管理模块中与项目关联的需求条目
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {loading ? (
           <div className="text-center py-12 text-gray-500">加载中...</div>
         ) : projects.length === 0 ? (
@@ -345,60 +425,120 @@ export default function ProjectsPage() {
             </Card>
           )
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((project) => (
-              <Card
-                key={project.id}
-                className="hover:shadow-lg transition-all duration-200 cursor-pointer hover:-translate-y-1"
-                onClick={() => project.id && router.push(`/projects/${project.id}`)}
-              >
-                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-                  <div>
-                    <CardTitle>{project.name}</CardTitle>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={(event) => event.stopPropagation()}
+          <Card className="gap-0 py-0">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[220px]">项目</TableHead>
+                    <TableHead className="min-w-[220px]">描述</TableHead>
+                    <TableHead className="w-32">服务数量</TableHead>
+                    <TableHead className="w-32">关联需求</TableHead>
+                    <TableHead className="w-48">创建时间</TableHead>
+                    <TableHead className="w-48">最近更新</TableHead>
+                    <TableHead className="min-w-[180px] text-right">常规操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {projects.map((project) => {
+                    const serviceCount = project._count?.services ?? 0
+                    const requirementCount = project._count?.requirements ?? 0
+
+                    return (
+                      <TableRow
+                        key={project.id ?? project.identifier}
+                        className={project.id ? 'cursor-pointer' : undefined}
+                        onClick={() => project.id && router.push(`/projects/${project.id}`)}
                       >
-                        <MoreVertical className="w-4 h-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-                      <DropdownMenuItem onClick={() => openEditDialog(project)}>
-                        <Pencil className="w-4 h-4 mr-2" />
-                        编辑
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="text-red-600 focus:text-red-600"
-                        disabled={deletingId === project.id}
-                        onClick={() => handleDeleteProject(project)}
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        删除
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Tag className="w-4 h-4" />
-                    <span>{project.identifier}</span>
-                  </div>
-                  <p className="text-gray-600 text-sm min-h-[48px]">
-                    {project.description || '暂无描述'}
-                  </p>
-                </CardContent>
-                <CardFooter className="text-xs text-gray-400 flex items-center gap-1">
-                  <Calendar className="w-3 h-3" />
-                  {formatDate(project.created_at)}
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
+                        <TableCell className="align-top py-4">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-semibold text-gray-900">{project.name}</p>
+                              <Badge variant="outline" className="font-mono text-xs tracking-wide text-gray-600">
+                                {project.identifier}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              ID：{project.id ?? '未生成'}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell className="max-w-xl whitespace-normal text-sm text-gray-600">
+                          {project.description || '暂无描述'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="text-base font-semibold text-gray-900">{serviceCount}</span>
+                            <span className="text-xs text-gray-500">服务</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="text-base font-semibold text-gray-900">{requirementCount}</span>
+                            <span className="text-xs text-gray-500">需求</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-gray-900">{formatDateTime(project.created_at)}</span>
+                            <span className="text-xs text-gray-500">{formatRelativeTime(project.created_at)}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-gray-900">{formatRelativeTime(project.updated_at)}</span>
+                            <span className="text-xs text-gray-500">{formatDateTime(project.updated_at)}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                if (project.id) {
+                                  router.push(`/projects/${project.id}`)
+                                }
+                              }}
+                            >
+                              进入详情
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+                                <DropdownMenuItem onClick={() => openEditDialog(project)}>
+                                  <Pencil className="w-4 h-4 mr-2" />
+                                  编辑
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-red-600 focus:text-red-600"
+                                  disabled={deletingId === project.id}
+                                  onClick={() => handleDeleteProject(project)}
+                                >
+                                  <Trash2 className="w-4 h-4 mr-2" />
+                                  删除
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         )}
       </div>
 
