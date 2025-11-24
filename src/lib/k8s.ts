@@ -322,6 +322,8 @@ class K8sService {
     if (service.type === ServiceType.DATABASE) {
       await this.deployDatabaseStatefulSet(service as DatabaseService, targetNamespace, effectiveNetwork)
     } else {
+      const commandConfig = this.parseCommand((service as ApplicationService | ImageService).command)
+      
       const deployment: k8s.V1Deployment = {
         metadata: {
           name: service.name,
@@ -341,6 +343,8 @@ class K8sService {
               containers: [{
                 name: service.name,
                 image: this.getImage(service),
+                ...(commandConfig.command && { command: commandConfig.command }),
+                ...(commandConfig.args && { args: commandConfig.args }),
                 ports: effectiveNetwork
                   ? effectiveNetwork.ports.map((port, index) => ({
                       containerPort: port.containerPort,
@@ -459,6 +463,7 @@ class K8sService {
 
     const volumeSize = typeof service.volume_size === 'string' ? service.volume_size.trim() : ''
     const dataMountPath = this.getDatabaseDataMountPath(service)
+    const commandConfig = this.parseCommand((service as DatabaseService & { command?: string }).command)
 
     let volumeClaimTemplates: k8s.V1PersistentVolumeClaim[] | undefined
 
@@ -516,6 +521,8 @@ class K8sService {
               {
                 name: serviceName,
                 image: this.getImage(service),
+                ...(commandConfig.command && { command: commandConfig.command }),
+                ...(commandConfig.args && { args: commandConfig.args }),
                 ports: containerPorts,
                 env: this.buildEnvVars(service),
                 resources: this.buildResources(service.resource_limits, service.resource_requests),
@@ -1303,6 +1310,7 @@ class K8sService {
     }
 
     const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
+    const commandConfig = this.parseCommand((service as ApplicationService | ImageService).command)
 
     // 构建 Deployment 对象
     const deployment: k8s.V1Deployment = {
@@ -1329,6 +1337,8 @@ class K8sService {
             containers: [{
               name: service.name,
               image: this.getImage(service),
+              ...(commandConfig.command && { command: commandConfig.command }),
+              ...(commandConfig.args && { args: commandConfig.args }),
               ports: normalizedNetwork
                 ? normalizedNetwork.ports.map((port, index) => ({
                     containerPort: port.containerPort,
@@ -2303,6 +2313,69 @@ class K8sService {
     } else {
       const imageService = service as ImageService
       return `${imageService.image}:${imageService.tag || 'latest'}`
+    }
+  }
+
+  /**
+   * 解析命令字符串为 K8s 容器的 command 和 args
+   * @param commandStr 用户输入的命令字符串
+   * @returns {{ command?: string[], args?: string[] }} K8s 容器配置
+   */
+  private parseCommand(commandStr?: string): { command?: string[], args?: string[] } {
+    if (!commandStr || typeof commandStr !== 'string') {
+      return {}
+    }
+
+    const trimmed = commandStr.trim()
+    if (!trimmed) {
+      return {}
+    }
+
+    // 简单的 shell 命令解析：按空格分割，保留引号内的内容
+    const parts: string[] = []
+    let current = ''
+    let inQuotes = false
+    let quoteChar = ''
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const char = trimmed[i]
+      
+      if ((char === '"' || char === "'") && !inQuotes) {
+        inQuotes = true
+        quoteChar = char
+      } else if (char === quoteChar && inQuotes) {
+        inQuotes = false
+        quoteChar = ''
+      } else if (char === ' ' && !inQuotes) {
+        if (current) {
+          parts.push(current)
+          current = ''
+        }
+      } else {
+        current += char
+      }
+    }
+
+    if (current) {
+      parts.push(current)
+    }
+
+    if (parts.length === 0) {
+      return {}
+    }
+
+    // 如果以 sh -c 或 bash -c 开头，使用 shell 模式
+    if (parts.length >= 3 && (parts[0] === 'sh' || parts[0] === 'bash') && parts[1] === '-c') {
+      return {
+        command: [parts[0], '-c'],
+        args: [parts.slice(2).join(' ')]
+      }
+    }
+
+    // 否则，第一个为 command，剩余为 args
+    return {
+      command: [parts[0]],
+      args: parts.slice(1)
     }
   }
 
