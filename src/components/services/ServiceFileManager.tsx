@@ -135,7 +135,7 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
           await serviceSvc.uploadServiceFile(serviceId, currentPathRef.current, file)
         }
         toast.success(files.length > 1 ? `已上传 ${files.length} 个文件` : `文件 ${files[0]?.name ?? ''} 上传成功`)
-        await fetchEntries(currentPathRef.current)
+        void fetchEntries(currentPathRef.current)
       } catch (uploadError) {
         const message = uploadError instanceof Error ? uploadError.message : '上传文件失败'
         toast.error(`上传文件失败：${message}`)
