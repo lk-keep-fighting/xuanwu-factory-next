@@ -302,8 +302,8 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
                 </TableRow>
               ) : null}
 
-              {entries.map((entry) => (
-                <TableRow key={entry.path}>
+              {entries.map((entry, index) => (
+                <TableRow key={`${entry.path || entry.name || 'entry'}-${entry.type}-${index}`}>
                   <TableCell>
                     {entry.type === 'directory' ? (
                       <button
