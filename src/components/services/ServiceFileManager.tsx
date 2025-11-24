@@ -69,6 +69,7 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
         const message = fetchError instanceof Error ? fetchError.message : '加载文件失败'
         setError(message)
         toast.error(`加载文件失败：${message}`)
+        setHasInitialized(true)
       } finally {
         setLoading(false)
       }
