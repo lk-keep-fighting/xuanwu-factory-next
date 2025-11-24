@@ -21,6 +21,7 @@ import {
 import { k8sSvc } from '@/service/k8sSvc'
 import type { K8sImportCandidate } from '@/types/k8s'
 import { Download, Loader2, RefreshCcw } from 'lucide-react'
+import { buildStartupCommandPreview } from '@/lib/startup-config'
 
 interface ImportK8sServiceDialogProps {
   projectId: string
@@ -32,9 +33,17 @@ interface ImportK8sServiceDialogProps {
 
 const DEFAULT_NAMESPACE = 'default'
 
-const formatCommand = (value?: string) => {
-  if (!value) return '—'
-  return value.length > 80 ? `${value.slice(0, 77)}...` : value
+const getCommandPreview = (candidate: K8sImportCandidate): string | null => {
+  const preview =
+    buildStartupCommandPreview(candidate.startupConfig ?? null) ?? candidate.command ?? ''
+  const trimmed = preview.trim()
+  return trimmed.length ? trimmed : null
+}
+
+const formatCommand = (candidate: K8sImportCandidate) => {
+  const preview = getCommandPreview(candidate)
+  if (!preview) return '—'
+  return preview.length > 80 ? `${preview.slice(0, 77)}...` : preview
 }
 
 const organizeNamespaces = (values: string[]): string[] => {
@@ -311,14 +320,42 @@ export function ImportK8sServiceDialog({
                       </CardHeader>
                       <CardContent className="flex flex-1 flex-col gap-4 pt-0">
                         <div className="flex-1 space-y-3">
-                          {candidate.command && (
-                            <div className="space-y-1">
-                              <Label className="text-xs font-medium text-gray-600">💻 启动命令</Label>
-                              <div className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 p-2 rounded font-mono">
-                                {formatCommand(candidate.command)}
+                          {(() => {
+                            const commandPreview = getCommandPreview(candidate)
+                            const hasStartupDetails = Boolean(
+                              commandPreview ||
+                                candidate.startupConfig?.working_dir ||
+                                (candidate.startupConfig?.args?.length ?? 0) > 0
+                            )
+
+                            if (!hasStartupDetails) {
+                              return null
+                            }
+
+                            return (
+                              <div className="space-y-1">
+                                <Label className="text-xs font-medium text-gray-600">💻 启动配置</Label>
+                                {commandPreview ? (
+                                  <div className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 p-2 rounded font-mono">
+                                    {formatCommand(candidate)}
+                                  </div>
+                                ) : null}
+                                {candidate.startupConfig?.working_dir && (
+                                  <p className="text-xs text-gray-500">
+                                    工作目录：
+                                    <span className="font-mono bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
+                                      {candidate.startupConfig.working_dir}
+                                    </span>
+                                  </p>
+                                )}
+                                {candidate.startupConfig?.args?.length ? (
+                                  <p className="text-xs text-gray-500">
+                                    参数：{candidate.startupConfig.args.join(' ')}
+                                  </p>
+                                ) : null}
                               </div>
-                            </div>
-                          )}
+                            )
+                          })()}
 
                           {candidate.networkConfig && (
                             <div className="space-y-1">

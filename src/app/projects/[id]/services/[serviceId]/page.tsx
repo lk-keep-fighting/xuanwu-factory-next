@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Combobox,
@@ -34,8 +35,9 @@ import { findVolumeTemplate, generateNFSSubpath } from '@/lib/volume-templates'
 import { cn } from '@/lib/utils'
 import { parseImageReference, formatImageReference, isImageReferenceEqual } from '@/lib/service-image'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
+import { formatStartupMultilineValue, parseStartupMultilineInput, sanitizeStartupConfig, buildStartupCommandPreview } from '@/lib/startup-config'
 import { ServiceType, GitProvider, DatabaseType, DATABASE_TYPE_METADATA } from '@/types/project'
-import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus, DatabaseService, SupportedDatabaseType } from '@/types/project'
+import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus, DatabaseService, SupportedDatabaseType, K8sStartupConfig } from '@/types/project'
 import type { K8sServiceStatus } from '@/types/k8s'
 import type { GitProviderConfig } from '@/types/system'
 
@@ -251,6 +253,31 @@ const buildDatabaseConnectionUrl = (
     : `redis://${normalizedHost}:${normalizedPort}`
 }
 
+const deriveStartupConfig = (
+  source?: { k8s_startup_config?: K8sStartupConfig | null; command?: string | null } | null
+): K8sStartupConfig | null => {
+  if (!source) {
+    return null
+  }
+
+  if (source.k8s_startup_config && typeof source.k8s_startup_config === 'object') {
+    return source.k8s_startup_config as K8sStartupConfig
+  }
+
+  const fallbackCommand = typeof source.command === 'string' ? source.command.trim() : ''
+  if (fallbackCommand) {
+    return { command: [fallbackCommand] }
+  }
+
+  return null
+}
+
+const cloneStartupConfig = (config: K8sStartupConfig): K8sStartupConfig => ({
+  ...(config.working_dir ? { working_dir: config.working_dir } : {}),
+  ...(Array.isArray(config.command) ? { command: [...config.command] } : {}),
+  ...(Array.isArray(config.args) ? { args: [...config.args] } : {})
+})
+
 export default function ServiceDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -343,6 +370,17 @@ export default function ServiceDetailPage() {
   })
   const serviceType = service?.type
   const isApplicationService = serviceType === ServiceType.APPLICATION
+  const readonlyStartupConfig = useMemo(() => deriveStartupConfig(service), [service])
+  const formStartupConfig = useMemo(() => deriveStartupConfig(editedService ?? service), [editedService, service])
+  const startupWorkingDirValue = isEditing
+    ? formStartupConfig?.working_dir ?? ''
+    : readonlyStartupConfig?.working_dir ?? ''
+  const startupCommandValue = isEditing
+    ? formatStartupMultilineValue(formStartupConfig?.command)
+    : formatStartupMultilineValue(readonlyStartupConfig?.command)
+  const startupArgsValue = isEditing
+    ? formatStartupMultilineValue(formStartupConfig?.args)
+    : formatStartupMultilineValue(readonlyStartupConfig?.args)
 
   useEffect(() => {
     if (!pendingNetworkDeployStorageKey) {
@@ -1779,6 +1817,49 @@ export default function ServiceDetailPage() {
     }
   }, [isApplicationService, buildDialogOpen])
 
+  const handleStartupWorkingDirChange = (value: string) => {
+    if (!isEditing) {
+      return
+    }
+    setEditedService((prev: any) => {
+      const nextConfig =
+        prev?.k8s_startup_config && typeof prev.k8s_startup_config === 'object'
+          ? { ...prev.k8s_startup_config }
+          : {}
+      if (value.length) {
+        nextConfig.working_dir = value
+      } else {
+        delete nextConfig.working_dir
+      }
+      return {
+        ...prev,
+        k8s_startup_config: Object.keys(nextConfig).length ? nextConfig : undefined
+      }
+    })
+  }
+
+  const handleStartupListChange = (field: 'command' | 'args', value: string) => {
+    if (!isEditing) {
+      return
+    }
+    const parsed = parseStartupMultilineInput(value)
+    setEditedService((prev: any) => {
+      const nextConfig =
+        prev?.k8s_startup_config && typeof prev.k8s_startup_config === 'object'
+          ? { ...prev.k8s_startup_config }
+          : {}
+      if (parsed.length) {
+        nextConfig[field] = parsed
+      } else {
+        delete nextConfig[field]
+      }
+      return {
+        ...prev,
+        k8s_startup_config: Object.keys(nextConfig).length ? nextConfig : undefined
+      }
+    })
+  }
+
   // 保存配置
   const handleSave = async () => {
     if (!serviceId) return
@@ -1797,6 +1878,16 @@ export default function ServiceDetailPage() {
         ...editedService,
         env_vars: envVarsObj,
         volumes: volumes.filter((v) => v.container_path.trim())
+      }
+
+      const sanitizedStartupConfig = sanitizeStartupConfig(editedService?.k8s_startup_config ?? null)
+      if (sanitizedStartupConfig) {
+        updateData.k8s_startup_config = sanitizedStartupConfig
+        const preview = buildStartupCommandPreview(sanitizedStartupConfig)
+        updateData.command = preview ?? null
+      } else {
+        updateData.k8s_startup_config = null
+        updateData.command = null
       }
 
       // 组合资源限制
@@ -3007,18 +3098,43 @@ export default function ServiceDetailPage() {
                         <Input value={service.auto_deploy ? '启用' : '禁用'} disabled />
                       </div>
                     </div>
-                    {service.command && (
+                    <div className="border-t border-gray-200 pt-4 mt-4 space-y-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-900">Kubernetes 启动配置</h4>
+                        <p className="text-xs text-gray-500">留空则使用镜像默认入口或 Dockerfile 中定义的命令。</p>
+                      </div>
                       <div className="space-y-2">
-                        <Label>启动命令</Label>
+                        <Label>工作目录</Label>
                         <Input
-                          value={isEditing ? (editedService.command || '') : (service.command || '')}
-                          onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
+                          value={startupWorkingDirValue}
+                          onChange={(e) => handleStartupWorkingDirChange(e.target.value)}
                           disabled={!isEditing}
+                          placeholder="/app"
                         />
                       </div>
-                    )}
+                      <div className="space-y-2">
+                        <Label>启动命令</Label>
+                        <Textarea
+                          value={startupCommandValue}
+                          onChange={(e) => handleStartupListChange('command', e.target.value)}
+                          disabled={!isEditing}
+                          placeholder={'每行一个命令片段，例如:\n/bin/sh\n-c'}
+                        />
+                        <p className="text-xs text-gray-500">对应 Kubernetes container.command 数组。</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>命令参数</Label>
+                        <Textarea
+                          value={startupArgsValue}
+                          onChange={(e) => handleStartupListChange('args', e.target.value)}
+                          disabled={!isEditing}
+                          placeholder={'每行一个参数，例如:\n--port=3000'}
+                        />
+                        <p className="text-xs text-gray-500">对应 Kubernetes container.args 数组。</p>
+                      </div>
+                    </div>
                     <div className="border-t border-gray-200 pt-4 mt-4">
-                      <h4 className="text-sm font-medium text-gray-700 mb-3">资源限制</h4>
+
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label>CPU 限制</Label>
@@ -3424,16 +3540,6 @@ export default function ServiceDetailPage() {
                     imagePlaceholder="例如：nginx"
                     tagPlaceholder="latest"
                   />
-                  {service.command && (
-                    <div className="space-y-2">
-                      <Label>启动命令</Label>
-                      <Input
-                        value={isEditing ? (editedService.command || '') : (service.command || '')}
-                        onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
-                        disabled={!isEditing}
-                      />
-                    </div>
-                  )}
                   <div className="space-y-2">
                     <Label>副本数</Label>
                     <Input
@@ -3442,6 +3548,41 @@ export default function ServiceDetailPage() {
                       onChange={(e) => setEditedService({ ...editedService, replicas: parseInt(e.target.value) })}
                       disabled={!isEditing}
                     />
+                  </div>
+                  <div className="space-y-3 border-t border-gray-200 pt-4">
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-900">Kubernetes 启动配置</h4>
+                      <p className="text-xs text-gray-500">留空则沿用镜像默认启动命令。</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>工作目录</Label>
+                      <Input
+                        value={startupWorkingDirValue}
+                        onChange={(e) => handleStartupWorkingDirChange(e.target.value)}
+                        disabled={!isEditing}
+                        placeholder="/app"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>启动命令</Label>
+                      <Textarea
+                        value={startupCommandValue}
+                        onChange={(e) => handleStartupListChange('command', e.target.value)}
+                        disabled={!isEditing}
+                        placeholder={'每行一个命令片段，例如:\n/bin/sh\n-c'}
+                      />
+                      <p className="text-xs text-gray-500">对应 Kubernetes container.command 数组。</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>命令参数</Label>
+                      <Textarea
+                        value={startupArgsValue}
+                        onChange={(e) => handleStartupListChange('args', e.target.value)}
+                        disabled={!isEditing}
+                        placeholder={'每行一个参数，例如:\n--port=3000'}
+                      />
+                      <p className="text-xs text-gray-500">对应 Kubernetes container.args 数组。</p>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

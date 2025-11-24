@@ -42,6 +42,7 @@ model Service {
   port                    Int?
   replicas                Int?
   command                 String?
+  k8s_startup_config      Json?
   auto_deploy             Boolean                  @default(false)
   built_image             String?
   database_type           String?                  @db.VarChar(32)

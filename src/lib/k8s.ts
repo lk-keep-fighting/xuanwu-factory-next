@@ -13,7 +13,8 @@ import {
   ServiceType,
   type NetworkConfigV2,
   DATABASE_TYPE_METADATA,
-  type SupportedDatabaseType
+  type SupportedDatabaseType,
+  type K8sStartupConfig
 } from '@/types/project'
 import type {
   K8sImportCandidate,
@@ -23,6 +24,7 @@ import type {
   K8sFileListResult
 } from '@/types/k8s'
 import * as yaml from 'js-yaml'
+import { sanitizeStartupConfig, buildStartupCommandPreview } from '@/lib/startup-config'
 
 type NormalizedPortDomain = {
   host: string
@@ -322,6 +324,7 @@ class K8sService {
     if (service.type === ServiceType.DATABASE) {
       await this.deployDatabaseStatefulSet(service as DatabaseService, targetNamespace, effectiveNetwork)
     } else {
+      const startupOverrides = this.normalizeServiceStartupConfig(service)
       const deployment: k8s.V1Deployment = {
         metadata: {
           name: service.name,
@@ -350,7 +353,14 @@ class K8sService {
                   : undefined,
                 env: this.buildEnvVars(service),
                 resources: this.buildResources(service.resource_limits),
-                volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
+                volumeMounts: this.buildVolumeMounts(service.volumes, service.name),
+                ...(startupOverrides?.workingDir ? { workingDir: startupOverrides.workingDir } : {}),
+                ...(startupOverrides?.command && startupOverrides.command.length
+                  ? { command: startupOverrides.command }
+                  : {}),
+                ...(startupOverrides?.args && startupOverrides.args.length
+                  ? { args: startupOverrides.args }
+                  : {})
               }],
               volumes: this.buildVolumes(service.volumes)
             }
@@ -492,6 +502,7 @@ class K8sService {
       }
     }
 
+    const startupOverrides = this.normalizeServiceStartupConfig(service)
     const statefulSet: k8s.V1StatefulSet = {
       metadata: {
         name: serviceName,
@@ -519,7 +530,14 @@ class K8sService {
                 ports: containerPorts,
                 env: this.buildEnvVars(service),
                 resources: this.buildResources(service.resource_limits),
-                volumeMounts: volumeMounts.length ? volumeMounts : undefined
+                volumeMounts: volumeMounts.length ? volumeMounts : undefined,
+                ...(startupOverrides?.workingDir ? { workingDir: startupOverrides.workingDir } : {}),
+                ...(startupOverrides?.command && startupOverrides.command.length
+                  ? { command: startupOverrides.command }
+                  : {}),
+                ...(startupOverrides?.args && startupOverrides.args.length
+                  ? { args: startupOverrides.args }
+                  : {})
               }
             ],
             volumes: this.buildVolumes(service.volumes)
@@ -2698,6 +2716,50 @@ class K8sService {
     }))
   }
 
+  private normalizeServiceStartupConfig(
+    service: Service
+  ): { workingDir?: string; command?: string[]; args?: string[] } | null {
+    const sanitized = sanitizeStartupConfig(service.k8s_startup_config ?? null)
+
+    if (sanitized) {
+      return {
+        ...(sanitized.working_dir ? { workingDir: sanitized.working_dir } : {}),
+        ...(sanitized.command && sanitized.command.length ? { command: sanitized.command } : {}),
+        ...(sanitized.args && sanitized.args.length ? { args: sanitized.args } : {})
+      }
+    }
+
+    const fallbackCommand = typeof service.command === 'string' ? service.command.trim() : ''
+    if (fallbackCommand) {
+      return {
+        command: ['/bin/sh', '-c', fallbackCommand]
+      }
+    }
+
+    return null
+  }
+
+  private extractStartupConfigFromContainer(container: k8s.V1Container): K8sStartupConfig | null {
+    const candidate: K8sStartupConfig = {}
+
+    if (typeof container.workingDir === 'string') {
+      const workingDir = container.workingDir.trim()
+      if (workingDir) {
+        candidate.working_dir = workingDir
+      }
+    }
+
+    if (Array.isArray(container.command) && container.command.length) {
+      candidate.command = container.command
+    }
+
+    if (Array.isArray(container.args) && container.args.length) {
+      candidate.args = container.args
+    }
+
+    return sanitizeStartupConfig(candidate)
+  }
+
   private buildImportCandidateFromWorkload(
     workload: k8s.V1Deployment | k8s.V1StatefulSet,
     kind: K8sWorkloadKind,
@@ -2732,6 +2794,7 @@ class K8sService {
       .map((value) => value.trim())
       .filter(Boolean)
 
+    const startupConfig = this.extractStartupConfigFromContainer(primaryContainer)
     const volumeInfos = this.extractVolumesFromTemplate(templateSpec, primaryContainer)
 
     const matchedServices = services
@@ -2772,6 +2835,7 @@ class K8sService {
       image: imageInfo.repository,
       tag: imageInfo.tag,
       command: commandParts.length ? commandParts.join(' ') : undefined,
+      startupConfig: startupConfig ?? undefined,
       containers: containersInfo,
       volumes: volumeInfos,
       services: matchedServices,
@@ -2840,6 +2904,15 @@ class K8sService {
       ...(volumes.length ? { volumes } : {}),
       ...(candidate.networkConfig ? { network_config: candidate.networkConfig } : {})
     } as CreateServiceRequest
+
+    const normalizedStartupConfig = sanitizeStartupConfig(candidate.startupConfig ?? null)
+    if (normalizedStartupConfig) {
+      payload.k8s_startup_config = normalizedStartupConfig
+      const preview = buildStartupCommandPreview(normalizedStartupConfig)
+      if (preview) {
+        payload.command = preview
+      }
+    }
 
     return payload
   }

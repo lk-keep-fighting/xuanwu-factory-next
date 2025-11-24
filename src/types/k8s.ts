@@ -1,4 +1,4 @@
-import type { NetworkConfig, BaseService } from './project'
+import type { NetworkConfig, BaseService, K8sStartupConfig } from './project'
 
 export type K8sWorkloadKind = 'Deployment' | 'StatefulSet'
 
@@ -22,6 +22,7 @@ export interface K8sImportContainerInfo {
   tag?: string
   command?: string
   env?: Record<string, string>
+  startupConfig?: K8sStartupConfig
 }
 
 export interface K8sImportVolumeInfo {
@@ -41,6 +42,7 @@ export interface K8sImportCandidate {
   image: string
   tag?: string
   command?: string
+  startupConfig?: K8sStartupConfig
   containers: K8sImportContainerInfo[]
   volumes: K8sImportVolumeInfo[]
   services: K8sImportMatchedService[]

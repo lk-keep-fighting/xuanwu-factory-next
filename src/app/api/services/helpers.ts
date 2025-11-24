@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client'
+import { sanitizeStartupConfig } from '@/lib/startup-config'
 
 export const SERVICE_MUTABLE_FIELDS = [
   'project_id',
@@ -19,6 +20,7 @@ export const SERVICE_MUTABLE_FIELDS = [
   'port',
   'replicas',
   'command',
+  'k8s_startup_config',
   'auto_deploy',
   'built_image',
   'database_type',
@@ -63,6 +65,10 @@ export const sanitizeServiceData = (payload: ServicePayload): ServiceData => {
     data.auto_deploy = typeof data.auto_deploy === 'string'
       ? data.auto_deploy === 'true'
       : Boolean(data.auto_deploy)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, 'k8s_startup_config')) {
+    data.k8s_startup_config = sanitizeStartupConfig(data.k8s_startup_config ?? null)
   }
 
   return data as ServiceData

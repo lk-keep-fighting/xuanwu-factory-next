@@ -85,6 +85,12 @@ export interface LegacyNetworkConfig {
 
 export type NetworkConfig = NetworkConfigV2 | LegacyNetworkConfig
 
+export interface K8sStartupConfig {
+  working_dir?: string
+  command?: string[]
+  args?: string[]
+}
+
 // 服务基础接口
 export interface BaseService {
   id?: string
@@ -108,6 +114,8 @@ export interface BaseService {
   }>
   // 网络配置（Kubernetes Service）
   network_config?: NetworkConfig
+  // K8s 启动配置
+  k8s_startup_config?: K8sStartupConfig | null
 }
 
 // Application 服务 - 基于源码构建

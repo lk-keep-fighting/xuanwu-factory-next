@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -43,6 +44,7 @@ import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Database as DatabaseIcon, Plus, Trash2, Loader2, RefreshCcw } from 'lucide-react'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
+import { parseStartupMultilineInput, sanitizeStartupConfig, buildStartupCommandPreview } from '@/lib/startup-config'
 
 const extractImageBaseName = (image?: string) => {
   if (!image) return ''
@@ -73,7 +75,6 @@ interface ServiceFormValues {
   dockerfile_path?: string
   port?: string
   replicas?: string
-  command?: string
   auto_deploy?: string
   version?: string
   username?: string
@@ -85,6 +86,9 @@ interface ServiceFormValues {
   tag?: string
   cpu?: string
   memory?: string
+  k8s_working_dir?: string
+  k8s_command?: string
+  k8s_args?: string
   [key: string]: unknown
 }
 
@@ -668,7 +672,6 @@ export default function ServiceCreateForm({
         serviceData.dockerfile_path = data.dockerfile_path?.trim() || 'Dockerfile'
         serviceData.port = data.port ? parseInt(data.port) : 3000
         serviceData.replicas = data.replicas ? parseInt(data.replicas) : 1
-        serviceData.command = data.command
         serviceData.auto_deploy = data.auto_deploy === 'true'
         
         // 构建参数
@@ -745,7 +748,6 @@ export default function ServiceCreateForm({
       else if (serviceType === ServiceType.IMAGE) {
         serviceData.image = data.image
         serviceData.tag = data.tag || 'latest'
-        serviceData.command = data.command
         serviceData.replicas = data.replicas ? parseInt(data.replicas) : 1
 
         const portsPayload: Array<{
@@ -837,6 +839,20 @@ export default function ServiceCreateForm({
             service_type: networkServiceType,
             ports: portsPayload
           }
+        }
+      }
+
+      const startupPayload = {
+        working_dir: (data.k8s_working_dir ?? '').trim() || undefined,
+        command: parseStartupMultilineInput(data.k8s_command),
+        args: parseStartupMultilineInput(data.k8s_args)
+      }
+      const startupConfig = sanitizeStartupConfig(startupPayload)
+      if (startupConfig) {
+        serviceData.k8s_startup_config = startupConfig
+        const preview = buildStartupCommandPreview(startupConfig)
+        if (preview) {
+          serviceData.command = preview
         }
       }
 
@@ -1298,15 +1314,6 @@ export default function ServiceCreateForm({
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="command">启动命令</Label>
-              <Input
-                id="command"
-                {...register('command')}
-
-                placeholder="npm start"
-              />
-            </div>
-            <div className="space-y-2">
               <Label htmlFor="auto_deploy">自动部署</Label>
               <Select onValueChange={(value) => setValue('auto_deploy', value)} defaultValue="false">
                 <SelectTrigger>
@@ -1317,6 +1324,38 @@ export default function ServiceCreateForm({
                   <SelectItem value="false">禁用</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-3 border-t border-gray-200 pt-4">
+              <div>
+                <h4 className="text-sm font-medium text-gray-900">Kubernetes 启动配置</h4>
+                <p className="text-xs text-gray-500">可选，留空则使用镜像或构建后的默认启动方式。</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="k8s_working_dir">工作目录</Label>
+                <Input
+                  id="k8s_working_dir"
+                  {...register('k8s_working_dir')}
+                  placeholder="/app"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="k8s_command">启动命令</Label>
+                <Textarea
+                  id="k8s_command"
+                  {...register('k8s_command')}
+                  placeholder={'每行代表一个命令片段，例如:\n/bin/sh\n-c'}
+                />
+                <p className="text-xs text-gray-500">对应 Kubernetes container.command 数组。</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="k8s_args">命令参数</Label>
+                <Textarea
+                  id="k8s_args"
+                  {...register('k8s_args')}
+                  placeholder={'每行代表一个参数，例如:\n--port=3000'}
+                />
+                <p className="text-xs text-gray-500">对应 Kubernetes container.args 数组。</p>
+              </div>
             </div>
           </TabsContent>
         </Tabs>
@@ -1471,16 +1510,6 @@ export default function ServiceCreateForm({
             />
 
             <div className="space-y-2">
-              <Label htmlFor="command">启动命令（可选）</Label>
-              <Input
-                id="command"
-                {...register('command')}
-                placeholder="nginx -g 'daemon off;'"
-              />
-              <p className="text-xs text-gray-500">留空则使用镜像默认命令</p>
-            </div>
-
-            <div className="space-y-2">
               <Label htmlFor="replicas">副本数</Label>
               <Input
                 id="replicas"
@@ -1489,6 +1518,39 @@ export default function ServiceCreateForm({
                 placeholder="1"
                 defaultValue="1"
               />
+            </div>
+
+            <div className="space-y-3 border-t border-gray-200 pt-4">
+              <div>
+                <h4 className="text-sm font-medium text-gray-900">Kubernetes 启动配置</h4>
+                <p className="text-xs text-gray-500">可选，留空则使用镜像默认命令。</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="k8s_working_dir">工作目录</Label>
+                <Input
+                  id="k8s_working_dir"
+                  {...register('k8s_working_dir')}
+                  placeholder="/app"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="k8s_command">启动命令</Label>
+                <Textarea
+                  id="k8s_command"
+                  {...register('k8s_command')}
+                  placeholder={'每行代表一个命令片段，例如:\n/bin/sh\n-c'}
+                />
+                <p className="text-xs text-gray-500">对应 Kubernetes container.command 数组。</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="k8s_args">命令参数</Label>
+                <Textarea
+                  id="k8s_args"
+                  {...register('k8s_args')}
+                  placeholder={'每行代表一个参数，例如:\n--config=/etc/app.conf'}
+                />
+                <p className="text-xs text-gray-500">对应 Kubernetes container.args 数组。</p>
+              </div>
             </div>
           </div>
 
