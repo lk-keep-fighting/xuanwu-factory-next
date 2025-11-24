@@ -158,13 +158,16 @@ export async function POST(
       return NextResponse.json({ error: '请先构建镜像后再部署。' }, { status: 400 })
     }
 
+    // 只有 Application 类型需要 building 状态，Database 和 Image 直接部署
+    const initialDeployStatus = isApplicationService ? 'building' : 'running'
+
     try {
       await prisma.service.update({
         where: { id },
-        data: { status: 'building' }
+        data: { status: initialDeployStatus }
       })
     } catch (statusError: unknown) {
-      console.error('[Services][Deploy] 无法更新服务状态为 building:', statusError)
+      console.error(`[Services][Deploy] 无法更新服务状态为 ${initialDeployStatus}:`, statusError)
 
       if (statusError instanceof Prisma.PrismaClientKnownRequestError && statusError.code === 'P2025') {
         return NextResponse.json({ error: '服务不存在' }, { status: 404 })
@@ -181,7 +184,7 @@ export async function POST(
       const deploymentRecord = await prisma.deployment.create({
         data: {
           service_id: id,
-          status: 'building',
+          status: initialDeployStatus,
           image_tag: deploymentImageTag ?? undefined,
           ...(serviceImageId ? { service_image_id: serviceImageId } : {})
         }

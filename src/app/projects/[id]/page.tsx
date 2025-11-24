@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2, Tag, Pencil, Download, Globe } from 'lucide-react'
+import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, RotateCw, Trash2, Tag, Pencil, Download, Globe, ArrowUpDown } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -420,6 +420,8 @@ export default function ProjectDetailPage() {
   const [loading, setLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [selectedType, setSelectedType] = useState<ServiceType | 'all'>('all')
+  const [sortBy, setSortBy] = useState<'name' | 'updated_at'>('name')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [createServiceType, setCreateServiceType] = useState<ServiceType | null>(null)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
@@ -528,6 +530,18 @@ export default function ProjectDetailPage() {
     }
   }
 
+  // 重启服务
+  const handleRestartService = async (serviceId: string) => {
+    try {
+      await serviceSvc.restartService(serviceId)
+      toast.success('服务重启成功')
+      await loadServices()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`重启失败：${message}`)
+    }
+  }
+
   // 删除服务
   const handleDeleteService = async (serviceId: string) => {
     if (!confirm('确定要删除这个服务吗？')) return
@@ -545,13 +559,27 @@ export default function ProjectDetailPage() {
     }
   }
 
-  // 过滤服务
-  const filteredServices = services.filter((service) => {
-    const normalizedType = normalizeServiceType(service.type)
-    const matchesSearch = service.name.toLowerCase().includes(searchKeyword.toLowerCase())
-    const matchesType = selectedType === 'all' || normalizedType === selectedType
-    return matchesSearch && matchesType
-  })
+  // 过滤和排序服务
+  const filteredAndSortedServices = services
+    .filter((service) => {
+      const normalizedType = normalizeServiceType(service.type)
+      const matchesSearch = service.name.toLowerCase().includes(searchKeyword.toLowerCase())
+      const matchesType = selectedType === 'all' || normalizedType === selectedType
+      return matchesSearch && matchesType
+    })
+    .sort((a, b) => {
+      let comparison = 0
+      
+      if (sortBy === 'name') {
+        comparison = a.name.localeCompare(b.name, 'zh-CN')
+      } else if (sortBy === 'updated_at') {
+        const aTime = new Date(a.updated_at || a.created_at || 0).getTime()
+        const bTime = new Date(b.updated_at || b.created_at || 0).getTime()
+        comparison = aTime - bTime
+      }
+      
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
 
   // 统计服务数量
   const serviceTypeCounts: Record<ServiceType, number> = {
@@ -727,12 +755,36 @@ export default function ProjectDetailPage() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                <ArrowUpDown className="w-4 h-4" />
+                {sortBy === 'name' ? '按名称' : '按更新时间'}
+                {sortOrder === 'asc' ? ' ↑' : ' ↓'}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => { setSortBy('name'); setSortOrder('asc') }}>
+                名称升序 (A-Z)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setSortBy('name'); setSortOrder('desc') }}>
+                名称降序 (Z-A)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setSortBy('updated_at'); setSortOrder('desc') }}>
+                最近更新
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setSortBy('updated_at'); setSortOrder('asc') }}>
+                最早更新
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* 服务列表 */}
         {loading ? (
           <div className="text-center py-12 text-gray-500">加载中...</div>
-        ) : filteredServices.length === 0 ? (
+        ) : filteredAndSortedServices.length === 0 ? (
           <div className="text-center py-12">
             <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">暂无服务</p>
@@ -752,7 +804,7 @@ export default function ProjectDetailPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredServices.map((service) => {
+                  {filteredAndSortedServices.map((service) => {
                     const normalizedType = normalizeServiceType(service.type)
                     const Icon = normalizedType ? SERVICE_TYPE_ICONS[normalizedType] : Package
                     const serviceTypeLabel =
@@ -882,20 +934,13 @@ export default function ProjectDetailPage() {
                               <DropdownMenuItem
                                 onClick={(event) => {
                                   event.stopPropagation()
-                                  // TODO: 启动服务
+                                  if (service.id) {
+                                    void handleRestartService(service.id)
+                                  }
                                 }}
                               >
-                                <Play className="w-4 h-4 mr-2" />
-                                启动
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  // TODO: 停止服务
-                                }}
-                              >
-                                <Square className="w-4 h-4 mr-2" />
-                                停止
+                                <RotateCw className="w-4 h-4 mr-2" />
+                                重启
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 className="text-red-600"

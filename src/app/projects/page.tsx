@@ -311,18 +311,18 @@ export default function ProjectsPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h1 className="text-3xl font-bold text-gray-900">项目管理</h1>
             <div className="flex items-center gap-2">
-              <Button asChild variant="outline" className="gap-2">
+              {/* <Button asChild variant="outline" className="gap-2">
                 <Link href="/ai/employees">
                   <Sparkles className="h-4 w-4" />
                   AI 员工模块
                 </Link>
-              </Button>
-              <Button asChild variant="outline" className="gap-2">
+              </Button> */}
+              {/* <Button asChild variant="outline" className="gap-2">
                 <Link href="/requirements">
                   <ClipboardList className="h-4 w-4" />
                   需求管理模块
                 </Link>
-              </Button>
+              </Button> */}
               <Button asChild variant="outline">
                 <Link href="/settings">系统配置</Link>
               </Button>
@@ -366,7 +366,7 @@ export default function ProjectsPage() {
         </div>
 
         {!loading && projects.length > 0 && (
-          <div className="grid gap-4 mb-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 mb-6 sm:grid-cols-2 lg:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
                 <CardDescription>项目总数</CardDescription>
@@ -385,7 +385,7 @@ export default function ProjectsPage() {
                 所有关联项目下的服务实例数量
               </CardContent>
             </Card>
-            <Card>
+            {/* <Card>
               <CardHeader className="pb-2">
                 <CardDescription>关联需求</CardDescription>
                 <CardTitle className="text-3xl">{projectStats.totalRequirements}</CardTitle>
@@ -393,7 +393,7 @@ export default function ProjectsPage() {
               <CardContent className="pt-0 text-sm text-gray-500">
                 需求管理模块中与项目关联的需求条目
               </CardContent>
-            </Card>
+            </Card> */}
           </div>
         )}
 
@@ -433,7 +433,7 @@ export default function ProjectsPage() {
                     <TableHead className="min-w-[220px]">项目</TableHead>
                     <TableHead className="min-w-[220px]">描述</TableHead>
                     <TableHead className="w-32">服务数量</TableHead>
-                    <TableHead className="w-32">关联需求</TableHead>
+                    {/* <TableHead className="w-32">关联需求</TableHead> */}
                     <TableHead className="w-48">创建时间</TableHead>
                     <TableHead className="w-48">最近更新</TableHead>
                     <TableHead className="min-w-[180px] text-right">常规操作</TableHead>
@@ -458,9 +458,9 @@ export default function ProjectsPage() {
                                 {project.identifier}
                               </Badge>
                             </div>
-                            <p className="text-xs text-gray-500">
+                            {/* <p className="text-xs text-gray-500">
                               ID：{project.id ?? '未生成'}
-                            </p>
+                            </p> */}
                           </div>
                         </TableCell>
                         <TableCell className="max-w-xl whitespace-normal text-sm text-gray-600">
@@ -472,12 +472,12 @@ export default function ProjectsPage() {
                             <span className="text-xs text-gray-500">服务</span>
                           </div>
                         </TableCell>
-                        <TableCell>
+                        {/* <TableCell>
                           <div className="flex flex-col">
                             <span className="text-base font-semibold text-gray-900">{requirementCount}</span>
                             <span className="text-xs text-gray-500">需求</span>
                           </div>
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="text-sm font-medium text-gray-900">{formatDateTime(project.created_at)}</span>
