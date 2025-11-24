@@ -2314,8 +2314,52 @@ export default function ServiceDetailPage() {
                       </span>
                     ) : null}
                   </div>
+                  {/* 显示 K8s 错误信息 */}
                   {hasK8sStatusError ? (
                     <div className="text-xs text-red-500 max-w-xs">{k8sStatusErrorMessage}</div>
+                  ) : null}
+                  {/* 显示镜像拉取错误 */}
+                  {k8sStatusInfo?.podStatus?.imagePullFailed ? (
+                    <div className="mt-2 flex items-start gap-2 text-xs">
+                      <AlertTriangle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
+                      <div className="text-red-600">
+                        <span className="font-medium">镜像拉取失败</span>
+                        {k8sStatusInfo.podStatus.imagePullError ? (
+                          <p className="text-red-500 mt-0.5">{k8sStatusInfo.podStatus.imagePullError}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                  {/* 显示 Deployment Conditions 中的错误 */}
+                  {normalizedK8sStatus === 'error' && k8sStatusInfo?.conditions && Array.isArray(k8sStatusInfo.conditions) && !k8sStatusInfo.podStatus?.imagePullFailed ? (
+                    <div className="mt-2 space-y-1">
+                      {k8sStatusInfo.conditions
+                        .filter((condition: any) => {
+                          const type = condition.type?.toString() || ''
+                          const status = condition.status?.toString() || ''
+                          const reason = condition.reason?.toString() || ''
+                          
+                          // 只显示失败的关键条件
+                          return (
+                            (type === 'Progressing' && status === 'False') ||
+                            (type === 'Available' && status === 'False') ||
+                            (type === 'ReplicaFailure' && status === 'True') ||
+                            reason === 'ProgressDeadlineExceeded'
+                          )
+                        })
+                        .map((condition: any, index: number) => (
+                          <div key={index} className="flex items-start gap-2 text-xs">
+                            <AlertTriangle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
+                            <div className="text-red-600">
+                              <span className="font-medium">{condition.type}</span>
+                              {condition.reason ? <span className="ml-1">({condition.reason})</span> : null}
+                              {condition.message ? (
+                                <p className="text-red-500 mt-0.5">{condition.message}</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
                   ) : null}
                 </div>
               </div>

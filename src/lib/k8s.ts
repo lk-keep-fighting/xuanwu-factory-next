@@ -893,20 +893,103 @@ class K8sService {
     const targetNamespace = namespace?.trim() || 'default'
 
     try {
+      // 获取 Deployment 信息
       const deployment = await this.appsApi.readNamespacedDeployment({ name: serviceName, namespace: targetNamespace })
       const replicas = deployment.spec?.replicas || 0
       const availableReplicas = deployment.status?.availableReplicas || 0
       const readyReplicas = deployment.status?.readyReplicas || 0
       const updatedReplicas = deployment.status?.updatedReplicas || 0
+      const conditions = deployment.status?.conditions || []
 
       let status: 'running' | 'pending' | 'stopped' | 'error' = 'pending'
 
+      // 检查是否有失败的 conditions
+      const hasFailedCondition = conditions.some((condition: any) => {
+        const type = condition.type?.toString() || ''
+        const status = condition.status?.toString() || ''
+        const reason = condition.reason?.toString() || ''
+        
+        // 检查关键错误条件
+        if (type === 'Progressing' && status === 'False') {
+          return true
+        }
+        if (type === 'Available' && status === 'False' && replicas > 0) {
+          return true
+        }
+        if (type === 'ReplicaFailure' && status === 'True') {
+          return true
+        }
+        if (reason === 'ProgressDeadlineExceeded') {
+          return true
+        }
+        
+        return false
+      })
+
       if (replicas === 0) {
         status = 'stopped'
+      } else if (hasFailedCondition) {
+        // 如果有失败条件，标记为 error
+        status = 'error'
       } else if (availableReplicas === replicas && readyReplicas === replicas) {
         status = 'running'
-      } else if (availableReplicas === 0) {
+      } else if (availableReplicas === 0 && readyReplicas === 0) {
         status = 'error'
+      } else {
+        // 部分就绪，可能正在滚动更新或启动中
+        status = 'pending'
+      }
+
+      // 获取 Pod 信息以检查镜像拉取状态
+      let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: any[] } | null = null
+      try {
+        const pods = await this.coreApi.listNamespacedPod({
+          namespace: targetNamespace,
+          labelSelector: `app=${serviceName}`
+        })
+
+        // 检查 Pod 中的容器状态
+        const containerStatuses: any[] = []
+        let imagePullFailed = false
+        let imagePullError = ''
+        
+        for (const pod of pods.items) {
+          const podContainerStatuses = pod.status?.containerStatuses || []
+          containerStatuses.push(...podContainerStatuses)
+          
+          // 检查是否有镜像拉取失败
+          for (const containerStatus of podContainerStatuses) {
+            const waitingState = containerStatus.state?.waiting
+            if (waitingState) {
+              const reason = waitingState.reason || ''
+              if (reason === 'ErrImagePull' || reason === 'ImagePullBackOff') {
+                imagePullFailed = true
+                imagePullError = waitingState.message || `镜像拉取失败: ${reason}`
+                break
+              }
+            }
+            
+            const terminatedState = containerStatus.state?.terminated
+            if (terminatedState) {
+              const reason = terminatedState.reason || ''
+              if (reason === 'ErrImagePull') {
+                imagePullFailed = true
+                imagePullError = terminatedState.message || `镜像拉取失败: ${reason}`
+                break
+              }
+            }
+          }
+          
+          if (imagePullFailed) break
+        }
+        
+        podStatusInfo = {
+          imagePullFailed,
+          imagePullError: imagePullError || undefined,
+          containerStatuses
+        }
+      } catch (podError) {
+        console.warn('Failed to get pod status:', podError)
       }
 
       return {
@@ -915,7 +998,8 @@ class K8sService {
         availableReplicas,
         readyReplicas,
         updatedReplicas,
-        conditions: deployment.status?.conditions || []
+        conditions,
+        podStatus: podStatusInfo
       }
     } catch (deploymentError: unknown) {
       if (this.getStatusCode(deploymentError) !== 404) {
@@ -929,15 +1013,84 @@ class K8sService {
       const readyReplicas = statefulSet.status?.readyReplicas || 0
       const currentReplicas = statefulSet.status?.currentReplicas || readyReplicas
       const updatedReplicas = statefulSet.status?.updatedReplicas || readyReplicas
+      const conditions = statefulSet.status?.conditions || []
 
       let status: 'running' | 'pending' | 'stopped' | 'error' = 'pending'
 
+      // 检查 StatefulSet 的失败条件
+      const hasFailedCondition = conditions.some((condition: any) => {
+        const type = condition.type?.toString() || ''
+        const status = condition.status?.toString() || ''
+        
+        if (type === 'Available' && status === 'False' && replicas > 0) {
+          return true
+        }
+        
+        return false
+      })
+
       if (replicas === 0) {
         status = 'stopped'
+      } else if (hasFailedCondition) {
+        status = 'error'
       } else if (readyReplicas === replicas && currentReplicas === replicas) {
         status = 'running'
-      } else if (readyReplicas === 0) {
+      } else if (readyReplicas === 0 && currentReplicas === 0) {
         status = 'error'
+      } else {
+        status = 'pending'
+      }
+
+      // 获取 Pod 信息以检查镜像拉取状态
+      let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: any[] } | null = null
+      try {
+        const pods = await this.coreApi.listNamespacedPod({
+          namespace: targetNamespace,
+          labelSelector: `app=${serviceName}`
+        })
+
+        // 检查 Pod 中的容器状态
+        const containerStatuses: any[] = []
+        let imagePullFailed = false
+        let imagePullError = ''
+        
+        for (const pod of pods.items) {
+          const podContainerStatuses = pod.status?.containerStatuses || []
+          containerStatuses.push(...podContainerStatuses)
+          
+          // 检查是否有镜像拉取失败
+          for (const containerStatus of podContainerStatuses) {
+            const waitingState = containerStatus.state?.waiting
+            if (waitingState) {
+              const reason = waitingState.reason || ''
+              if (reason === 'ErrImagePull' || reason === 'ImagePullBackOff') {
+                imagePullFailed = true
+                imagePullError = waitingState.message || `镜像拉取失败: ${reason}`
+                break
+              }
+            }
+            
+            const terminatedState = containerStatus.state?.terminated
+            if (terminatedState) {
+              const reason = terminatedState.reason || ''
+              if (reason === 'ErrImagePull') {
+                imagePullFailed = true
+                imagePullError = terminatedState.message || `镜像拉取失败: ${reason}`
+                break
+              }
+            }
+          }
+          
+          if (imagePullFailed) break
+        }
+        
+        podStatusInfo = {
+          imagePullFailed,
+          imagePullError: imagePullError || undefined,
+          containerStatuses
+        }
+      } catch (podError) {
+        console.warn('Failed to get pod status:', podError)
       }
 
       return {
@@ -946,7 +1099,8 @@ class K8sService {
         availableReplicas: currentReplicas,
         readyReplicas,
         updatedReplicas,
-        conditions: statefulSet.status?.conditions || []
+        conditions,
+        podStatus: podStatusInfo
       }
     } catch (statefulError: unknown) {
       if (this.getStatusCode(statefulError) === 404) {

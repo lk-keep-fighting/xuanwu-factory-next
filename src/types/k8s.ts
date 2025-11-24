@@ -67,6 +67,11 @@ export interface K8sServiceStatus {
   serviceName?: string
   dbStatus?: BaseService['status']
   error?: string
+  podStatus?: {
+    imagePullFailed?: boolean
+    imagePullError?: string
+    containerStatuses?: Array<Record<string, unknown>>
+  } | null
 }
 
 export type K8sFileEntryType = 'file' | 'directory' | 'other'
