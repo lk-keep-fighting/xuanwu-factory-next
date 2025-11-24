@@ -238,9 +238,9 @@ const getDomainAccessLinks = (
         return null
       }
 
-      const hasProtocol = /^https?:\/\//i.test(trimmedHost)
-      const url = hasProtocol ? trimmedHost : `https://${trimmedHost}`
-      const label = hasProtocol ? trimmedHost.replace(/^https?:\/\//i, '') : trimmedHost
+      const hasProtocol = /^http?:\/\//i.test(trimmedHost)
+      const url = hasProtocol ? trimmedHost : `http://${trimmedHost}`
+      const label = hasProtocol ? trimmedHost.replace(/^http?:\/\//i, '') : trimmedHost
       return { host: trimmedHost, label, url }
     })
     .filter((link): link is DomainAccessLink => Boolean(link))
