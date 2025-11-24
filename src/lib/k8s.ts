@@ -349,7 +349,7 @@ class K8sService {
                     }))
                   : undefined,
                 env: this.buildEnvVars(service),
-                resources: this.buildResources(service.resource_limits),
+                resources: this.buildResources(service.resource_limits, service.resource_requests),
                 volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
               }],
               volumes: this.buildVolumes(service.volumes)
@@ -518,7 +518,7 @@ class K8sService {
                 image: this.getImage(service),
                 ports: containerPorts,
                 env: this.buildEnvVars(service),
-                resources: this.buildResources(service.resource_limits),
+                resources: this.buildResources(service.resource_limits, service.resource_requests),
                 volumeMounts: volumeMounts.length ? volumeMounts : undefined
               }
             ],
@@ -1337,7 +1337,7 @@ class K8sService {
                   }))
                 : undefined,
               env: this.buildEnvVars(service),
-              resources: this.buildResources(service.resource_limits),
+              resources: this.buildResources(service.resource_limits, service.resource_requests),
               volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
             }],
             volumes: this.buildVolumes(service.volumes)
@@ -2639,13 +2639,28 @@ class K8sService {
     return env
   }
 
-  private buildResources(limits?: { cpu?: string; memory?: string }): k8s.V1ResourceRequirements | undefined {
-    if (!limits?.cpu && !limits?.memory) return undefined
+  private buildResources(
+    limits?: { cpu?: string; memory?: string },
+    requests?: { cpu?: string; memory?: string }
+  ): k8s.V1ResourceRequirements | undefined {
+    const hasLimits = limits?.cpu || limits?.memory
+    const hasRequests = requests?.cpu || requests?.memory
+    
+    if (!hasLimits && !hasRequests) return undefined
+    
     return {
-      limits: {
-        ...(limits.cpu && { cpu: limits.cpu }),
-        ...(limits.memory && { memory: limits.memory })
-      }
+      ...(hasLimits && {
+        limits: {
+          ...(limits.cpu && { cpu: limits.cpu }),
+          ...(limits.memory && { memory: limits.memory })
+        }
+      }),
+      ...(hasRequests && {
+        requests: {
+          ...(requests.cpu && { cpu: requests.cpu }),
+          ...(requests.memory && { memory: requests.memory })
+        }
+      })
     }
   }
 

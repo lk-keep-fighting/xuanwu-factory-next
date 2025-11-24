@@ -270,6 +270,11 @@ export default function ServiceDetailPage() {
   const [cpuUnit, setCpuUnit] = useState<'m' | 'core'>('core')
   const [memoryValue, setMemoryValue] = useState('')
   const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Mi')
+  // 资源请求状态
+  const [cpuRequestValue, setCpuRequestValue] = useState('')
+  const [cpuRequestUnit, setCpuRequestUnit] = useState<'m' | 'core'>('core')
+  const [memoryRequestValue, setMemoryRequestValue] = useState('')
+  const [memoryRequestUnit, setMemoryRequestUnit] = useState<'Mi' | 'Gi'>('Mi')
   const [networkServiceType, setNetworkServiceType] = useState<ServiceNetworkType>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [headlessServiceEnabled, setHeadlessServiceEnabled] = useState(false)
@@ -1239,6 +1244,16 @@ export default function ServiceDetailPage() {
       setMemoryValue(parsedMemory.value)
       setMemoryUnit(parsedMemory.unit as 'Mi' | 'Gi')
 
+      // 初始化资源请求
+      const cpuRequest = data.resource_requests?.cpu
+      const memoryRequest = data.resource_requests?.memory
+      const parsedCpuRequest = parseResourceValue(cpuRequest, 'cpu')
+      const parsedMemoryRequest = parseResourceValue(memoryRequest, 'memory')
+      setCpuRequestValue(parsedCpuRequest.value)
+      setCpuRequestUnit(parsedCpuRequest.unit as 'm' | 'core')
+      setMemoryRequestValue(parsedMemoryRequest.value)
+      setMemoryRequestUnit(parsedMemoryRequest.unit as 'Mi' | 'Gi')
+
       if ((data.type ?? '').toLowerCase() === ServiceType.APPLICATION) {
         const parsedBuiltImage = parseImageReference(data.built_image)
         setImagePickerValue({ optionId: null, image: parsedBuiltImage.image, tag: parsedBuiltImage.tag })
@@ -1806,6 +1821,16 @@ export default function ServiceDetailPage() {
         updateData.resource_limits = {
           ...(cpuLimit ? { cpu: cpuLimit } : {}),
           ...(memoryLimit ? { memory: memoryLimit } : {})
+        }
+      }
+
+      // 组合资源请求
+      const cpuRequest = combineResourceValue(cpuRequestValue, cpuRequestUnit)
+      const memoryRequest = combineResourceValue(memoryRequestValue, memoryRequestUnit)
+      if (cpuRequest || memoryRequest) {
+        updateData.resource_requests = {
+          ...(cpuRequest ? { cpu: cpuRequest } : {}),
+          ...(memoryRequest ? { memory: memoryRequest } : {})
         }
       }
 
@@ -2986,96 +3011,170 @@ export default function ServiceDetailPage() {
                     )}
                   </CardContent>
                 </Card>
+              </>
+            )}
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>部署与资源配置</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>副本数</Label>
-                        <Input
-                          type="number"
-                          value={isEditing ? (editedService.replicas || 1) : (service.replicas || 1)}
-                          onChange={(e) => setEditedService({ ...editedService, replicas: parseInt(e.target.value) })}
-                          disabled={!isEditing}
-                        />
-                      </div>
+            {/* 部署与资源配置 - 所有服务类型通用 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>部署与资源配置</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* 仅 Application 和 Image 类型支持副本数配置 */}
+                {(service.type === ServiceType.APPLICATION || service.type === ServiceType.IMAGE) && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>副本数</Label>
+                      <Input
+                        type="number"
+                        value={isEditing ? (editedService.replicas || 1) : (service.replicas || 1)}
+                        onChange={(e) => setEditedService({ ...editedService, replicas: parseInt(e.target.value) })}
+                        disabled={!isEditing}
+                      />
+                    </div>
+                    {service.type === ServiceType.APPLICATION && (
                       <div className="space-y-2">
                         <Label>自动部署</Label>
                         <Input value={service.auto_deploy ? '启用' : '禁用'} disabled />
                       </div>
-                    </div>
-                    {service.command && (
-                      <div className="space-y-2">
-                        <Label>启动命令</Label>
-                        <Input
-                          value={isEditing ? (editedService.command || '') : (service.command || '')}
-                          onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
-                          disabled={!isEditing}
-                        />
-                      </div>
                     )}
-                    <div className="border-t border-gray-200 pt-4 mt-4">
-                      <h4 className="text-sm font-medium text-gray-700 mb-3">资源限制</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>CPU 限制</Label>
-                          {isEditing ? (
-                            <div className="flex gap-2">
-                              <Input
-                                type="number"
-                                placeholder="如: 1000"
-                                value={cpuValue}
-                                onChange={(e) => setCpuValue(e.target.value)}
-                                className="flex-1"
-                              />
-                              <Select value={cpuUnit} onValueChange={(value: 'm' | 'core') => setCpuUnit(value)}>
-                                <SelectTrigger className="w-32">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="m">m (millicores)</SelectItem>
-                                  <SelectItem value="core">核 (cores)</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ) : (
-                            <Input value={service.resource_limits?.cpu || '-'} disabled />
-                          )}
+                  </div>
+                )}
+                {service.command && (
+                  <div className="space-y-2">
+                    <Label>启动命令</Label>
+                    <Input
+                      value={isEditing ? (editedService.command || '') : (service.command || '')}
+                      onChange={(e) => setEditedService({ ...editedService, command: e.target.value })}
+                      disabled={!isEditing}
+                    />
+                  </div>
+                )}
+                <div className="border-t border-gray-200 pt-4 mt-4">
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">资源配置</h4>
+                      
+                      {/* 资源请求 (Requests) */}
+                      <div className="space-y-3 mb-4">
+                        <div className="flex items-center gap-2">
+                          <h5 className="text-xs font-medium text-gray-600">资源请求 (Requests)</h5>
+                          <span className="text-xs text-gray-400">• 容器所需的最小资源</span>
                         </div>
-                        <div className="space-y-2">
-                          <Label>内存限制</Label>
-                          {isEditing ? (
-                            <div className="flex gap-2">
-                              <Input
-                                type="number"
-                                placeholder="如: 512"
-                                value={memoryValue}
-                                onChange={(e) => setMemoryValue(e.target.value)}
-                                className="flex-1"
-                              />
-                              <Select value={memoryUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryUnit(value)}>
-                                <SelectTrigger className="w-20">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="Mi">Mi</SelectItem>
-                                  <SelectItem value="Gi">Gi</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ) : (
-                            <Input value={service.resource_limits?.memory || '-'} disabled />
-                          )}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-xs">CPU 请求</Label>
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <Input
+                                  type="number"
+                                  placeholder="如: 100"
+                                  value={cpuRequestValue}
+                                  onChange={(e) => setCpuRequestValue(e.target.value)}
+                                  className="flex-1"
+                                />
+                                <Select value={cpuRequestUnit} onValueChange={(value: 'm' | 'core') => setCpuRequestUnit(value)}>
+                                  <SelectTrigger className="w-32">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="m">m (millicores)</SelectItem>
+                                    <SelectItem value="core">核 (cores)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : (
+                              <Input value={service.resource_requests?.cpu || '-'} disabled />
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs">内存请求</Label>
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <Input
+                                  type="number"
+                                  placeholder="如: 128"
+                                  value={memoryRequestValue}
+                                  onChange={(e) => setMemoryRequestValue(e.target.value)}
+                                  className="flex-1"
+                                />
+                                <Select value={memoryRequestUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryRequestUnit(value)}>
+                                  <SelectTrigger className="w-20">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="Mi">Mi</SelectItem>
+                                    <SelectItem value="Gi">Gi</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : (
+                              <Input value={service.resource_requests?.memory || '-'} disabled />
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 资源限制 (Limits) */}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <h5 className="text-xs font-medium text-gray-600">资源限制 (Limits)</h5>
+                          <span className="text-xs text-gray-400">• 容器可使用的最大资源</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label className="text-xs">CPU 限制</Label>
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <Input
+                                  type="number"
+                                  placeholder="如: 1000"
+                                  value={cpuValue}
+                                  onChange={(e) => setCpuValue(e.target.value)}
+                                  className="flex-1"
+                                />
+                                <Select value={cpuUnit} onValueChange={(value: 'm' | 'core') => setCpuUnit(value)}>
+                                  <SelectTrigger className="w-32">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="m">m (millicores)</SelectItem>
+                                    <SelectItem value="core">核 (cores)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : (
+                              <Input value={service.resource_limits?.cpu || '-'} disabled />
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs">内存限制</Label>
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <Input
+                                  type="number"
+                                  placeholder="如: 512"
+                                  value={memoryValue}
+                                  onChange={(e) => setMemoryValue(e.target.value)}
+                                  className="flex-1"
+                                />
+                                <Select value={memoryUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryUnit(value)}>
+                                  <SelectTrigger className="w-20">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="Mi">Mi</SelectItem>
+                                    <SelectItem value="Gi">Gi</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : (
+                              <Input value={service.resource_limits?.memory || '-'} disabled />
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              </>
-            )}
 
             {/* Database 配置 */}
             {service.type === ServiceType.DATABASE && (

@@ -100,6 +100,10 @@ export interface BaseService {
     cpu?: string
     memory?: string
   }
+  resource_requests?: {
+    cpu?: string
+    memory?: string
+  }
   // 卷挂载（通用）
   volumes?: Array<{
     nfs_subpath?: string     // NFS 子路径（相对于 PVC 根目录），默认为 {服务名}/{容器路径}
