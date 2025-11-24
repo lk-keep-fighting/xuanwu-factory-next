@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2, Tag, Pencil, Download } from 'lucide-react'
+import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, Play, Square, Trash2, Tag, Pencil, Download, Globe } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -155,6 +155,95 @@ const extractNetworkPorts = (config?: NetworkConfig | null): number[] => {
   }
 
   return []
+}
+
+type DomainAccessLink = {
+  host: string
+  label: string
+  url: string
+}
+
+const isDomainCapableServiceType = (
+  type: ServiceType | null
+): type is ServiceType.APPLICATION | ServiceType.IMAGE =>
+  type === ServiceType.APPLICATION || type === ServiceType.IMAGE
+
+const normalizeDomainHostCandidate = (domainCandidate: unknown): string | null => {
+  if (!domainCandidate) {
+    return null
+  }
+
+  if (typeof domainCandidate === 'string') {
+    const trimmed = domainCandidate.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+
+  if (typeof domainCandidate === 'object') {
+    const domainRecord = domainCandidate as Record<string, unknown>
+    const enabledValue = domainRecord['enabled']
+    const enabled = enabledValue === undefined ? true : Boolean(enabledValue)
+    if (!enabled) {
+      return null
+    }
+
+    const hostValue = domainRecord['host'] ?? domainRecord['hostname']
+    if (typeof hostValue === 'string' && hostValue.trim().length > 0) {
+      return hostValue.trim()
+    }
+  }
+
+  return null
+}
+
+const getDomainAccessLinks = (
+  service: Service,
+  normalizedType: ServiceType | null
+): DomainAccessLink[] => {
+  if (!isDomainCapableServiceType(normalizedType)) {
+    return []
+  }
+
+  const config = service.network_config
+  if (!config || typeof config !== 'object') {
+    return []
+  }
+
+  const hosts = new Set<string>()
+  const addHost = (candidate: unknown) => {
+    const host = normalizeDomainHostCandidate(candidate)
+    if (host) {
+      hosts.add(host)
+    }
+  }
+
+  addHost((config as { domain?: unknown }).domain)
+
+  if (isNetworkConfigV2(config)) {
+    config.ports.forEach((port) => addHost(port?.domain))
+  } else {
+    const legacyPorts = (config as { ports?: unknown }).ports
+    if (Array.isArray(legacyPorts)) {
+      legacyPorts.forEach((port) => {
+        if (port && typeof port === 'object') {
+          addHost((port as { domain?: unknown }).domain)
+        }
+      })
+    }
+  }
+
+  return Array.from(hosts)
+    .map((host) => {
+      const trimmedHost = host.trim()
+      if (!trimmedHost) {
+        return null
+      }
+
+      const hasProtocol = /^https?:\/\//i.test(trimmedHost)
+      const url = hasProtocol ? trimmedHost : `https://${trimmedHost}`
+      const label = hasProtocol ? trimmedHost.replace(/^https?:\/\//i, '') : trimmedHost
+      return { host: trimmedHost, label, url }
+    })
+    .filter((link): link is DomainAccessLink => Boolean(link))
 }
 
 const getServiceSubtitle = (
@@ -698,6 +787,7 @@ export default function ProjectDetailPage() {
                     )
                     const replicasLabel = getReplicasLabel(applicationService, imageService)
                     const updatedAtLabel = formatDateTime(service.updated_at ?? service.created_at)
+                    const domainLinks = getDomainAccessLinks(service, normalizedType)
 
                     return (
                       <TableRow
@@ -734,6 +824,30 @@ export default function ProjectDetailPage() {
                                 <span className="text-xs text-gray-500" title={subtitle.label}>
                                   {subtitle.label}
                                 </span>
+                              )}
+                              {domainLinks.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {domainLinks.map((link) => (
+                                    <Button
+                                      key={`${service.id ?? service.name}-${link.host}`}
+                                      variant="outline"
+                                      size="sm"
+                                      className="gap-1.5"
+                                      asChild
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <a
+                                        href={link.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        title={link.host}
+                                      >
+                                        <Globe className="h-3.5 w-3.5" />
+                                        <span className="max-w-[160px] truncate">{link.label}</span>
+                                      </a>
+                                    </Button>
+                                  ))}
+                                </div>
                               )}
                             </div>
                           </div>
