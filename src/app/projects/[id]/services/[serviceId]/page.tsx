@@ -920,6 +920,12 @@ export default function ServiceDetailPage() {
   })()
   const defaultDomainPrefix = sanitizeDomainLabel(derivedDefaultDomainSource)
 
+  const sanitizeDomainLabelInput = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '')
+      .slice(0, 63)
+
   const initializeNetworkState = useCallback((svc: Service) => {
     const config = svc.network_config as NetworkConfig | undefined
 
@@ -2054,7 +2060,7 @@ export default function ServiceDetailPage() {
   }
 
   const handleDomainPrefixChange = (id: string, value: string) => {
-    updatePortField(id, 'domainPrefix', sanitizeDomainLabel(value))
+    updatePortField(id, 'domainPrefix', sanitizeDomainLabelInput(value))
   }
 
   const handleToggleDomain = (id: string, enabled: boolean) => {
