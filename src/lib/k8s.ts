@@ -26,6 +26,8 @@ import type {
 import * as yaml from 'js-yaml'
 import { sanitizeStartupConfig, buildStartupCommandPreview } from '@/lib/startup-config'
 
+const SHARED_NFS_VOLUME_NAME = 'shared-nfs-volume'
+
 type NormalizedPortDomain = {
   host: string
   prefix?: string
@@ -922,7 +924,7 @@ class K8sService {
       let status: 'running' | 'pending' | 'stopped' | 'error' = 'pending'
 
       // 检查是否有失败的 conditions
-      const hasFailedCondition = conditions.some((condition: any) => {
+      const hasFailedCondition = conditions.some((condition) => {
         const type = condition.type?.toString() || ''
         const status = condition.status?.toString() || ''
         const reason = condition.reason?.toString() || ''
@@ -958,57 +960,7 @@ class K8sService {
         status = 'pending'
       }
 
-      // 获取 Pod 信息以检查镜像拉取状态
-      let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: any[] } | null = null
-      try {
-        const pods = await this.coreApi.listNamespacedPod({
-          namespace: targetNamespace,
-          labelSelector: `app=${serviceName}`
-        })
-
-        // 检查 Pod 中的容器状态
-        const containerStatuses: any[] = []
-        let imagePullFailed = false
-        let imagePullError = ''
-        
-        for (const pod of pods.items) {
-          const podContainerStatuses = pod.status?.containerStatuses || []
-          containerStatuses.push(...podContainerStatuses)
-          
-          // 检查是否有镜像拉取失败
-          for (const containerStatus of podContainerStatuses) {
-            const waitingState = containerStatus.state?.waiting
-            if (waitingState) {
-              const reason = waitingState.reason || ''
-              if (reason === 'ErrImagePull' || reason === 'ImagePullBackOff') {
-                imagePullFailed = true
-                imagePullError = waitingState.message || `镜像拉取失败: ${reason}`
-                break
-              }
-            }
-            
-            const terminatedState = containerStatus.state?.terminated
-            if (terminatedState) {
-              const reason = terminatedState.reason || ''
-              if (reason === 'ErrImagePull') {
-                imagePullFailed = true
-                imagePullError = terminatedState.message || `镜像拉取失败: ${reason}`
-                break
-              }
-            }
-          }
-          
-          if (imagePullFailed) break
-        }
-        
-        podStatusInfo = {
-          imagePullFailed,
-          imagePullError: imagePullError || undefined,
-          containerStatuses
-        }
-      } catch (podError) {
-        console.warn('Failed to get pod status:', podError)
-      }
+      const podStatusInfo = await this.getPodStatusInfo(targetNamespace, serviceName)
 
       return {
         status,
@@ -1036,7 +988,7 @@ class K8sService {
       let status: 'running' | 'pending' | 'stopped' | 'error' = 'pending'
 
       // 检查 StatefulSet 的失败条件
-      const hasFailedCondition = conditions.some((condition: any) => {
+      const hasFailedCondition = conditions.some((condition) => {
         const type = condition.type?.toString() || ''
         const status = condition.status?.toString() || ''
         
@@ -1059,57 +1011,7 @@ class K8sService {
         status = 'pending'
       }
 
-      // 获取 Pod 信息以检查镜像拉取状态
-      let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: any[] } | null = null
-      try {
-        const pods = await this.coreApi.listNamespacedPod({
-          namespace: targetNamespace,
-          labelSelector: `app=${serviceName}`
-        })
-
-        // 检查 Pod 中的容器状态
-        const containerStatuses: any[] = []
-        let imagePullFailed = false
-        let imagePullError = ''
-        
-        for (const pod of pods.items) {
-          const podContainerStatuses = pod.status?.containerStatuses || []
-          containerStatuses.push(...podContainerStatuses)
-          
-          // 检查是否有镜像拉取失败
-          for (const containerStatus of podContainerStatuses) {
-            const waitingState = containerStatus.state?.waiting
-            if (waitingState) {
-              const reason = waitingState.reason || ''
-              if (reason === 'ErrImagePull' || reason === 'ImagePullBackOff') {
-                imagePullFailed = true
-                imagePullError = waitingState.message || `镜像拉取失败: ${reason}`
-                break
-              }
-            }
-            
-            const terminatedState = containerStatus.state?.terminated
-            if (terminatedState) {
-              const reason = terminatedState.reason || ''
-              if (reason === 'ErrImagePull') {
-                imagePullFailed = true
-                imagePullError = terminatedState.message || `镜像拉取失败: ${reason}`
-                break
-              }
-            }
-          }
-          
-          if (imagePullFailed) break
-        }
-        
-        podStatusInfo = {
-          imagePullFailed,
-          imagePullError: imagePullError || undefined,
-          containerStatuses
-        }
-      } catch (podError) {
-        console.warn('Failed to get pod status:', podError)
-      }
+      const podStatusInfo = await this.getPodStatusInfo(targetNamespace, serviceName)
 
       return {
         status,
@@ -2669,8 +2571,8 @@ class K8sService {
 
   private buildVolumeMounts(volumes?: Array<{ nfs_subpath?: string; container_path: string; read_only?: boolean }>, serviceName?: string): k8s.V1VolumeMount[] | undefined {
     if (!volumes || volumes.length === 0) return undefined
-    return volumes.map((v, i) => ({
-      name: `volume-${i}`,
+    return volumes.map((v) => ({
+      name: SHARED_NFS_VOLUME_NAME,
       mountPath: v.container_path,
       subPath: this.generateSubPath(serviceName || 'unknown', v.nfs_subpath, v.container_path),
       readOnly: v.read_only
@@ -2707,13 +2609,71 @@ class K8sService {
 
   private buildVolumes(volumes?: Array<{ nfs_subpath?: string; container_path: string }>): k8s.V1Volume[] | undefined {
     if (!volumes || volumes.length === 0) return undefined
-    // 所有卷都使用 shared-nfs-pvc
-    return volumes.map((v, i) => ({
-      name: `volume-${i}`,
-      persistentVolumeClaim: {
-        claimName: 'shared-nfs-pvc'
+    // 所有挂载共享同一个 PVC，避免重复声明导致冲突
+    return [
+      {
+        name: SHARED_NFS_VOLUME_NAME,
+        persistentVolumeClaim: {
+          claimName: 'shared-nfs-pvc'
+        }
       }
-    }))
+    ]
+  }
+
+  private async getPodStatusInfo(
+    namespace: string,
+    serviceName: string
+  ): Promise<{ imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: k8s.V1ContainerStatus[] } | null> {
+    try {
+      const pods = await this.coreApi.listNamespacedPod({
+        namespace,
+        labelSelector: `app=${serviceName}`
+      })
+
+      const containerStatuses: k8s.V1ContainerStatus[] = []
+      let imagePullFailed = false
+      let imagePullError = ''
+
+      for (const pod of pods.items) {
+        const podContainerStatuses = pod.status?.containerStatuses || []
+        containerStatuses.push(...podContainerStatuses)
+
+        for (const containerStatus of podContainerStatuses) {
+          const waitingState = containerStatus.state?.waiting
+          if (waitingState) {
+            const reason = waitingState.reason || ''
+            if (reason === 'ErrImagePull' || reason === 'ImagePullBackOff') {
+              imagePullFailed = true
+              imagePullError = waitingState.message || `镜像拉取失败: ${reason}`
+              break
+            }
+          }
+
+          const terminatedState = containerStatus.state?.terminated
+          if (terminatedState) {
+            const reason = terminatedState.reason || ''
+            if (reason === 'ErrImagePull') {
+              imagePullFailed = true
+              imagePullError = terminatedState.message || `镜像拉取失败: ${reason}`
+              break
+            }
+          }
+        }
+
+        if (imagePullFailed) {
+          break
+        }
+      }
+
+      return {
+        imagePullFailed,
+        imagePullError: imagePullError || undefined,
+        containerStatuses
+      }
+    } catch (error) {
+      console.warn('[K8s] Failed to get pod status:', error)
+      return null
+    }
   }
 
   private normalizeServiceStartupConfig(
