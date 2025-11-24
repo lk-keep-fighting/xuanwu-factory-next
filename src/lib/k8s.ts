@@ -463,7 +463,14 @@ class K8sService {
 
     const volumeSize = typeof service.volume_size === 'string' ? service.volume_size.trim() : ''
     const dataMountPath = this.getDatabaseDataMountPath(service)
-    const commandConfig = this.parseCommand((service as DatabaseService & { command?: string }).command)
+    
+    // 为 Redis 数据库自动注入密码命令
+    let effectiveCommand = (service as DatabaseService & { command?: string }).command
+    if (service.database_type === 'redis' && service.password && !effectiveCommand) {
+      effectiveCommand = `redis-server --requirepass ${service.password}`
+    }
+    
+    const commandConfig = this.parseCommand(effectiveCommand)
 
     let volumeClaimTemplates: k8s.V1PersistentVolumeClaim[] | undefined
 
@@ -1310,7 +1317,20 @@ class K8sService {
     }
 
     const normalizedNetwork = this.normalizeNetworkConfig(service.network_config)
-    const commandConfig = this.parseCommand((service as ApplicationService | ImageService).command)
+    
+    // 为 Redis 自动注入密码命令
+    let effectiveCommand: string | undefined
+    if (service.type === ServiceType.DATABASE) {
+      const dbService = service as DatabaseService
+      effectiveCommand = (dbService as DatabaseService & { command?: string }).command
+      if (dbService.database_type === 'redis' && dbService.password && !effectiveCommand) {
+        effectiveCommand = `redis-server --requirepass ${dbService.password}`
+      }
+    } else {
+      effectiveCommand = (service as ApplicationService | ImageService).command
+    }
+    
+    const commandConfig = this.parseCommand(effectiveCommand)
 
     // 构建 Deployment 对象
     const deployment: k8s.V1Deployment = {
