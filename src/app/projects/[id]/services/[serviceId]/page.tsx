@@ -35,7 +35,7 @@ import { cn } from '@/lib/utils'
 import { parseImageReference, formatImageReference, isImageReferenceEqual } from '@/lib/service-image'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
 import { ServiceType, GitProvider, DatabaseType, DATABASE_TYPE_METADATA } from '@/types/project'
-import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, ServiceImageRecord, ServiceImageStatus, DatabaseService, SupportedDatabaseType } from '@/types/project'
+import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, LegacyNetworkConfig, ServiceImageRecord, ServiceImageStatus, DatabaseService, SupportedDatabaseType } from '@/types/project'
 import type { K8sServiceStatus } from '@/types/k8s'
 import type { GitProviderConfig } from '@/types/system'
 
@@ -137,6 +137,42 @@ const createEmptyPort = (): NetworkPortFormState => ({
 
 const isNetworkConfigV2 = (config: NetworkConfig): config is NetworkConfigV2 =>
   Boolean(config) && Array.isArray((config as NetworkConfigV2).ports)
+
+const normalizePositivePortNumber = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? value : null
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return null
+    }
+    const parsed = parseInt(trimmed, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  }
+
+  return null
+}
+
+const extractExternalNodePort = (config?: NetworkConfig | null): number | null => {
+  if (!config) {
+    return null
+  }
+
+  if (isNetworkConfigV2(config)) {
+    for (const port of config.ports) {
+      const nodePort = normalizePositivePortNumber(port?.node_port)
+      if (nodePort !== null) {
+        return nodePort
+      }
+    }
+    return null
+  }
+
+  const legacyConfig = config as LegacyNetworkConfig
+  return normalizePositivePortNumber(legacyConfig.node_port)
+}
 
 const formatDateTime = (value?: string) => {
   if (!value) return '-'
@@ -444,6 +480,16 @@ export default function ServiceDetailPage() {
     }
     return ''
   })()
+  const resolvedExternalPort = useMemo(() => {
+    if (!databaseService) {
+      return null
+    }
+    const directPort = normalizePositivePortNumber(databaseService.external_port)
+    if (directPort !== null) {
+      return directPort
+    }
+    return extractExternalNodePort(databaseService.network_config as NetworkConfig | null)
+  }, [databaseService])
   const externalAccessEnabled = useMemo(() => {
     if (!databaseService) {
       return false
@@ -452,8 +498,8 @@ export default function ServiceDetailPage() {
     if (normalized === 'nodeport') {
       return true
     }
-    return typeof databaseService.external_port === 'number' && databaseService.external_port > 0
-  }, [databaseNetworkServiceType, databaseService?.external_port, databaseService?.id])
+    return resolvedExternalPort !== null
+  }, [databaseNetworkServiceType, resolvedExternalPort, databaseService?.id])
   const databaseTypeLabel = supportedDatabaseType
     ? DATABASE_TYPE_METADATA[supportedDatabaseType].label
     : databaseService?.database_type ?? '-'
@@ -3442,18 +3488,17 @@ export default function ServiceDetailPage() {
                               {externalAccessEnabled && (
                                 <div className="flex items-center gap-2">
                                   <Input
-                                    value={databaseService?.external_port ?? '-'}
+                                    value={resolvedExternalPort ?? '-'}
                                     disabled
                                     className="w-28"
                                   />
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    disabled={!(databaseService?.external_port && databaseService.external_port > 0)}
+                                    disabled={resolvedExternalPort === null}
                                     onClick={() => {
-                                      const value = databaseService?.external_port
-                                      if (!value) return
-                                      navigator.clipboard.writeText(String(value))
+                                      if (resolvedExternalPort === null) return
+                                      navigator.clipboard.writeText(String(resolvedExternalPort))
                                       toast.success('已复制')
                                     }}
                                   >
