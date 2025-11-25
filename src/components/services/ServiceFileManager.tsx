@@ -124,9 +124,13 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
         path: normalizedPath,
         parentPath: normalizedParent
       }
+      const directoryEntries = normalizedData.entries
+        .filter((entry) => entry.type === 'directory')
+        .map((entry) => entry)
+      directoryEntries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
       setDirectoryCache((prev) => ({
         ...prev,
-        [normalizedPath]: normalizedData.entries
+        [normalizedPath]: directoryEntries
       }))
       return normalizedData
     },
@@ -158,7 +162,6 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
           const next = new Set(prev)
           const ancestors = buildAncestorPaths(data.path)
           ancestors.forEach((ancestor) => next.add(ancestor))
-          next.add(data.path)
           return next
         })
       } catch (fetchError) {
@@ -181,7 +184,11 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
   }, [active, serviceId, hasInitialized, loading, loadAndActivateDirectory])
   const handleSelectPath = useCallback(
     (target: string) => {
-      void loadAndActivateDirectory(target)
+      const normalizedTarget = normalizeDirectoryPath(target)
+      if (normalizedTarget === currentPathRef.current) {
+        return
+      }
+      void loadAndActivateDirectory(normalizedTarget)
     },
     [loadAndActivateDirectory]
   )
@@ -192,7 +199,7 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       if (!serviceId || !active) {
         return
       }
-      const target = normalizeDirectoryPath(pathInputValue)
+      const target = pathInputValue.trim() || '/'
       void handleSelectPath(target)
     },
     [serviceId, active, pathInputValue, handleSelectPath]
@@ -310,10 +317,7 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
   const getDirectoryChildren = useCallback(
     (path: string) => {
       const normalized = normalizeDirectoryPath(path)
-      const list = directoryCache[normalized] ?? []
-      const directories = list.filter((entry) => entry.type === 'directory')
-      directories.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
-      return directories
+      return directoryCache[normalized] ?? []
     },
     [directoryCache]
   )
