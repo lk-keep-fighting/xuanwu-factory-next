@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, RotateCw, Trash2, Tag, Pencil, Download, Globe, ArrowUpDown } from 'lucide-react'
+import { ArrowLeft, Plus, Package, Database, Box, Filter, Search, MoreVertical, RotateCw, Trash2, Tag, Pencil, Download, Globe, ArrowUpDown, RefreshCw, AlertTriangle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -422,6 +422,8 @@ export default function ProjectDetailPage() {
   const [selectedType, setSelectedType] = useState<ServiceType | 'all'>('all')
   const [sortBy, setSortBy] = useState<'name' | 'updated_at'>('name')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [k8sStatuses, setK8sStatuses] = useState<Record<string, any>>({})
+  const [k8sStatusLoading, setK8sStatusLoading] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [createServiceType, setCreateServiceType] = useState<ServiceType | null>(null)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
@@ -463,10 +465,29 @@ export default function ProjectDetailPage() {
     }
   }, [id])
 
+  // 加载K8s状态
+  const loadK8sStatuses = useCallback(async () => {
+    if (!id) return
+
+    try {
+      setK8sStatusLoading(true)
+      const response = await fetch(`/api/projects/${id}/services-status`)
+      if (response.ok) {
+        const data = await response.json()
+        setK8sStatuses(data.services || {})
+      }
+    } catch (error) {
+      console.error('Failed to load K8s statuses:', error)
+    } finally {
+      setK8sStatusLoading(false)
+    }
+  }, [id])
+
   useEffect(() => {
     loadProject()
     loadServices()
-  }, [loadProject, loadServices])
+    loadK8sStatuses()
+  }, [loadProject, loadServices, loadK8sStatuses])
 
   // 打开创建服务对话框
   const handleOpenCreateDialog = (type: ServiceType) => {
@@ -779,6 +800,16 @@ export default function ProjectDetailPage() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <Button 
+            variant="outline" 
+            className="gap-2"
+            onClick={() => void loadK8sStatuses()}
+            disabled={k8sStatusLoading}
+          >
+            <RefreshCw className={`w-4 h-4 ${k8sStatusLoading ? 'animate-spin' : ''}`} />
+            刷新状态
+          </Button>
         </div>
 
         {/* 服务列表 */}

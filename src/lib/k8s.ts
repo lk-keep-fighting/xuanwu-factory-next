@@ -940,20 +940,6 @@ class K8sService {
         return false
       })
 
-      if (replicas === 0) {
-        status = 'stopped'
-      } else if (hasFailedCondition) {
-        // 如果有失败条件，标记为 error
-        status = 'error'
-      } else if (availableReplicas === replicas && readyReplicas === replicas) {
-        status = 'running'
-      } else if (availableReplicas === 0 && readyReplicas === 0) {
-        status = 'error'
-      } else {
-        // 部分就绪，可能正在滚动更新或启动中
-        status = 'pending'
-      }
-
       // 获取 Pod 信息以检查镜像拉取状态
       let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: any[] } | null = null
       try {
@@ -1004,6 +990,24 @@ class K8sService {
         }
       } catch (podError) {
         console.warn('Failed to get pod status:', podError)
+      }
+
+      // 根据 Pod 状态和 Deployment 条件确定最终状态
+      if (replicas === 0) {
+        status = 'stopped'
+      } else if (podStatusInfo?.imagePullFailed) {
+        // 镜像拉取失败，标记为 error
+        status = 'error'
+      } else if (hasFailedCondition) {
+        // 如果有失败条件，标记为 error
+        status = 'error'
+      } else if (availableReplicas === replicas && readyReplicas === replicas) {
+        status = 'running'
+      } else if (availableReplicas === 0 && readyReplicas === 0) {
+        status = 'error'
+      } else {
+        // 部分就绪，可能正在滚动更新或启动中
+        status = 'pending'
       }
 
       return {
@@ -1043,18 +1047,6 @@ class K8sService {
         return false
       })
 
-      if (replicas === 0) {
-        status = 'stopped'
-      } else if (hasFailedCondition) {
-        status = 'error'
-      } else if (readyReplicas === replicas && currentReplicas === replicas) {
-        status = 'running'
-      } else if (readyReplicas === 0 && currentReplicas === 0) {
-        status = 'error'
-      } else {
-        status = 'pending'
-      }
-
       // 获取 Pod 信息以检查镜像拉取状态
       let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: any[] } | null = null
       try {
@@ -1107,6 +1099,22 @@ class K8sService {
         console.warn('Failed to get pod status:', podError)
       }
 
+      // 根据 Pod 状态和 StatefulSet 条件确定最终状态
+      if (replicas === 0) {
+        status = 'stopped'
+      } else if (podStatusInfo?.imagePullFailed) {
+        // 镜像拉取失败，标记为 error
+        status = 'error'
+      } else if (hasFailedCondition) {
+        status = 'error'
+      } else if (readyReplicas === replicas && currentReplicas === replicas) {
+        status = 'running'
+      } else if (readyReplicas === 0 && currentReplicas === 0) {
+        status = 'error'
+      } else {
+        status = 'pending'
+      }
+
       return {
         status,
         replicas,
@@ -1122,6 +1130,60 @@ class K8sService {
       }
       return { status: 'error' as const, error: this.getErrorMessage(statefulError) }
     }
+  }
+
+  /**
+   * 列出命名空间下的 Deployments（简化对象）
+   */
+  async listNamespaceDeployments(namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+    const result = await this.appsApi.listNamespacedDeployment({ namespace: targetNamespace })
+    // 仅返回必要字段，减少传输与内存
+    return (result.items || []).map((d) => ({
+      metadata: { name: d.metadata?.name },
+      spec: { replicas: d.spec?.replicas },
+      status: {
+        availableReplicas: d.status?.availableReplicas,
+        readyReplicas: d.status?.readyReplicas,
+        updatedReplicas: d.status?.updatedReplicas,
+        conditions: d.status?.conditions || []
+      }
+    }))
+  }
+
+  /**
+   * 列出命名空间下的 StatefulSets（简化对象）
+   */
+  async listNamespaceStatefulSets(namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+    const result = await this.appsApi.listNamespacedStatefulSet({ namespace: targetNamespace })
+    return (result.items || []).map((s) => ({
+      metadata: { name: s.metadata?.name },
+      spec: { replicas: s.spec?.replicas },
+      status: {
+        readyReplicas: s.status?.readyReplicas,
+        currentReplicas: s.status?.currentReplicas,
+        updatedReplicas: s.status?.updatedReplicas,
+        conditions: s.status?.conditions || []
+      }
+    }))
+  }
+
+  /**
+   * 列出命名空间下的 Pods（简化对象）
+   */
+  async listNamespacePods(namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+    const result = await this.coreApi.listNamespacedPod({ namespace: targetNamespace })
+    return (result.items || []).map((p) => ({
+      metadata: {
+        name: p.metadata?.name,
+        labels: p.metadata?.labels || {}
+      },
+      status: {
+        containerStatuses: p.status?.containerStatuses || []
+      }
+    }))
   }
 
   /**
