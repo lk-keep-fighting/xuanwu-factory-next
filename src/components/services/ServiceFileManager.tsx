@@ -119,21 +119,21 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       const normalizedPath = normalizeDirectoryPath(data.path)
       const normalizedParent =
         data.parentPath === null ? null : normalizeDirectoryPath(data.parentPath)
+      const normalizedEntries = data.entries.map((entry) => {
+        const normalizedEntryPath = normalizeDirectoryPath(entry.path || `${normalizedPath}/${entry.name}`)
+        return {
+          ...entry,
+          path: normalizedEntryPath
+        }
+      })
       const normalizedData = {
         ...data,
         path: normalizedPath,
-        parentPath: normalizedParent
+        parentPath: normalizedParent,
+        entries: normalizedEntries
       }
-      const directoryEntries = normalizedData.entries
-        .filter((entry) => entry.type === 'directory')
-        .map((entry) => {
-          const normalizedEntryPath = normalizeDirectoryPath(entry.path || `${normalizedPath}/${entry.name}`)
-          return {
-            ...entry,
-            path: normalizedEntryPath
-          }
-        })
-        .filter((entry) => entry.path !== normalizedPath)
+      const directoryEntries = normalizedEntries
+        .filter((entry) => entry.type === 'directory' && entry.path !== normalizedPath)
       const uniqueDirectoryEntries: K8sFileEntry[] = []
       const seenPaths = new Set<string>()
       for (const entry of directoryEntries) {
@@ -207,6 +207,19 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       void loadAndActivateDirectory(normalizedTarget)
     },
     [loadAndActivateDirectory]
+  )
+
+  const handleDirectoryEntrySelect = useCallback(
+    (entry: K8sFileEntry) => {
+      if (entry.type !== 'directory') {
+        return
+      }
+      const fallbackPath = entry.path && entry.path.trim().length > 0
+        ? entry.path
+        : `${currentPathRef.current}/${entry.name}`
+      handleSelectPath(fallbackPath)
+    },
+    [handleSelectPath]
   )
 
   const handlePathSubmit = useCallback(
@@ -510,7 +523,7 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
                           <button
                             type="button"
                             className="flex items-center gap-2 text-left"
-                            onClick={() => handleSelectPath(entry.path)}
+                            onClick={() => handleDirectoryEntrySelect(entry)}
                             disabled={!active || loading}
                           >
                             <Folder className="h-4 w-4 text-blue-600" />
