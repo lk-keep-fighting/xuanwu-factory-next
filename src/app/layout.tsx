@@ -5,6 +5,9 @@ import { Toaster } from "sonner";
 export const metadata: Metadata = {
   title: "玄武工厂平台",
   description: "云原生应用管理平台",
+  icons: {
+    icon: "/logo.svg",
+  },
 };
 
 export default function RootLayout({
