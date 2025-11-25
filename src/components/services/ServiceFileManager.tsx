@@ -126,11 +126,27 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       }
       const directoryEntries = normalizedData.entries
         .filter((entry) => entry.type === 'directory')
-        .map((entry) => entry)
-      directoryEntries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+        .map((entry) => {
+          const normalizedEntryPath = normalizeDirectoryPath(entry.path || `${normalizedPath}/${entry.name}`)
+          return {
+            ...entry,
+            path: normalizedEntryPath
+          }
+        })
+        .filter((entry) => entry.path !== normalizedPath)
+      const uniqueDirectoryEntries: K8sFileEntry[] = []
+      const seenPaths = new Set<string>()
+      for (const entry of directoryEntries) {
+        if (seenPaths.has(entry.path)) {
+          continue
+        }
+        seenPaths.add(entry.path)
+        uniqueDirectoryEntries.push(entry)
+      }
+      uniqueDirectoryEntries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
       setDirectoryCache((prev) => ({
         ...prev,
-        [normalizedPath]: directoryEntries
+        [normalizedPath]: uniqueDirectoryEntries
       }))
       return normalizedData
     },
