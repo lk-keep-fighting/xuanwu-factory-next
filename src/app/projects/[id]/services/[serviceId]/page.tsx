@@ -222,10 +222,10 @@ const formatDuration = (start?: string, end?: string) => {
 
 // 解析资源限制字符串
 const parseResourceValue = (value: string | undefined, type: 'cpu' | 'memory') => {
-  if (!value) return { value: '', unit: type === 'cpu' ? 'core' : 'Mi' }
+  if (!value) return { value: '', unit: type === 'cpu' ? 'core' : 'Gi' }
 
   const trimmed = value.trim()
-  if (!trimmed) return { value: '', unit: type === 'cpu' ? 'core' : 'Mi' }
+  if (!trimmed) return { value: '', unit: type === 'cpu' ? 'core' : 'Gi' }
 
   if (type === 'cpu') {
     // CPU: 支持 "1000m" 或 "1" 格式
@@ -245,8 +245,8 @@ const parseResourceValue = (value: string | undefined, type: 'cpu' | 'memory') =
     return { value: trimmed.slice(0, -2), unit: 'Mi' as const }
   }
 
-  // 默认当作 Mi
-  return { value: trimmed, unit: 'Mi' as const }
+  // 默认当作 Gi
+  return { value: trimmed, unit: 'Gi' as const }
 }
 
 // 组合资源限制字符串
@@ -305,12 +305,12 @@ export default function ServiceDetailPage() {
   const [cpuValue, setCpuValue] = useState('')
   const [cpuUnit, setCpuUnit] = useState<'m' | 'core'>('core')
   const [memoryValue, setMemoryValue] = useState('')
-  const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Mi')
+  const [memoryUnit, setMemoryUnit] = useState<'Mi' | 'Gi'>('Gi')
   // 资源请求状态
   const [cpuRequestValue, setCpuRequestValue] = useState('')
   const [cpuRequestUnit, setCpuRequestUnit] = useState<'m' | 'core'>('core')
   const [memoryRequestValue, setMemoryRequestValue] = useState('')
-  const [memoryRequestUnit, setMemoryRequestUnit] = useState<'Mi' | 'Gi'>('Mi')
+  const [memoryRequestUnit, setMemoryRequestUnit] = useState<'Mi' | 'Gi'>('Gi')
   const [networkServiceType, setNetworkServiceType] = useState<ServiceNetworkType>('ClusterIP')
   const [networkPorts, setNetworkPorts] = useState<NetworkPortFormState[]>([createEmptyPort()])
   const [headlessServiceEnabled, setHeadlessServiceEnabled] = useState(false)
