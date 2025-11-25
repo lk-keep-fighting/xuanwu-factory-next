@@ -1187,6 +1187,34 @@ class K8sService {
   }
 
   /**
+   * 执行命令
+   */
+  async execCommand(serviceName: string, namespace: string, command: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
+    try {
+      const podInfo = await this.getPrimaryPodInfo(serviceName, targetNamespace)
+      
+      // 执行命令
+      const result = await this.execInPod(
+        podInfo.namespace,
+        podInfo.podName,
+        podInfo.containerName,
+        ['sh', '-c', command]
+      )
+
+      return {
+        stdout: result.stdout.toString('utf8'),
+        stderr: result.stderr.toString('utf8'),
+        exitCode: result.exitCode || 0
+      }
+    } catch (error: unknown) {
+      console.error('Failed to exec command:', error)
+      throw new Error(`命令执行失败: ${this.getErrorMessage(error)}`)
+    }
+  }
+
+  /**
    * 获取服务日志
    */
   async getServiceLogs(serviceName: string, lines: number = 100, namespace: string = 'default') {

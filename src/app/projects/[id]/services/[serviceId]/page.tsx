@@ -2475,6 +2475,16 @@ export default function ServiceDetailPage() {
                 <RefreshCw className="w-4 h-4" />
                 重启
               </Button>
+              {normalizedStatus === 'running' && (
+                <Button 
+                  onClick={() => router.push(`/projects/${projectId}/services/${serviceId}/terminal`)}
+                  variant="outline" 
+                  className="gap-2"
+                >
+                  <Terminal className="w-4 h-4" />
+                  命令行
+                </Button>
+              )}
               <Button
                 onClick={() => setDeleteDialogOpen(true)}
                 variant="destructive"

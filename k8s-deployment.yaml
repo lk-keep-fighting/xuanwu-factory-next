@@ -18,6 +18,9 @@ metadata:
 data:
   NODE_ENV: "production"
   NEXT_TELEMETRY_DISABLED: "1"
+  # WebSocket 服务器地址（生产环境）
+  # 格式：ws://domain:port 或 wss://domain
+  NEXT_PUBLIC_WS_URL: "ws://factory.dev.aimstek.cn:3001"
   # 这里可以根据需要添加更多非敏感配置项
 
 ---
@@ -109,6 +112,9 @@ spec:
         - name: http
           containerPort: 3000
           protocol: TCP
+        - name: websocket
+          containerPort: 3001
+          protocol: TCP
         
         env:
         # 从 ConfigMap 加载
@@ -117,6 +123,12 @@ spec:
             configMapKeyRef:
               name: xuanwu-factory-config
               key: NODE_ENV
+        
+        - name: NEXT_PUBLIC_WS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: xuanwu-factory-config
+              key: NEXT_PUBLIC_WS_URL
         
         # 从 Secret 加载
         - name: DATABASE_URL
@@ -269,6 +281,10 @@ spec:
     targetPort: 3000
     protocol: TCP
     name: http
+  - port: 3001
+    targetPort: 3001
+    protocol: TCP
+    name: websocket
   selector:
     app: xuanwu-factory
 
@@ -286,6 +302,8 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    # WebSocket 支持
+    nginx.ingress.kubernetes.io/websocket-services: "xuanwu-factory"
     
     # HTTPS 配置（如果使用 cert-manager）
     # cert-manager.io/cluster-issuer: "letsencrypt-prod"

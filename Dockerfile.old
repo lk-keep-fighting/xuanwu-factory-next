@@ -1,6 +1,6 @@
 # ===================================
-# 玄武工厂平台 - 双服务器架构 Dockerfile
-# Next.js (3000) + WebSocket Terminal (3001)
+# 玄武工厂平台 - 生产级多阶段构建 Dockerfile
+# 基于 Next.js 16 + pnpm
 # ===================================
 
 # ============ 阶段 1: 依赖安装 ============
@@ -18,7 +18,7 @@ COPY package.json pnpm-lock.yaml* ./
 COPY prisma ./prisma
 COPY scripts ./scripts
 
-# 安装生产依赖
+# 安装生产依赖（仅安装必需的包）
 RUN pnpm install --frozen-lockfile --prod
 
 # ============ 阶段 2: 构建应用 ============
@@ -35,13 +35,13 @@ COPY package.json pnpm-lock.yaml* ./
 COPY prisma ./prisma
 COPY scripts ./scripts
 
-# 安装所有依赖
+# 安装所有依赖（包括 devDependencies）
 RUN pnpm install --frozen-lockfile
 
 # 复制源代码
 COPY . .
 
-# 构建环境变量
+# 构建环境变量（构建时可覆盖）
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
@@ -51,7 +51,7 @@ RUN pnpm build
 # ============ 阶段 3: 运行时镜像 ============
 FROM node:20-alpine AS runner
 
-# 安装必要的系统依赖
+# 安装必要的系统依赖（用于 K8s 客户端）
 RUN apk add --no-cache \
     ca-certificates \
     curl \
@@ -71,34 +71,21 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME="0.0.0.0"
 ENV PORT=3000
-ENV WS_PORT=3001
 
-# 复制依赖
-COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
-
-# 复制构建产物和源文件
-COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+# 从 builder 阶段复制构建产物
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/package.json ./
-COPY --from=builder --chown=nextjs:nodejs /app/next.config.ts ./
-COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
-
-# 复制WebSocket服务器
-COPY --from=builder --chown=nextjs:nodejs /app/websocket-server.js ./
-
-# 复制启动脚本
-COPY --chown=nextjs:nodejs start-servers.sh ./
-RUN chmod +x start-servers.sh
 
 # 切换到非 root 用户
 USER nextjs
 
-# 暴露两个端口
-EXPOSE 3000 3001
+# 暴露端口
+EXPOSE 3000
 
-# 健康检查（检查两个服务）
+# 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:3000/api/health && curl -f http://localhost:3001/ || exit 1
+    CMD curl -f http://localhost:3000/api/health || exit 1
 
-# 启动双服务器
-CMD ["sh", "start-servers.sh"]
+# 启动应用
+CMD ["node", "server.js"]

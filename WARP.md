@@ -21,14 +21,24 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 # Install dependencies
 pnpm install
 
-# Run development server (http://localhost:3000)
+# Run Next.js development server (http://localhost:3000)
 pnpm dev
+
+# Run WebSocket terminal server (ws://localhost:3001)
+pnpm ws:dev
+
+# Development: Start both servers (open two terminals)
+# Terminal 1: pnpm dev
+# Terminal 2: pnpm ws:dev
 
 # Build for production
 pnpm build
 
 # Start production server
 pnpm start
+
+# Start WebSocket server (production)
+pnpm ws:start
 
 # Run linter
 pnpm lint
@@ -83,6 +93,19 @@ kubectl logs -f deployment/xuanwu-factory -n xuanwu-factory
 
 - `DATABASE_URL`: MySQL connection string for Prisma
   - Format: `mysql://username:password@host:port/database`
+
+### WebSocket Terminal Server
+
+**Development (Local)**:
+- No configuration needed - automatically uses `ws://localhost:3001`
+- Start WebSocket server with: `pnpm ws:dev`
+
+**Production (K8s/Docker)**:
+- `NEXT_PUBLIC_WS_URL`: Full WebSocket server URL
+  - Format: `ws://domain:port` or `wss://domain` (for TLS)
+  - Example: `ws://factory.dev.aimstek.cn:3001`
+  - Example: `wss://factory.yourdomain.com` (if behind TLS-terminating proxy)
+- `WS_PORT`: WebSocket server port (default: 3001)
 
 ### Kubernetes Management (Optional)
 
