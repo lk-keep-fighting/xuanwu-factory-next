@@ -44,6 +44,7 @@ import type {
   Project,
   Service
 } from '@/types/project'
+import type { K8sServiceStatus } from '@/types/k8s'
 import ServiceCreateForm from '../components/ServiceCreateForm'
 import { ImportK8sServiceDialog } from '../components/ImportK8sServiceDialog'
 
@@ -379,6 +380,28 @@ const STATUS_LABELS: Record<string, string> = {
   building: '构建中'
 }
 
+const SERVICE_STATUSES = ['running', 'pending', 'stopped', 'error', 'building'] as const
+
+type ServiceStatus = (typeof SERVICE_STATUSES)[number]
+
+const SERVICE_STATUS_REFRESH_INTERVAL = 15000
+
+const normalizeServiceStatus = (status?: string | null): ServiceStatus => {
+  if (!status || typeof status !== 'string') {
+    return 'pending'
+  }
+
+  const normalized = status.trim().toLowerCase()
+
+  if (normalized === 'stoped' || normalized === 'inactive') {
+    return 'stopped'
+  }
+
+  return SERVICE_STATUSES.includes(normalized as ServiceStatus)
+    ? (normalized as ServiceStatus)
+    : 'pending'
+}
+
 type ProjectFormState = {
   name: string
   identifier: string
@@ -422,6 +445,8 @@ export default function ProjectDetailPage() {
   const [selectedType, setSelectedType] = useState<ServiceType | 'all'>('all')
   const [sortBy, setSortBy] = useState<'name' | 'updated_at'>('name')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [k8sStatusMap, setK8sStatusMap] = useState<Record<string, K8sServiceStatus>>({})
+  const [k8sStatusErrors, setK8sStatusErrors] = useState<Record<string, string>>({})
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [createServiceType, setCreateServiceType] = useState<ServiceType | null>(null)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
@@ -467,6 +492,78 @@ export default function ProjectDetailPage() {
     loadProject()
     loadServices()
   }, [loadProject, loadServices])
+
+  useEffect(() => {
+    const serviceIds = services
+      .map((service) => service.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+
+    if (serviceIds.length === 0) {
+      setK8sStatusMap({})
+      setK8sStatusErrors({})
+      return
+    }
+
+    let cancelled = false
+
+    const fetchStatuses = async () => {
+      const results = await Promise.all(
+        serviceIds.map(async (serviceId) => {
+          try {
+            const status = await serviceSvc.getK8sServiceStatus(serviceId)
+            return { serviceId, status, error: null as string | null }
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : '获取 Kubernetes 状态失败'
+            console.error(`[ProjectDetail] 获取服务 ${serviceId} 的状态失败:`, error)
+            return { serviceId, status: null, error: message }
+          }
+        })
+      )
+
+      if (cancelled) {
+        return
+      }
+
+      setK8sStatusMap((prev) => {
+        const next = { ...prev }
+        const activeIds = new Set(serviceIds)
+
+        results.forEach(({ serviceId, status }) => {
+          if (status) {
+            next[serviceId] = status
+          }
+        })
+
+        Object.keys(next).forEach((existingId) => {
+          if (!activeIds.has(existingId)) {
+            delete next[existingId]
+          }
+        })
+
+        return next
+      })
+
+      setK8sStatusErrors(() => {
+        const next: Record<string, string> = {}
+        results.forEach(({ serviceId, error }) => {
+          if (error) {
+            next[serviceId] = error
+          }
+        })
+        return next
+      })
+    }
+
+    void fetchStatuses()
+    const intervalId = window.setInterval(() => {
+      void fetchStatuses()
+    }, SERVICE_STATUS_REFRESH_INTERVAL)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [services])
 
   // 打开创建服务对话框
   const handleOpenCreateDialog = (type: ServiceType) => {
@@ -813,14 +910,20 @@ export default function ProjectDetailPage() {
                         : typeof service.type === 'string' && service.type.trim().length
                           ? service.type
                           : UNKNOWN_SERVICE_TYPE_LABEL
-                    const statusKey =
-                      typeof service.status === 'string' ? service.status.trim().toLowerCase() : 'pending'
-                    const statusColor = STATUS_COLORS[statusKey] ?? 'bg-gray-500'
-                    const statusLabel =
-                      STATUS_LABELS[statusKey] ??
-                      (typeof service.status === 'string' && service.status.trim().length
-                        ? service.status
-                        : '未知状态')
+                    const k8sStatus = service.id ? k8sStatusMap[service.id] : undefined
+                    const normalizedK8sStatus =
+                      typeof k8sStatus?.status === 'string' ? normalizeServiceStatus(k8sStatus.status) : null
+                    const normalizedDbStatus = normalizeServiceStatus(service.status)
+                    const effectiveStatus = normalizedK8sStatus ?? normalizedDbStatus
+                    const statusColor = STATUS_COLORS[effectiveStatus] ?? 'bg-gray-500'
+                    const statusLabel = STATUS_LABELS[effectiveStatus] ?? effectiveStatus
+                    const dbStatusLabel = STATUS_LABELS[normalizedDbStatus] ?? normalizedDbStatus
+                    const statusMismatch = Boolean(
+                      normalizedK8sStatus && normalizedK8sStatus !== normalizedDbStatus
+                    )
+                    const statusError = service.id ? k8sStatusErrors[service.id] : undefined
+                    const statusSourceLabel = normalizedK8sStatus ? 'Kubernetes 实时状态' : '数据库状态'
+                    const shouldShowStatusMeta = Boolean(normalizedK8sStatus || statusMismatch || statusError)
                     const applicationService = isApplicationService(service, normalizedType) ? service : null
                     const databaseService = isDatabaseService(service, normalizedType) ? service : null
                     const imageService = isImageService(service, normalizedType) ? service : null
@@ -905,9 +1008,24 @@ export default function ProjectDetailPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-                            <span className="text-gray-900">{statusLabel}</span>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                              <span className="text-gray-900">{statusLabel}</span>
+                            </div>
+                            {shouldShowStatusMeta && (
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                                <span>{statusSourceLabel}</span>
+                                {statusMismatch ? (
+                                  <span className="text-amber-600">数据库状态：{dbStatusLabel}</span>
+                                ) : null}
+                                {statusError ? (
+                                  <span className="text-red-500" title={statusError}>
+                                    实时状态不可用
+                                  </span>
+                                ) : null}
+                              </div>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>

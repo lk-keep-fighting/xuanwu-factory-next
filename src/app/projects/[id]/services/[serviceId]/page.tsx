@@ -89,6 +89,7 @@ const DEPLOYMENT_STATUS_META: Record<Deployment['status'], { label: string; clas
 const LOGS_LINE_COUNT = 200
 const IMAGE_HISTORY_PAGE_SIZE = 10
 const SUCCESS_IMAGE_OPTIONS_LIMIT = 100
+const K8S_STATUS_REFRESH_INTERVAL = 15000
 
 const IMAGE_STATUS_META: Record<ServiceImageStatus, { label: string; badgeClass: string; textClass: string }> = {
   pending: { label: '等待构建', badgeClass: 'bg-gray-100 text-gray-600', textClass: 'text-gray-500' },
@@ -1331,16 +1332,18 @@ export default function ServiceDetailPage() {
   }, [initializeNetworkState, loadServiceImages, projectId, router, serviceId])
 
   const fetchK8sStatus = useCallback(
-    async (options: { showToast?: boolean } = {}) => {
+    async (options: { showToast?: boolean; silent?: boolean } = {}) => {
       if (!serviceId) {
         return null
       }
 
-      const { showToast = false } = options
+      const { showToast = false, silent = false } = options
 
       try {
-        setK8sStatusLoading(true)
-        setK8sStatusError(null)
+        if (!silent) {
+          setK8sStatusLoading(true)
+          setK8sStatusError(null)
+        }
         const data = await serviceSvc.getK8sServiceStatus(serviceId)
         setK8sStatusInfo(data)
 
@@ -1366,7 +1369,9 @@ export default function ServiceDetailPage() {
 
         return null
       } finally {
-        setK8sStatusLoading(false)
+        if (!silent) {
+          setK8sStatusLoading(false)
+        }
       }
     },
     [serviceId]
@@ -1451,6 +1456,18 @@ export default function ServiceDetailPage() {
     void fetchK8sStatus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceId])
+
+  useEffect(() => {
+    if (!serviceId) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void fetchK8sStatus({ silent: true })
+    }, K8S_STATUS_REFRESH_INTERVAL)
+
+    return () => window.clearInterval(intervalId)
+  }, [fetchK8sStatus, serviceId])
 
   useEffect(() => {
     if (service?.type === ServiceType.APPLICATION) {
