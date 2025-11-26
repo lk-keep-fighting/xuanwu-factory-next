@@ -531,24 +531,39 @@ export const serviceSvc = {
   /**
    * 获取服务容器中的文件列表
    */
-  async listServiceFiles(serviceId: string, path: string = '/'): Promise<K8sFileListResult> {
+  async listServiceFiles(serviceId: string, path: string = '/', options?: { signal?: AbortSignal }): Promise<K8sFileListResult> {
     const params = new URLSearchParams()
     if (typeof path === 'string') {
       params.set('path', path)
     }
     const query = params.toString()
-    const response = await fetch(`${API_BASE}/${serviceId}/files${query ? `?${query}` : ''}`)
-    const payload = await response.json().catch(() => null)
+    
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout
+    
+    try {
+      const response = await fetch(`${API_BASE}/${serviceId}/files${query ? `?${query}` : ''}`, {
+        signal: options?.signal || controller.signal
+      })
+      const payload = await response.json().catch(() => null)
 
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
-          ? ((payload as { error?: string }).error as string)
-          : '获取文件列表失败'
-      throw new Error(message)
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+            ? ((payload as { error?: string }).error as string)
+            : '获取文件列表失败'
+        throw new Error(message)
+      }
+
+      return (payload as K8sFileListResult) || { path: '/', parentPath: null, entries: [] }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('获取文件列表超时，请重试')
+      }
+      throw error
+    } finally {
+      clearTimeout(timeoutId)
     }
-
-    return (payload as K8sFileListResult) || { path: '/', parentPath: null, entries: [] }
   },
 
   /**
