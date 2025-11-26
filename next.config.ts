@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Docker部署必需：生成自包含的standalone目录
+  output: 'standalone',
+
   // 优化生产构建
   poweredByHeader: false,
   compress: true,

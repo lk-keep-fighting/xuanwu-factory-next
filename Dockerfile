@@ -34,11 +34,7 @@ ENV NODE_ENV=production
 # 执行构建
 RUN pnpm build
 
-# ============ 阶段 4: 精简生产依赖 ============
-FROM deps AS prod-deps
-RUN pnpm prune --prod
-
-# ============ 阶段 5: 运行时镜像 ============
+# ============ 阶段 4: 运行时镜像 ============
 FROM node:20-alpine AS runner
 
 # 安装必要的系统依赖
@@ -63,22 +59,28 @@ ENV HOSTNAME="0.0.0.0"
 ENV PORT=3000
 ENV WS_PORT=3001
 
-# 复制生产依赖
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
-
-# 复制构建产物和源文件
-COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+# 复制Next.js standalone服务器（自包含最小化依赖，包括Prisma）
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/package.json ./
-COPY --from=builder --chown=nextjs:nodejs /app/next.config.ts ./
+
+# 复制Prisma schema（用于运行时读取）
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
 # 复制WebSocket服务器
 COPY --from=builder --chown=nextjs:nodejs /app/websocket-server.js ./
 
+# 复制WebSocket依赖（standalone不会追踪外部.js文件的依赖）
+# 直接复制整个.pnpm store 保证依赖完整
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.pnpm ./node_modules/.pnpm
+
 # 复制启动脚本
 COPY --chown=nextjs:nodejs start-servers.sh ./
 RUN chmod +x start-servers.sh
+
+# 为WebSocket服务器创建符号链接（pnpm需要）
+RUN ln -s .pnpm/ws@8.18.3/node_modules/ws ./node_modules/ws && \
+    ln -s .pnpm/@kubernetes+client-node@1.4.0/node_modules/@kubernetes ./node_modules/@kubernetes
 
 # 切换到非 root 用户
 USER nextjs
