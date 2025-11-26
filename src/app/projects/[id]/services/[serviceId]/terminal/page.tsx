@@ -147,72 +147,96 @@ export default function TerminalPage() {
     }
 
     const terminal = terminalInstanceRef.current
+    let isCancelled = false
     
-    // WebSocket地址配置：优先使用完整URL环境变量，否则自动构造
-    let wsUrl
-    const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL
-    
-    if (wsBaseUrl) {
-      // 使用配置的完整URL（如 ws://factory.dev.aimstek.cn:3001 或 wss://factory.dev.aimstek.cn）
-      wsUrl = `${wsBaseUrl}/api/services/${serviceId}/terminal`
-    } else {
-      // 本地开发模式：自动构造
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const wsPort = process.env.NEXT_PUBLIC_WS_PORT || '3001'
-      wsUrl = `${protocol}//${window.location.hostname}:${wsPort}/api/services/${serviceId}/terminal`
-    }
-    
-    console.log('[Terminal] Connecting to WebSocket:', wsUrl)
-
-    try {
-      const ws = new WebSocket(wsUrl)
-      wsRef.current = ws
-
-      ws.onopen = () => {
-        setIsConnected(true)
-        terminal.writeln('\x1b[1;32m✓ 已连接到容器\x1b[0m')
-        terminal.writeln('')
+    // 异步获取配置并连接WebSocket
+    const connectWebSocket = async () => {
+      try {
+        // 从服务端获取运行时配置
+        const configRes = await fetch('/api/config')
+        const config = await configRes.json()
         
-        // 监听用户输入
-        terminal.onData((data) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'input', data }))
-          }
-        })
-      }
-
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data)
+        if (isCancelled) return
+        
+        // WebSocket地址构造规则
+        let wsUrl: string
+        
+        if (config.wsUrl) {
+          // 使用K8s环境变量配置的URL
+          wsUrl = `${config.wsUrl}/api/services/${serviceId}/terminal`
+        } else {
+          // 自动构造（本地开发或未配置环境变量）
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+          const hostname = window.location.hostname
           
-          if (message.type === 'output') {
-            terminal.write(message.data)
-          } else if (message.type === 'error') {
-            terminal.writeln(`\r\n\x1b[1;31m错误: ${message.message}\x1b[0m\r\n`)
+          if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            // 本地开发
+            wsUrl = `${protocol}//${hostname}:3001/api/services/${serviceId}/terminal`
+          } else {
+            // 生产环境fallback：域名替换规则
+            const wsHostname = hostname.replace(/(-next)(\.|\/|$)/, '$1-ws$2')
+            wsUrl = `${protocol}//${wsHostname}/api/services/${serviceId}/terminal`
           }
-        } catch (error) {
-          // 如果不是JSON，直接显示
-          terminal.write(event.data)
         }
-      }
+        
+        console.log('[Terminal] Connecting to WebSocket:', wsUrl)
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        terminal.writeln('\r\n\x1b[1;31m✗ WebSocket连接错误\x1b[0m\r\n')
-        setIsConnected(false)
-      }
+        const ws = new WebSocket(wsUrl)
+        wsRef.current = ws
 
-      ws.onclose = () => {
-        terminal.writeln('\r\n\x1b[1;33m连接已关闭\x1b[0m\r\n')
-        setIsConnected(false)
+        ws.onopen = () => {
+          if (isCancelled) {
+            ws.close()
+            return
+          }
+          setIsConnected(true)
+          terminal.writeln('\x1b[1;32m✓ 已连接到容器\x1b[0m')
+          terminal.writeln('')
+          
+          // 监听用户输入
+          terminal.onData((data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'input', data }))
+            }
+          })
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data)
+            
+            if (message.type === 'output') {
+              terminal.write(message.data)
+            } else if (message.type === 'error') {
+              terminal.writeln(`\r\n\x1b[1;31m错误: ${message.message}\x1b[0m\r\n`)
+            }
+          } catch (error) {
+            // 如果不是JSON，直接显示
+            terminal.write(event.data)
+          }
+        }
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error)
+          terminal.writeln('\r\n\x1b[1;31m✗ WebSocket连接错误\x1b[0m\r\n')
+          setIsConnected(false)
+        }
+
+        ws.onclose = () => {
+          terminal.writeln('\r\n\x1b[1;33m连接已关闭\x1b[0m\r\n')
+          setIsConnected(false)
+        }
+      } catch (error) {
+        console.error('Failed to create WebSocket:', error)
+        terminal.writeln('\r\n\x1b[1;31m✗ 无法建立WebSocket连接\x1b[0m\r\n')
       }
-    } catch (error) {
-      console.error('Failed to create WebSocket:', error)
-      terminal.writeln('\r\n\x1b[1;31m✗ 无法建立WebSocket连接\x1b[0m\r\n')
     }
+    
+    connectWebSocket()
 
     // 清理函数
     return () => {
+      isCancelled = true
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null

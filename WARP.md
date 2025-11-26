@@ -101,11 +101,12 @@ kubectl logs -f deployment/xuanwu-factory -n xuanwu-factory
 - Start WebSocket server with: `pnpm ws:dev`
 
 **Production (K8s/Docker)**:
-- `NEXT_PUBLIC_WS_URL`: Full WebSocket server URL
-  - Format: `ws://domain:port` or `wss://domain` (for TLS)
-  - Example: `ws://factory.dev.aimstek.cn:3001`
-  - Example: `wss://factory.yourdomain.com` (if behind TLS-terminating proxy)
-- `WS_PORT`: WebSocket server port (default: 3001)
+- `WS_URL`: WebSocket server base URL (optional)
+  - Format: `ws://domain` or `wss://domain` (no path, no port unless custom)
+  - Example: `ws://xuanwu-factory-next-ws.xuanwu-factory.dev.aimstek.cn`
+  - Example: `wss://factory-ws.yourdomain.com` (if behind TLS-terminating proxy)
+  - If not set, client auto-derives from app domain (replaces `-next` with `-next-ws`)
+- `WS_PORT`: WebSocket server listen port (default: 3001, internal only)
 
 ### Kubernetes Management (Optional)
 
