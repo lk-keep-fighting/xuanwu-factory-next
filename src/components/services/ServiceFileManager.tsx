@@ -60,21 +60,6 @@ const normalizeDirectoryPath = (rawPath?: string | null) => {
   return value || '/'
 }
 
-const buildAncestorPaths = (path: string) => {
-  const normalized = normalizeDirectoryPath(path)
-  if (normalized === '/') {
-    return ['/']
-  }
-  const segments = normalized.split('/').filter(Boolean)
-  const ancestors: string[] = ['/']
-  let current = ''
-  for (let i = 0; i < segments.length - 1; i += 1) {
-    current = `${current}/${segments[i]}`
-    ancestors.push(normalizeDirectoryPath(current))
-  }
-  return ancestors
-}
-
 export function ServiceFileManager({ serviceId, active = true }: ServiceFileManagerProps) {
   const [entries, setEntries] = useState<K8sFileEntry[]>([])
   const [currentPath, setCurrentPath] = useState('/')
@@ -85,17 +70,12 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
   const [uploading, setUploading] = useState(false)
   const [pathInputValue, setPathInputValue] = useState('/')
   const [directoryCache, setDirectoryCache] = useState<Record<string, K8sFileEntry[]>>({})
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set(['/']))
-  const [treeLoadingPaths, setTreeLoadingPaths] = useState<Set<string>>(() => new Set())
+  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({ '/': true })
   
-  // Debug: log render with state references
-  console.log(`[FileManager] 🔄 Render #${Math.random().toString(36).substr(2, 5)}, directoryCache keys:`, Object.keys(directoryCache), 'expandedPaths:', Array.from(expandedPaths))
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const currentPathRef = useRef('/')
   const pendingPathRef = useRef<string | null>(null)
   const inflightRequests = useRef<Set<string>>(new Set())
-  const directoryCacheRef = useRef<Record<string, K8sFileEntry[]>>({})
-  const toggleInProgress = useRef(false)
 
   const resetState = useCallback(() => {
     setEntries([])
@@ -104,10 +84,8 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
     setHasInitialized(false)
     setError(null)
     setPathInputValue('/')
-    directoryCacheRef.current = {}
     setDirectoryCache({})
-    setExpandedPaths(new Set(['/']))
-    setTreeLoadingPaths(new Set())
+    setExpandedPaths({ '/': true })
     currentPathRef.current = '/'
     pendingPathRef.current = null
     inflightRequests.current.clear()
@@ -124,22 +102,15 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       }
       const normalizedTarget = normalizeDirectoryPath(targetPath)
       
-      console.log(`[FileManager] loadDirectory called for: ${normalizedTarget}`)
-      console.log(`[FileManager] Current inflight:`, Array.from(inflightRequests.current))
-      
       // Prevent concurrent requests to same path
       if (inflightRequests.current.has(normalizedTarget)) {
-        console.warn(`[FileManager] ⚠️ Request already in flight for ${normalizedTarget}`)
         return null
       }
       
-      console.log(`[FileManager] ✅ Starting request for ${normalizedTarget}`)
       inflightRequests.current.add(normalizedTarget)
       
       try {
-        console.log(`[FileManager] 📡 Fetching ${normalizedTarget}...`)
         const data = await serviceSvc.listServiceFiles(serviceId, normalizedTarget)
-        console.log(`[FileManager] ✅ Got response for ${normalizedTarget}:`, data.entries.length, 'entries')
         const normalizedPath = normalizeDirectoryPath(data.path)
         const normalizedParent =
           data.parentPath === null ? null : normalizeDirectoryPath(data.parentPath)
@@ -157,8 +128,30 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
           parentPath: normalizedParent,
           entries: normalizedEntries
         }
+        // 过滤子目录：只保留直接子目录，排除父路径和自己
         const directoryEntries = normalizedEntries
-          .filter((entry) => entry.type === 'directory' && entry.path !== normalizedPath)
+          .filter((entry) => {
+            if (entry.type !== 'directory') return false
+            if (entry.path === normalizedPath) return false
+            
+            // 排除父路径或祖先路径（防止循环引用）
+            // 如果 entry.path 是 normalizedPath 的前缀或相等，说明是父/祖先
+            if (entry.path.length < normalizedPath.length && 
+                normalizedPath.startsWith(entry.path)) {
+              return false
+            }
+            
+            // 只保留直接子目录
+            if (normalizedPath === '/') {
+              // 根目录的直接子目录：/xxx（第二个 / 的位置应该是 -1）
+              return entry.path.lastIndexOf('/') === 0
+            } else {
+              // 其他目录的直接子目录：必须以 "当前路径/" 开头，且后面没有更多 /
+              if (!entry.path.startsWith(normalizedPath + '/')) return false
+              const suffix = entry.path.substring(normalizedPath.length + 1)
+              return suffix.indexOf('/') === -1
+            }
+          })
         const uniqueDirectoryEntries: K8sFileEntry[] = []
         const seenPaths = new Set<string>()
         for (const entry of directoryEntries) {
@@ -169,21 +162,11 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
           uniqueDirectoryEntries.push(entry)
         }
         uniqueDirectoryEntries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
-        const newCache = {
-          ...directoryCacheRef.current,
-          [normalizedPath]: uniqueDirectoryEntries
-        }
-        directoryCacheRef.current = newCache
-        console.log(`[FileManager] 💾 About to call setDirectoryCache...`)
-        setDirectoryCache(newCache)
-        console.log(`[FileManager] ✅ setDirectoryCache completed`)
-        console.log(`[FileManager] 💾 Cached ${normalizedPath}, total cache size:`, Object.keys(directoryCacheRef.current).length)
+        setDirectoryCache(prev => ({ ...prev, [normalizedPath]: uniqueDirectoryEntries }))
         return normalizedData
       } catch (error) {
-        console.error(`[FileManager] ❌ Error loading ${normalizedTarget}:`, error)
         throw error
       } finally {
-        console.log(`[FileManager] 🔓 Releasing lock for ${normalizedTarget}`)
         inflightRequests.current.delete(normalizedTarget)
       }
     },
@@ -197,12 +180,8 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       }
       const normalizedTarget = normalizeDirectoryPath(targetPath)
       
-      console.log(`[FileManager] 🎯 loadAndActivateDirectory: ${normalizedTarget}`)
-      console.log(`[FileManager] Current path: ${currentPathRef.current}`)
-      
       // Check if request is already in flight before setting loading state
       if (inflightRequests.current.has(normalizedTarget)) {
-        console.warn(`[FileManager] ⚠️ Request already in flight for ${normalizedTarget}, SKIPPING activation`)
         return
       }
       
@@ -211,43 +190,24 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       setError(null)
 
       try {
-        console.log(`[FileManager] ⏳ Calling loadDirectory from loadAndActivateDirectory`)
         const data = await loadDirectory(normalizedTarget)
-        console.log(`[FileManager] 📦 loadDirectory returned:`, data ? `${data.entries.length} entries for ${data.path}` : 'NULL')
         if (!data) {
-          console.error(`[FileManager] ❌ Data is null, aborting UI update`)
           return
         }
-        console.log(`[FileManager] 🔄 Updating UI state...`)
-        console.log(`[FileManager] Setting currentPathRef to:`, data.path)
         currentPathRef.current = data.path
-        console.log(`[FileManager] Setting entries:`, data.entries.length)
         setEntries(Array.isArray(data.entries) ? data.entries : [])
-        console.log(`[FileManager] Setting currentPath`)
         setCurrentPath(data.path)
-        console.log(`[FileManager] Setting parentPath`)
         setParentPath(data.parentPath)
-        console.log(`[FileManager] Setting pathInputValue`)
         setPathInputValue(data.path)
-        console.log(`[FileManager] Setting hasInitialized`)
         setHasInitialized(true)
-        // Note: We don't update expandedPaths here to avoid render loops
-        // The tree will naturally expand when user interacts with it
-        console.log(`[FileManager] ✅ UI state update complete`)
       } catch (fetchError) {
-        console.error(`[FileManager] ❌ Exception in loadAndActivateDirectory:`, fetchError)
         const message = fetchError instanceof Error ? fetchError.message : '加载文件失败'
         setError(message)
         toast.error(`加载文件失败：${message}`)
         setHasInitialized(true)
       } finally {
-        console.log(`[FileManager] 🏁 Finally block: clearing loading state`)
         pendingPathRef.current = null
         setLoading(false)
-        // Force a microtask delay to ensure state updates are flushed
-        Promise.resolve().then(() => {
-          console.log(`[FileManager] ✅ Loading state cleared, should re-render now`)
-        })
       }
     },
     [serviceId, active, loadDirectory]
@@ -258,17 +218,13 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       void loadAndActivateDirectory('/')
     }
   }, [active, serviceId, hasInitialized, loading, loadAndActivateDirectory])
+
   const handleSelectPath = useCallback(
     (target: string) => {
-      console.log(`[FileManager] 👆 handleSelectPath called:`, target)
       const normalizedTarget = normalizeDirectoryPath(target)
-      console.log(`[FileManager] Normalized to:`, normalizedTarget)
-      console.log(`[FileManager] Current path is:`, currentPathRef.current)
       if (normalizedTarget === currentPathRef.current) {
-        console.log(`[FileManager] ⏭️ Already at this path, skipping`)
         return
       }
-      console.log(`[FileManager] 🚀 Calling loadAndActivateDirectory`)
       void loadAndActivateDirectory(normalizedTarget)
     },
     [loadAndActivateDirectory]
@@ -276,15 +232,12 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
 
   const handleDirectoryEntrySelect = useCallback(
     (entry: K8sFileEntry) => {
-      console.log(`[FileManager] 🖱️ handleDirectoryEntrySelect:`, entry.name, entry.type)
       if (entry.type !== 'directory') {
-        console.log(`[FileManager] Not a directory, ignoring`)
         return
       }
       const fallbackPath = entry.path && entry.path.trim().length > 0
         ? entry.path
         : `${currentPathRef.current}/${entry.name}`
-      console.log(`[FileManager] Computed path:`, fallbackPath)
       handleSelectPath(fallbackPath)
     },
     [handleSelectPath]
@@ -367,84 +320,46 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
         return
       }
       const normalizedTarget = normalizeDirectoryPath(targetPath)
-      if (directoryCacheRef.current[normalizedTarget]) {
+      
+      // 检查当前缓存（使用闭包中的 directoryCache）
+      if (directoryCache[normalizedTarget]) {
         return
       }
-      setTreeLoadingPaths((prev) => {
-        const next = new Set(prev)
-        next.add(normalizedTarget)
-        return next
-      })
+      
+      // 静默加载
       try {
         await loadDirectory(normalizedTarget)
       } catch (prefetchError) {
-        const message = prefetchError instanceof Error ? prefetchError.message : '加载目录失败'
-        toast.error(`加载目录失败：${message}`)
-      } finally {
-        setTreeLoadingPaths((prev) => {
-          const next = new Set(prev)
-          next.delete(normalizedTarget)
-          return next
-        })
+        // 静默失败
       }
     },
-    [serviceId, active, loadDirectory]
+    [serviceId, active, loadDirectory, directoryCache]
   )
-
   const handleToggleExpand = useCallback(
     (path: string) => {
-      // Prevent duplicate rapid-fire calls
-      if (toggleInProgress.current) {
-        console.log(`[FileManager] ⚠️ Toggle already in progress, ignoring`)
-        return
-      }
-      
       const normalizedPath = normalizeDirectoryPath(path)
-      console.log(`[FileManager] 🔄 handleToggleExpand:`, normalizedPath)
+      const wasExpanded = expandedPaths[normalizedPath]
+      const needsPrefetch = !wasExpanded && !directoryCache[normalizedPath]
       
-      toggleInProgress.current = true
+      // 先更新状态
+      setExpandedPaths(prev => {
+        if (prev[normalizedPath]) {
+          // Collapse
+          const next = { ...prev }
+          delete next[normalizedPath]
+          return next
+        } else {
+          // Expand
+          return { ...prev, [normalizedPath]: true }
+        }
+      })
       
-      // Read current state directly to avoid double-invoke issues in StrictMode
-      const wasExpanded = expandedPaths.has(normalizedPath)
-      const willExpand = !wasExpanded
-      
-      const next = new Set(expandedPaths)
-      if (wasExpanded) {
-        next.delete(normalizedPath)
-        console.log(`[FileManager] Collapsing ${normalizedPath}`)
-      } else {
-        next.add(normalizedPath)
-        console.log(`[FileManager] Expanding ${normalizedPath}`)
-      }
-      console.log(`[FileManager] 🔴 About to call setExpandedPaths`)
-      setExpandedPaths(next)
-      console.log(`[FileManager] 🟢 setExpandedPaths completed`)
-      
-      // Reset flag after state update completes
-      setTimeout(() => {
-        toggleInProgress.current = false
-      }, 100)
-      
-      // Check after state update to use latest directoryCache
-      if (willExpand && !directoryCacheRef.current[normalizedPath]) {
-        console.log(`[FileManager] Prefetching ${normalizedPath}`)
+      // 然后在外部加载（只执行一次）
+      if (needsPrefetch) {
         void prefetchDirectory(normalizedPath)
       }
     },
-    [expandedPaths, prefetchDirectory]
-  )
-
-  const getDirectoryChildren = useCallback(
-    (path: string) => {
-      const normalized = normalizeDirectoryPath(path)
-      return directoryCache[normalized] ?? []
-    },
-    [directoryCache]
-  )
-
-  const hasLoadedDirectory = useCallback(
-    (path: string) => Boolean(directoryCache[normalizeDirectoryPath(path)]),
-    [directoryCache]
+    [expandedPaths, directoryCache, prefetchDirectory]
   )
 
   const breadcrumbItems = useMemo(() => {
@@ -517,7 +432,6 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
                 onSelect={handleSelectPath}
                 directoryCache={directoryCache}
                 selectedPath={currentPath}
-                loadingPaths={treeLoadingPaths}
                 pendingPath={pendingPath}
                 disabled={treeDisabled}
               />
@@ -674,12 +588,11 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
 
 type DirectoryTreeItemProps = {
   node: DirectoryTreeNode
-  expandedPaths: Set<string>
+  expandedPaths: Record<string, boolean>
   onToggle: (path: string) => void
   onSelect: (path: string) => void
   directoryCache: Record<string, K8sFileEntry[]>
   selectedPath: string
-  loadingPaths: Set<string>
   pendingPath: string | null
   disabled?: boolean
 }
@@ -691,19 +604,16 @@ const DirectoryTreeItem = memo(function DirectoryTreeItem({
   onSelect,
   directoryCache,
   selectedPath,
-  loadingPaths,
   pendingPath,
   disabled
 }: DirectoryTreeItemProps) {
   const normalizedPath = normalizeDirectoryPath(node.path)
-  console.log(`[TreeItem] Rendering node: ${normalizedPath}`)
-  const isExpanded = expandedPaths.has(normalizedPath)
+  const isExpanded = Boolean(expandedPaths[normalizedPath])
   const isSelected = selectedPath === normalizedPath
-  const isLoading = loadingPaths.has(normalizedPath) || pendingPath === normalizedPath
+  const isLoading = pendingPath === normalizedPath
   const childDirectories = directoryCache[normalizedPath] ?? []
   const hasLoaded = Boolean(directoryCache[normalizedPath])
   const showToggle = node.isRoot || isLoading || childDirectories.length > 0 || !hasLoaded
-  console.log(`[TreeItem] ${normalizedPath}: expanded=${isExpanded}, children=${childDirectories.length}, hasLoaded=${hasLoaded}`)
 
   return (
     <div>
@@ -763,7 +673,6 @@ const DirectoryTreeItem = memo(function DirectoryTreeItem({
                 onSelect={onSelect}
                 directoryCache={directoryCache}
                 selectedPath={selectedPath}
-                loadingPaths={loadingPaths}
                 pendingPath={pendingPath}
                 disabled={disabled}
               />
@@ -775,29 +684,4 @@ const DirectoryTreeItem = memo(function DirectoryTreeItem({
       ) : null}
     </div>
   )
-}, (prevProps, nextProps) => {
-  // Custom memo comparator to debug infinite loops
-  const nodeEqual = prevProps.node.path === nextProps.node.path
-  const expandedPathsEqual = prevProps.expandedPaths === nextProps.expandedPaths
-  const cacheEqual = prevProps.directoryCache === nextProps.directoryCache
-  const selectedPathEqual = prevProps.selectedPath === nextProps.selectedPath
-  const loadingPathsEqual = prevProps.loadingPaths === nextProps.loadingPaths
-  const pendingPathEqual = prevProps.pendingPath === nextProps.pendingPath
-  const disabledEqual = prevProps.disabled === nextProps.disabled
-  
-  const allEqual = nodeEqual && expandedPathsEqual && cacheEqual && selectedPathEqual && loadingPathsEqual && pendingPathEqual && disabledEqual
-  
-  if (!allEqual) {
-    console.log(`[TreeItem] Memo check for ${nextProps.node.path}: CHANGED`, {
-      nodeEqual,
-      expandedPathsEqual,
-      cacheEqual,
-      selectedPathEqual,
-      loadingPathsEqual,
-      pendingPathEqual,
-      disabledEqual
-    })
-  }
-  
-  return allEqual
 })

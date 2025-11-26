@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // 启用 standalone 输出模式（Docker 部署必需）
   output: 'standalone',
-  reactStrictMode: false,
+  // reactStrictMode: false,
   // 优化生产构建
   poweredByHeader: false,
   compress: true,
