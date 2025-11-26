@@ -119,7 +119,8 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
       const normalizedPath = normalizeDirectoryPath(data.path)
       const normalizedParent =
         data.parentPath === null ? null : normalizeDirectoryPath(data.parentPath)
-      const normalizedEntries = data.entries.map((entry) => {
+      const rawEntries = Array.isArray(data.entries) ? data.entries : []
+      const normalizedEntries = rawEntries.map((entry) => {
         const normalizedEntryPath = normalizeDirectoryPath(entry.path || `${normalizedPath}/${entry.name}`)
         return {
           ...entry,
@@ -169,7 +170,7 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
           return
         }
         currentPathRef.current = data.path
-        setEntries(data.entries)
+        setEntries(Array.isArray(data.entries) ? data.entries : [])
         setCurrentPath(data.path)
         setParentPath(data.parentPath)
         setPathInputValue(data.path)
