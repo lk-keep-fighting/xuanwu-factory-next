@@ -270,7 +270,7 @@ curl http://localhost:3000/api/k8s/health
 
 ## Build Configuration Notes
 
-- **Standalone Output**: `output: 'standalone'` in next.config.ts for Docker deployments
+- **Standalone Output**: `output: 'standalone'` in next.config.mjs for Docker deployments
 - **Prisma Binary Targets**: Includes `linux-musl-openssl-3.0.x` for Alpine-based containers
 - **Type Checking**: Disabled during builds (`ignoreBuildErrors: true`) for faster Docker builds
   - Run `npx tsc --noEmit` locally to catch type errors before committing

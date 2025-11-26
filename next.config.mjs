@@ -1,6 +1,5 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   // 优化生产构建
   poweredByHeader: false,
   compress: true,
@@ -15,8 +14,8 @@ const nextConfig: NextConfig = {
     unoptimized: false,
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: '**',
+        protocol: "https",
+        hostname: "**",
       },
     ],
   },
