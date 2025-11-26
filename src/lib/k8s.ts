@@ -58,34 +58,21 @@ const DATABASE_DATA_PATHS: Partial<Record<SupportedDatabaseType, string>> = {
   redis: '/data'
 }
 
-const POSIX_PATH = path.posix
-
-const FILE_OPERATION_EXIT_CODES = {
-  NOT_FOUND: 44,
-  NOT_DIRECTORY: 45,
-  IS_DIRECTORY: 46
-} as const
-
-export class K8sFileError extends Error {
-  statusCode: number
-
-  constructor(message: string, statusCode = 500) {
-    super(message)
-    this.name = 'K8sFileError'
-    this.statusCode = statusCode
-  }
-}
+// 向后兼容：重新导出 FileSystemError 为 K8sFileError
+export { FileSystemError as K8sFileError } from '@/lib/filesystem'
 
 class K8sService {
   private kc: k8s.KubeConfig
   private appsApi: k8s.AppsV1Api
-  private coreApi: k8s.CoreV1Api
+  // 公开以供文件管理服务使用
+  readonly coreApi: k8s.CoreV1Api
   private networkingApi: k8s.NetworkingV1Api
   private rbacApi: k8s.RbacAuthorizationV1Api
   private execClient: k8s.Exec
   private namespaceAccessCache = new Set<string>()
   private clusterAccessCache = new Set<string>()
   private serviceAccountIdentity?: { namespace: string; name: string } | null
+  private podExecLocks = new Map<string, Promise<unknown>>()
 
   constructor() {
     this.kc = new k8s.KubeConfig()
@@ -1250,120 +1237,6 @@ class K8sService {
     }
   }
 
-  /**
-   * 列出容器中的文件和目录
-   */
-  async listContainerFiles(
-    serviceName: string,
-    namespace: string,
-    targetPath: string = '/'
-  ): Promise<K8sFileListResult> {
-    const normalizedPath = this.normalizeContainerPath(targetPath)
-    const podInfo = await this.getPrimaryPodInfo(serviceName, namespace)
-    const script = [
-      `TARGET=${this.escapeShellArg(normalizedPath)}`,
-      'if [ ! -e "$TARGET" ]; then echo "__XW_FILE_NOT_FOUND__" 1>&2; exit 44; fi',
-      'if [ ! -d "$TARGET" ]; then echo "__XW_NOT_DIRECTORY__" 1>&2; exit 45; fi',
-      'cd "$TARGET" && ls -a -p'
-    ].join('; ')
-
-    const result = await this.execInPod(podInfo.namespace, podInfo.podName, podInfo.containerName, [
-      'sh',
-      '-c',
-      script
-    ])
-
-    if (result.exitCode && result.exitCode !== 0) {
-      if (result.exitCode === FILE_OPERATION_EXIT_CODES.NOT_FOUND) {
-        throw new K8sFileError('指定的路径不存在', 404)
-      }
-      if (result.exitCode === FILE_OPERATION_EXIT_CODES.NOT_DIRECTORY) {
-        throw new K8sFileError('指定的路径不是目录', 400)
-      }
-      const stderr = result.stderr.toString('utf8').trim()
-      throw new K8sFileError(stderr || '获取目录列表失败')
-    }
-
-    const entries = this.parseDirectoryListing(result.stdout.toString('utf8'), normalizedPath)
-
-    return {
-      path: normalizedPath,
-      parentPath: this.getParentContainerPath(normalizedPath),
-      entries
-    }
-  }
-
-  /**
-   * 下载容器中的文件
-   */
-  async readContainerFile(serviceName: string, namespace: string, filePath: string): Promise<Buffer> {
-    const normalizedPath = this.normalizeContainerPath(filePath)
-    const podInfo = await this.getPrimaryPodInfo(serviceName, namespace)
-    const script = [
-      `TARGET=${this.escapeShellArg(normalizedPath)}`,
-      'if [ ! -e "$TARGET" ]; then echo "__XW_FILE_NOT_FOUND__" 1>&2; exit 44; fi',
-      'if [ -d "$TARGET" ]; then echo "__XW_PATH_IS_DIRECTORY__" 1>&2; exit 46; fi',
-      'cat "$TARGET"'
-    ].join('; ')
-
-    const result = await this.execInPod(podInfo.namespace, podInfo.podName, podInfo.containerName, [
-      'sh',
-      '-c',
-      script
-    ])
-
-    if (result.exitCode && result.exitCode !== 0) {
-      if (result.exitCode === FILE_OPERATION_EXIT_CODES.NOT_FOUND) {
-        throw new K8sFileError('文件不存在', 404)
-      }
-      if (result.exitCode === FILE_OPERATION_EXIT_CODES.IS_DIRECTORY) {
-        throw new K8sFileError('无法下载目录，请选择文件', 400)
-      }
-      const stderr = result.stderr.toString('utf8').trim()
-      throw new K8sFileError(stderr || '读取文件失败')
-    }
-
-    return result.stdout
-  }
-
-  /**
-   * 上传文件到容器
-   */
-  async uploadContainerFile(
-    serviceName: string,
-    namespace: string,
-    directoryPath: string,
-    fileName: string,
-    content: Buffer
-  ): Promise<{ path: string }> {
-    const normalizedDirectory = this.normalizeContainerPath(directoryPath)
-    const sanitizedFileName = this.validateFileName(fileName)
-    const targetFilePath = this.joinContainerPath(normalizedDirectory, sanitizedFileName)
-    const podInfo = await this.getPrimaryPodInfo(serviceName, namespace)
-    const script = [
-      `TARGET_DIR=${this.escapeShellArg(normalizedDirectory)}`,
-      'if [ ! -d "$TARGET_DIR" ]; then echo "__XW_NOT_DIRECTORY__" 1>&2; exit 45; fi',
-      `cat > ${this.escapeShellArg(targetFilePath)}`
-    ].join('; ')
-
-    const result = await this.execInPod(
-      podInfo.namespace,
-      podInfo.podName,
-      podInfo.containerName,
-      ['sh', '-c', script],
-      { stdin: content }
-    )
-
-    if (result.exitCode && result.exitCode !== 0) {
-      if (result.exitCode === FILE_OPERATION_EXIT_CODES.NOT_DIRECTORY) {
-        throw new K8sFileError('目标路径不是有效的目录', 400)
-      }
-      const stderr = result.stderr.toString('utf8').trim()
-      throw new K8sFileError(stderr || '上传文件失败')
-    }
-
-    return { path: targetFilePath }
-  }
 
   /**
    * 获取服务事件
@@ -1617,7 +1490,8 @@ class K8sService {
     await this.ensureNamespaceAccess(normalized)
   }
 
-  private async ensureNamespaceAccess(namespace: string): Promise<void> {
+  // 公开以供文件管理服务使用
+  async ensureNamespaceAccess(namespace: string): Promise<void> {
     const normalized = namespace.trim()
 
     if (!normalized || normalized === 'default') {
@@ -3710,210 +3584,38 @@ class K8sService {
     await this.syncHeadlessService(service, targetNamespace, config)
   }
 
-  private async getPrimaryPodInfo(
-    serviceName: string,
-    namespace: string
-  ): Promise<{ namespace: string; podName: string; containerName: string }> {
-    const normalizedServiceName = serviceName?.trim()
-    const targetNamespace = namespace?.trim() || 'default'
-
-    if (!normalizedServiceName) {
-      throw new K8sFileError('服务名称缺失，无法执行文件操作', 400)
+  // execInPod 保留为内部方法供文件系统模块使用
+  async execInPod(
+    namespace: string,
+    podName: string,
+    containerName: string,
+    command: string[],
+    options: { stdin?: Buffer } = {}
+  ): Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number | null }> {
+    // Create lock key based on pod identity
+    const lockKey = `${namespace}/${podName}/${containerName}`
+    
+    // Wait for any existing exec on this pod to complete
+    while (this.podExecLocks.has(lockKey)) {
+      await this.podExecLocks.get(lockKey)
     }
-
-    await this.ensureNamespaceAccess(targetNamespace)
-
-    const pods = await this.coreApi.listNamespacedPod({
-      namespace: targetNamespace,
-      labelSelector: `app=${normalizedServiceName}`
+    
+    // Create and register new lock
+    let releaseLock: () => void
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve
     })
-
-    if (!pods.items.length) {
-      throw new K8sFileError('未找到运行中的 Pod，请先部署或启动服务后再试。', 409)
-    }
-
-    const selectedPod = this.selectPreferredPod(pods.items)
-    if (!selectedPod) {
-      throw new K8sFileError('未找到可用的 Pod 实例', 409)
-    }
-
-    const podName = selectedPod.metadata?.name?.trim()
-    if (!podName) {
-      throw new K8sFileError('无法确定目标 Pod 名称', 500)
-    }
-
-    const containerName = this.resolveContainerName(selectedPod, normalizedServiceName)
-
-    return {
-      namespace: targetNamespace,
-      podName,
-      containerName
+    this.podExecLocks.set(lockKey, lockPromise)
+    
+    try {
+      return await this.execInPodImpl(namespace, podName, containerName, command, options)
+    } finally {
+      this.podExecLocks.delete(lockKey)
+      releaseLock!()
     }
   }
-
-  private selectPreferredPod(pods: k8s.V1Pod[]): k8s.V1Pod | null {
-    if (!pods.length) {
-      return null
-    }
-
-    const scored = pods
-      .map((pod) => {
-        const phase = (pod.status?.phase ?? '').toLowerCase()
-        const statuses = pod.status?.containerStatuses ?? []
-        const ready = statuses.length ? statuses.every((status) => status.ready) : phase === 'running'
-        const restartCount = statuses.reduce((sum, status) => sum + (status.restartCount ?? 0), 0)
-        const startTime = pod.status?.startTime ? new Date(pod.status.startTime).getTime() : 0
-
-        return {
-          pod,
-          ready,
-          phase,
-          restartCount,
-          startTime
-        }
-      })
-      .sort((a, b) => {
-        if (a.ready !== b.ready) {
-          return a.ready ? -1 : 1
-        }
-        if (a.phase !== b.phase) {
-          if (a.phase === 'running') {
-            return -1
-          }
-          if (b.phase === 'running') {
-            return 1
-          }
-        }
-        if (a.restartCount !== b.restartCount) {
-          return a.restartCount - b.restartCount
-        }
-        return b.startTime - a.startTime
-      })
-
-    return scored[0]?.pod ?? null
-  }
-
-  private resolveContainerName(pod: k8s.V1Pod, fallback: string): string {
-    const containers = pod.spec?.containers ?? []
-    if (!containers.length) {
-      return fallback
-    }
-
-    const normalizedFallback = fallback?.trim()
-    const matched = normalizedFallback
-      ? containers.find((container) => container.name === normalizedFallback)
-      : undefined
-
-    return matched?.name ?? containers[0].name ?? normalizedFallback
-  }
-
-  private parseDirectoryListing(rawOutput: string, basePath: string): K8sFileEntry[] {
-    const normalizedBase = this.normalizeContainerPath(basePath)
-    const lines = rawOutput
-      .split('\n')
-      .map((line) => line.replace(/\r/g, '').trim())
-      .filter((line) => line && line !== '.' && line !== '..')
-
-    const entries = lines.map((line) => {
-      const isDirectory = line.endsWith('/')
-      const cleanName = isDirectory ? line.slice(0, -1) : line
-      const type: K8sFileEntry['type'] = isDirectory ? 'directory' : 'file'
-
-      return {
-        name: cleanName,
-        path: this.joinContainerPath(normalizedBase, cleanName),
-        type,
-        isHidden: cleanName.startsWith('.')
-      }
-    })
-
-    return entries.sort((a, b) => {
-      if (a.type === 'directory' && b.type !== 'directory') {
-        return -1
-      }
-      if (a.type !== 'directory' && b.type === 'directory') {
-        return 1
-      }
-      return a.name.localeCompare(b.name, 'zh-CN')
-    })
-  }
-
-  private normalizeContainerPath(candidate?: string | null): string {
-    if (!candidate) {
-      return '/'
-    }
-
-    const trimmed = candidate.trim()
-    if (!trimmed) {
-      return '/'
-    }
-
-    const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`
-    const normalized = POSIX_PATH.normalize(withLeadingSlash)
-
-    if (!normalized || normalized === '.' || normalized === '') {
-      return '/'
-    }
-
-    return normalized
-  }
-
-  private getParentContainerPath(pathValue: string): string | null {
-    const normalized = this.normalizeContainerPath(pathValue)
-    if (normalized === '/') {
-      return null
-    }
-
-    const parent = POSIX_PATH.dirname(normalized)
-    return parent === normalized ? '/' : parent
-  }
-
-  private joinContainerPath(basePath: string, name: string): string {
-    const normalizedBase = this.normalizeContainerPath(basePath)
-    const trimmedName = name.trim()
-
-    if (!trimmedName || trimmedName === '.') {
-      return normalizedBase
-    }
-
-    if (trimmedName === '..') {
-      return this.getParentContainerPath(normalizedBase) ?? '/'
-    }
-
-    if (trimmedName.includes('/')) {
-      throw new K8sFileError('路径中包含非法字符', 400)
-    }
-
-    return POSIX_PATH.join(normalizedBase, trimmedName)
-  }
-
-  private validateFileName(fileName: string): string {
-    const normalized = fileName?.trim()
-
-    if (!normalized) {
-      throw new K8sFileError('文件名不能为空', 400)
-    }
-
-    if (normalized === '.' || normalized === '..') {
-      throw new K8sFileError('文件名非法', 400)
-    }
-
-    if (normalized.includes('/') || normalized.includes('\0') || normalized.includes('\n')) {
-      throw new K8sFileError('文件名包含非法字符', 400)
-    }
-
-    return normalized
-  }
-
-  private escapeShellArg(value: string): string {
-    if (!value) {
-      return "''"
-    }
-
-    return `'${value.replace(/'/g, "'\\''")}'`
-  }
-
-  private async execInPod(
+  
+  private async execInPodImpl(
     namespace: string,
     podName: string,
     containerName: string,
