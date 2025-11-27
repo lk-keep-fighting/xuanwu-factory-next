@@ -1120,6 +1120,185 @@ class K8sService {
   }
 
   /**
+   * 获取服务的 CPU 和内存使用指标
+   * 依赖 Kubernetes Metrics Server
+   */
+  async getServiceMetrics(serviceName: string, namespace: string) {
+    const targetNamespace = namespace?.trim() || 'default'
+
+    try {
+      // Step 1: 获取服务的 Pod 列表
+      const pods = await this.coreApi.listNamespacedPod({
+        namespace: targetNamespace,
+        labelSelector: `app=${serviceName}`
+      })
+
+      if (!pods.items.length) {
+        console.warn(`[K8s] 未找到 Pod: namespace=${targetNamespace}, app=${serviceName}`)
+        return null
+      }
+
+      // Step 2: 找到第一个 Running 状态的 Pod
+      const runningPod = pods.items.find((p) => p.status?.phase === 'Running')
+      if (!runningPod) {
+        console.warn(`[K8s] 未找到 Running 状态的 Pod: namespace=${targetNamespace}, app=${serviceName}`)
+        return null
+      }
+
+      const podName = runningPod.metadata?.name
+      if (!podName) {
+        return null
+      }
+
+      // Step 3: 使用 kc.makeApiClient 调用 Metrics API
+      const metricsPath = `/apis/metrics.k8s.io/v1beta1/namespaces/${targetNamespace}/pods/${podName}`
+      const cluster = this.kc.getCurrentCluster()
+      
+      if (!cluster) {
+        console.warn('[K8s] 无法获取当前集群信息')
+        return null
+      }
+
+      // 使用 KubeConfig 的内置方法发起 HTTP 请求
+      const requestOptions = await this.kc.applyToHTTPSOptions({} as https.RequestOptions)
+      const url = new URL(metricsPath, cluster.server)
+
+      // 构造 https 请求，使用 this.kc.requestOptions 中配置的 agent
+      const reqOptions: https.RequestOptions = {
+        ...requestOptions,
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: 'GET',
+        // @ts-expect-error - requestOptions 可能包含自定义 agent
+        agent: (this.kc.requestOptions as any)?.httpsAgent || requestOptions.agent
+      }
+
+      // 使用 Promise 包装 https.request
+      const data = await new Promise<any>((resolve, reject) => {
+        const req = https.request(reqOptions, (res) => {
+          let body = ''
+          res.on('data', (chunk) => {
+            body += chunk
+          })
+          res.on('end', () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                resolve(JSON.parse(body))
+              } catch (err) {
+                reject(new Error(`解析 JSON 失败: ${err}`))
+              }
+            } else {
+              reject(new Error(`HTTP ${res.statusCode}: ${body}`))
+            }
+          })
+        })
+
+        req.on('error', (err) => {
+          reject(err)
+        })
+
+        req.end()
+      })
+
+      if (!data || !data.containers?.length) {
+        console.warn('[K8s] Metrics API 返回数据为空')
+        return null
+      }
+
+      // Step 4: 聚合所有容器的 metrics（使用第一个主容器）
+      const container = data.containers[0]
+      const cpuUsed = container.usage?.cpu || '0'
+      const memoryUsed = container.usage?.memory || '0'
+
+      // Step 5: 从 Pod spec 中获取资源限制
+      const mainContainer = runningPod.spec?.containers?.[0]
+      const cpuLimit = mainContainer?.resources?.limits?.cpu
+      const memoryLimit = mainContainer?.resources?.limits?.memory
+
+      // Step 6: 计算百分比
+      const cpuUsagePercent = cpuLimit ? this.calculateCpuPercent(cpuUsed, cpuLimit) : undefined
+      const memoryUsagePercent = memoryLimit ? this.calculateMemoryPercent(memoryUsed, memoryLimit) : undefined
+
+      return {
+        cpu: {
+          used: cpuUsed,
+          limit: cpuLimit,
+          usagePercent: cpuUsagePercent
+        },
+        memory: {
+          used: memoryUsed,
+          limit: memoryLimit,
+          usagePercent: memoryUsagePercent
+        },
+        timestamp: new Date().toISOString()
+      }
+    } catch (error: any) {
+      // Metrics Server 未安装或 Pod 无 metrics，静默失败
+      console.warn(`[K8s] 获取 metrics 失败: ${error.message}`)
+      return null
+    }
+  }
+
+  /**
+   * 计算 CPU 使用百分比
+   */
+  private calculateCpuPercent(used: string, limit: string): number {
+    const usedMillicores = this.parseCpuToMillicores(used)
+    const limitMillicores = this.parseCpuToMillicores(limit)
+    return limitMillicores > 0 ? Math.round((usedMillicores / limitMillicores) * 100 * 10) / 10 : 0
+  }
+
+  /**
+   * 计算内存使用百分比
+   */
+  private calculateMemoryPercent(used: string, limit: string): number {
+    const usedBytes = this.parseMemoryToBytes(used)
+    const limitBytes = this.parseMemoryToBytes(limit)
+    return limitBytes > 0 ? Math.round((usedBytes / limitBytes) * 100 * 10) / 10 : 0
+  }
+
+  /**
+   * 解析 CPU 字符串为 millicores
+   * 例如："250m" -> 250, "1" -> 1000
+   */
+  private parseCpuToMillicores(cpu: string): number {
+    if (!cpu) return 0
+    if (cpu.endsWith('m')) {
+      return parseInt(cpu.slice(0, -1), 10) || 0
+    }
+    return (parseFloat(cpu) || 0) * 1000
+  }
+
+  /**
+   * 解析内存字符串为 bytes
+   * 例如："512Mi" -> bytes, "1Gi" -> bytes
+   */
+  private parseMemoryToBytes(memory: string): number {
+    if (!memory) return 0
+
+    const units: Record<string, number> = {
+      Ki: 1024,
+      Mi: 1024 * 1024,
+      Gi: 1024 * 1024 * 1024,
+      Ti: 1024 * 1024 * 1024 * 1024,
+      K: 1000,
+      M: 1000 * 1000,
+      G: 1000 * 1000 * 1000,
+      T: 1000 * 1000 * 1000 * 1000
+    }
+
+    for (const [suffix, multiplier] of Object.entries(units)) {
+      if (memory.endsWith(suffix)) {
+        return (parseFloat(memory.slice(0, -suffix.length)) || 0) * multiplier
+      }
+    }
+
+    // 如果没有单位，假设为 bytes
+    return parseFloat(memory) || 0
+  }
+
+  /**
    * 列出命名空间下的 Deployments（简化对象）
    */
   async listNamespaceDeployments(namespace: string) {
@@ -1239,26 +1418,77 @@ class K8sService {
 
 
   /**
-   * 获取服务事件
+   * 获取服务事件（包括 Deployment、ReplicaSet 和 Pod 事件）
    */
-  async getServiceEvents(serviceName: string, namespace: string = 'default') {
+  async getServiceEvents(serviceName: string, namespace: string = 'default', limit: number = 50) {
     const targetNamespace = namespace?.trim() || 'default'
 
     try {
       await this.ensureNamespaceAccess(targetNamespace)
 
+      console.log(`[K8s] 获取服务事件: service=${serviceName}, namespace=${targetNamespace}`)
+
+      // 获取所有事件
       const events = await this.coreApi.listNamespacedEvent({
-        namespace: targetNamespace,
-        fieldSelector: `involvedObject.name=${serviceName}`
+        namespace: targetNamespace
       })
 
+      console.log(`[K8s] 命名空间 ${targetNamespace} 共有 ${events.items.length} 条事件`)
+
+      // 筛选与服务相关的事件（Deployment、ReplicaSet、Pod）
+      const relevantEvents = events.items.filter(event => {
+        const involvedName = event.involvedObject?.name || ''
+        const involvedKind = event.involvedObject?.kind || ''
+        
+        // 直接匹配服务名（Deployment/Service）
+        if (involvedName === serviceName) {
+          return true
+        }
+        
+        // 匹配 Pod（格式：serviceName-xxx-yyy）
+        if (involvedKind === 'Pod' && involvedName.startsWith(`${serviceName}-`)) {
+          return true
+        }
+        
+        // 匹配 ReplicaSet（格式：serviceName-xxx）
+        if (involvedKind === 'ReplicaSet' && involvedName.startsWith(`${serviceName}-`)) {
+          return true
+        }
+        
+        return false
+      })
+
+      console.log(`[K8s] 筛选后剩余 ${relevantEvents.length} 条相关事件`)
+
+      // 按时间倒序排序
+      const sortedEvents = relevantEvents.sort((a, b) => {
+        const timeA = a.lastTimestamp || a.firstTimestamp
+        const timeB = b.lastTimestamp || b.firstTimestamp
+        
+        if (!timeA && !timeB) return 0
+        if (!timeA) return 1
+        if (!timeB) return -1
+        
+        const dateA = new Date(timeA).getTime()
+        const dateB = new Date(timeB).getTime()
+        
+        return dateB - dateA
+      })
+
+      // 限制返回数量
+      const limitedEvents = sortedEvents.slice(0, limit)
+
       return {
-        events: events.items.map(event => ({
+        events: limitedEvents.map(event => ({
           type: event.type || 'Normal',
           reason: event.reason || '',
           message: event.message || '',
           timestamp: event.lastTimestamp || event.firstTimestamp,
-          count: event.count || 1
+          count: event.count || 1,
+          involvedObject: {
+            kind: event.involvedObject?.kind || '',
+            name: event.involvedObject?.name || ''
+          }
         }))
       }
     } catch (error: unknown) {

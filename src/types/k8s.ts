@@ -72,6 +72,19 @@ export interface K8sServiceStatus {
     imagePullError?: string
     containerStatuses?: Array<Record<string, unknown>>
   } | null
+  metrics?: {
+    cpu: {
+      used: string
+      limit?: string
+      usagePercent?: number
+    }
+    memory: {
+      used: string
+      limit?: string
+      usagePercent?: number
+    }
+    timestamp: string
+  }
 }
 
 export type K8sFileEntryType = 'file' | 'directory' | 'other'

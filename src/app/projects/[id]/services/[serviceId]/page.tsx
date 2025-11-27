@@ -120,6 +120,18 @@ type DeploymentImageInfo = {
 
 type DeleteMode = 'deployment-only' | 'full'
 
+type PodEvent = {
+  type: string
+  reason: string
+  message: string
+  timestamp?: string
+  count: number
+  involvedObject: {
+    kind: string
+    name: string
+  }
+}
+
 const generatePortId = () =>
   typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()
@@ -296,7 +308,7 @@ export default function ServiceDetailPage() {
   const [service, setService] = useState<Service | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('general')
+  const [activeTab, setActiveTab] = useState('status')
   const [isEditing, setIsEditing] = useState(false)
   const [editedService, setEditedService] = useState<any>({})
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([])
@@ -371,6 +383,9 @@ export default function ServiceDetailPage() {
   const [branchSearch, setBranchSearch] = useState('')
   const [hasPendingNetworkDeploy, setHasPendingNetworkDeploy] = useState(false)
   const [pendingNetworkDeployMarkedAt, setPendingNetworkDeployMarkedAt] = useState<number | null>(null)
+  const [podEvents, setPodEvents] = useState<PodEvent[]>([])
+  const [podEventsLoading, setPodEventsLoading] = useState(false)
+  const [podEventsError, setPodEventsError] = useState<string | null>(null)
   const pendingNetworkDeployStorageKey = useMemo(
     () => (serviceId ? `service:${serviceId}:pending-network-deploy` : null),
     [serviceId]
@@ -1391,6 +1406,8 @@ export default function ServiceDetailPage() {
     }
   }, [serviceId])
 
+  const logsContainerRef = useRef<HTMLDivElement>(null)
+
   const loadLogs = useCallback(async (showToast = false) => {
     if (!serviceId) return
 
@@ -1419,6 +1436,12 @@ export default function ServiceDetailPage() {
     } finally {
       setLogsLoading(false)
       setHasLoadedLogs(true)
+      // 日志加载完成后自动滚动到底部
+      setTimeout(() => {
+        if (logsContainerRef.current) {
+          logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight
+        }
+      }, 100)
     }
   }, [serviceId])
 
@@ -1444,11 +1467,47 @@ export default function ServiceDetailPage() {
     }
   }, [serviceId])
 
+  const loadPodEvents = useCallback(async (showToast = false) => {
+    if (!serviceId) return
+
+    try {
+      setPodEventsLoading(true)
+      setPodEventsError(null)
+      const response = await fetch(`/api/services/${serviceId}/events`)
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '获取事件失败')
+      }
+
+      if (data.error) {
+        setPodEvents([])
+        setPodEventsError(data.error)
+        if (showToast) {
+          toast.error('加载事件失败：' + data.error)
+        }
+      } else {
+        setPodEvents(data.events || [])
+        setPodEventsError(null)
+      }
+    } catch (error: any) {
+      const message = error?.message || '加载事件失败'
+      setPodEvents([])
+      setPodEventsError(message)
+      if (showToast) {
+        toast.error('加载事件失败：' + message)
+      }
+    } finally {
+      setPodEventsLoading(false)
+    }
+  }, [serviceId])
+
   useEffect(() => {
     setK8sStatusInfo(null)
     setK8sStatusError(null)
     void loadService()
     void fetchK8sStatus()
+    void loadPodEvents()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceId])
 
@@ -2336,102 +2395,13 @@ export default function ServiceDetailPage() {
                   {service.type === ServiceType.DATABASE && 'Database'}
                   {service.type === ServiceType.IMAGE && 'Image'}
                 </Badge>
-                <div className="flex flex-col gap-1 self-start">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-                    <span className="text-sm text-gray-700">{statusLabel}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      title="刷新 Kubernetes 状态"
-                      aria-label="刷新 Kubernetes 状态"
-                      onClick={() => void fetchK8sStatus({ showToast: true })}
-                      disabled={k8sStatusLoading}
-                    >
-                      {k8sStatusLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-                    {/* 只在没有K8s状态时显示数据源标签 */}
-                    {!normalizedK8sStatus && <span>{statusSourceLabel}</span>}
-                    {statusMismatch ? (
-                      <span className="text-amber-600">数据库状态与实际不同步（{dbStatusLabel}）</span>
-                    ) : null}
-                    {/* K8s Pod 状态信息 */}
-                    {normalizedK8sStatus && k8sStatusInfo ? (
-                      <>
-                        {typeof k8sStatusInfo.replicas === 'number' && k8sStatusInfo.replicas > 0 ? (
-                          <span className="inline-flex items-center gap-1">
-                            <span className="font-medium">副本 {k8sStatusInfo.replicas}</span>
-                            {typeof k8sStatusInfo.readyReplicas === 'number' ? (
-                              <span className={k8sStatusInfo.readyReplicas === k8sStatusInfo.replicas ? 'text-green-600' : 'text-amber-600'}>
-                                (就绪 {k8sStatusInfo.readyReplicas})
-                              </span>
-                            ) : null}
-                          </span>
-                        ) : null}
-                      </>
-                    ) : null}
-                    {k8sStatusLoading ? (
-                      <span className="flex items-center gap-1">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        刷新中…
-                      </span>
-                    ) : null}
-                  </div>
-                  {/* 显示 K8s 错误信息 */}
-                  {hasK8sStatusError ? (
-                    <div className="text-xs text-red-500 max-w-xs">{k8sStatusErrorMessage}</div>
-                  ) : null}
-                  {/* 显示镜像拉取错误 */}
-                  {k8sStatusInfo?.podStatus?.imagePullFailed ? (
-                    <div className="mt-2 flex items-start gap-2 text-xs">
-                      <AlertTriangle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
-                      <div className="text-red-600">
-                        <span className="font-medium">镜像拉取失败</span>
-                        {k8sStatusInfo.podStatus.imagePullError ? (
-                          <p className="text-red-500 mt-0.5">{k8sStatusInfo.podStatus.imagePullError}</p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                  {/* 显示 Deployment Conditions 中的错误 */}
-                  {normalizedK8sStatus === 'error' && k8sStatusInfo?.conditions && Array.isArray(k8sStatusInfo.conditions) && !k8sStatusInfo.podStatus?.imagePullFailed ? (
-                    <div className="mt-2 space-y-1">
-                      {k8sStatusInfo.conditions
-                        .filter((condition: any) => {
-                          const type = condition.type?.toString() || ''
-                          const status = condition.status?.toString() || ''
-                          const reason = condition.reason?.toString() || ''
-                          
-                          // 只显示失败的关键条件
-                          return (
-                            (type === 'Progressing' && status === 'False') ||
-                            (type === 'Available' && status === 'False') ||
-                            (type === 'ReplicaFailure' && status === 'True') ||
-                            reason === 'ProgressDeadlineExceeded'
-                          )
-                        })
-                        .map((condition: any, index: number) => (
-                          <div key={index} className="flex items-start gap-2 text-xs">
-                            <AlertTriangle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
-                            <div className="text-red-600">
-                              <span className="font-medium">{condition.type}</span>
-                              {condition.reason ? <span className="ml-1">({condition.reason})</span> : null}
-                              {condition.message ? (
-                                <p className="text-red-500 mt-0.5">{condition.message}</p>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  ) : null}
+                {/* 简化状态显示 */}
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                  <span className="text-sm text-gray-700">{statusLabel}</span>
+                  {k8sStatusLoading && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                  )}
                 </div>
               </div>
             </div>
@@ -2500,9 +2470,13 @@ export default function ServiceDetailPage() {
       </div>
 
       {/* 主内容区 */}
-      <div className="max-w-7xl mx-auto p-6">
+      <div className="max-w-[1800px] mx-auto p-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="bg-white">
+            <TabsTrigger value="status" className="gap-2">
+              <Activity className="w-4 h-4" />
+              服务状态
+            </TabsTrigger>
             <TabsTrigger value="general" className="gap-2">
               <Settings className="w-4 h-4" />
               通用配置
@@ -2536,6 +2510,278 @@ export default function ServiceDetailPage() {
               文件管理
             </TabsTrigger>
           </TabsList>
+
+          {/* 服务状态 */}
+          <TabsContent value="status" className="space-y-6">
+            {/* 运行状态卡片 */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Activity className="w-5 h-5" />
+                  运行状态
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {/* 状态显示 */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">服务状态</span>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                    <span className="text-sm font-medium">{statusLabel}</span>
+                  </div>
+                </div>
+
+                {/* Pod 信息 */}
+                {normalizedK8sStatus && k8sStatusInfo ? (
+                  <>
+                    {typeof k8sStatusInfo.replicas === 'number' && k8sStatusInfo.replicas > 0 ? (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">副本数</span>
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">{k8sStatusInfo.replicas}</span>
+                          {typeof k8sStatusInfo.readyReplicas === 'number' ? (
+                            <span className={k8sStatusInfo.readyReplicas === k8sStatusInfo.replicas ? 'text-green-600' : 'text-amber-600'}>
+                              (就绪 {k8sStatusInfo.readyReplicas})
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {/* 错误信息 */}
+                {hasK8sStatusError ? (
+                  <div className="text-xs text-red-500 bg-red-50 p-2 rounded">{k8sStatusErrorMessage}</div>
+                ) : null}
+
+                {/* 镜像拉取错误 */}
+                {k8sStatusInfo?.podStatus?.imagePullFailed ? (
+                  <div className="flex items-start gap-2 text-xs bg-red-50 p-2 rounded">
+                    <AlertTriangle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
+                    <div className="text-red-600">
+                      <span className="font-medium">镜像拉取失败</span>
+                      {k8sStatusInfo.podStatus.imagePullError ? (
+                        <p className="mt-0.5">{k8sStatusInfo.podStatus.imagePullError}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* 刷新按钮 */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full gap-2"
+                  onClick={() => {
+                    void fetchK8sStatus({ showToast: true })
+                    void loadPodEvents(false)
+                  }}
+                  disabled={k8sStatusLoading}
+                >
+                  {k8sStatusLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  刷新状态
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* 资源使用卡片 */}
+            {k8sStatusInfo?.metrics && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Activity className="w-5 h-5" />
+                    资源使用
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    更新时间：{new Date(k8sStatusInfo.metrics.timestamp).toLocaleTimeString('zh-CN')}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* CPU 使用 */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">CPU</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm">
+                          {k8sStatusInfo.metrics.cpu.used}
+                          {k8sStatusInfo.metrics.cpu.limit && ` / ${k8sStatusInfo.metrics.cpu.limit}`}
+                        </span>
+                        {k8sStatusInfo.metrics.cpu.usagePercent !== undefined && (
+                          <span
+                            className={cn(
+                              'text-sm font-medium',
+                              k8sStatusInfo.metrics.cpu.usagePercent > 80
+                                ? 'text-red-600'
+                                : k8sStatusInfo.metrics.cpu.usagePercent > 60
+                                  ? 'text-amber-600'
+                                  : 'text-green-600'
+                            )}
+                          >
+                            {k8sStatusInfo.metrics.cpu.usagePercent.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {/* 进度条 */}
+                    {k8sStatusInfo.metrics.cpu.usagePercent !== undefined && (
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={cn(
+                            'h-2 rounded-full transition-all',
+                            k8sStatusInfo.metrics.cpu.usagePercent > 80
+                              ? 'bg-red-500'
+                              : k8sStatusInfo.metrics.cpu.usagePercent > 60
+                                ? 'bg-amber-500'
+                                : 'bg-green-500'
+                          )}
+                          style={{ width: `${Math.min(k8sStatusInfo.metrics.cpu.usagePercent, 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 内存使用 */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">内存</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm">
+                          {k8sStatusInfo.metrics.memory.used}
+                          {k8sStatusInfo.metrics.memory.limit && ` / ${k8sStatusInfo.metrics.memory.limit}`}
+                        </span>
+                        {k8sStatusInfo.metrics.memory.usagePercent !== undefined && (
+                          <span
+                            className={cn(
+                              'text-sm font-medium',
+                              k8sStatusInfo.metrics.memory.usagePercent > 80
+                                ? 'text-red-600'
+                                : k8sStatusInfo.metrics.memory.usagePercent > 60
+                                  ? 'text-amber-600'
+                                  : 'text-green-600'
+                            )}
+                          >
+                            {k8sStatusInfo.metrics.memory.usagePercent.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {/* 进度条 */}
+                    {k8sStatusInfo.metrics.memory.usagePercent !== undefined && (
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={cn(
+                            'h-2 rounded-full transition-all',
+                            k8sStatusInfo.metrics.memory.usagePercent > 80
+                              ? 'bg-red-500'
+                              : k8sStatusInfo.metrics.memory.usagePercent > 60
+                                ? 'bg-amber-500'
+                                : 'bg-green-500'
+                          )}
+                          style={{ width: `${Math.min(k8sStatusInfo.metrics.memory.usagePercent, 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 最近事件卡片 */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-blue-600" />
+                    最近事件
+                  </CardTitle>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void loadPodEvents(true)}
+                    disabled={podEventsLoading}
+                  >
+                    {podEventsLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    )}
+                  </Button>
+                </div>
+                <CardDescription className="text-xs">展示 Pod、Deployment 事件</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {podEventsLoading && podEvents.length === 0 ? (
+                  <div className="text-center py-6 text-gray-500 text-sm">
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
+                    加载中...
+                  </div>
+                ) : podEventsError ? (
+                  <div className="text-center py-6">
+                    <AlertTriangle className="w-6 h-6 text-red-500 mx-auto mb-2" />
+                    <p className="text-xs text-red-600">{podEventsError}</p>
+                  </div>
+                ) : podEvents.length === 0 ? (
+                  <div className="text-center py-6 text-sm">
+                    <div className="text-gray-500 mb-1">暂无事件</div>
+                    <div className="text-xs text-gray-400">K8s 事件保留 1 小时</div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {podEvents.slice(0, 10).map((event, index) => {
+                      const isWarning = event.type === 'Warning'
+                      return (
+                        <div 
+                          key={index} 
+                          className={cn(
+                            'text-xs p-2 rounded border',
+                            isWarning ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
+                          )}
+                        >
+                          <div className="flex items-start gap-1.5">
+                            {isWarning && <AlertTriangle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />}
+                            <div className="flex-1 min-w-0">
+                              <div className={cn(
+                                'font-medium',
+                                isWarning ? 'text-red-700' : 'text-gray-700'
+                              )}>
+                                {event.reason}
+                              </div>
+                              <div className="text-gray-600 mt-0.5 break-words">
+                                {event.message}
+                              </div>
+                              <div className="flex items-center gap-2 mt-1 text-gray-500">
+                                <span className="text-[10px]">{event.involvedObject.kind}</span>
+                                <span className="text-[10px]">•</span>
+                                <span className="text-[10px]">
+                                  {event.timestamp ? new Date(event.timestamp).toLocaleTimeString('zh-CN') : '-'}
+                                </span>
+                                {event.count > 1 && (
+                                  <>
+                                    <span className="text-[10px]">•</span>
+                                    <span className="text-[10px]">{event.count}次</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {podEvents.length > 10 && (
+                      <div className="text-center text-xs text-gray-400 pt-2">
+                        还有 {podEvents.length - 10} 条事件未显示
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* 通用配置 */}
           <TabsContent value="general" className="space-y-6">
@@ -4174,7 +4420,7 @@ export default function ServiceDetailPage() {
                 </Button>
               </CardHeader>
               <CardContent>
-                <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm min-h-[400px] max-h-[500px] overflow-y-auto">
+                <div ref={logsContainerRef} className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm min-h-[400px] max-h-[500px] overflow-y-auto">
                   {logsLoading ? (
                     <p className="text-gray-400">日志加载中...</p>
                   ) : logsError ? (

@@ -61,6 +61,9 @@ export async function GET(
     }
 
     const statusResult = await k8sService.getServiceStatus(serviceName, namespace)
+    
+    // 获取 metrics 数据（如果 Metrics Server 可用）
+    const metrics = await k8sService.getServiceMetrics(serviceName, namespace)
 
     // 自动同步K8s状态到数据库
     const k8sStatus = statusResult.status?.toLowerCase()?.trim()
@@ -77,6 +80,7 @@ export async function GET(
 
     return NextResponse.json({
       ...statusResult,
+      metrics,
       namespace,
       serviceName,
       dbStatus: service.status ?? null
