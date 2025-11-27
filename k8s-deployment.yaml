@@ -1,6 +1,11 @@
 # ===================================
-# 玄武工厂平台 Kubernetes 部署配置示例
+# 玄武工厂平台 Kubernetes 部署配置
+# 基于 xuanwu-factory 命名空间下的 xuanwu-factory-next 实际部署配置
+# 最后更新: 2025-11-27
 # ===================================
+
+---
+# Namespace
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -9,393 +14,125 @@ metadata:
     app: xuanwu-factory
 
 ---
-# ConfigMap - 应用配置
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: xuanwu-factory-config
-  namespace: xuanwu-factory
-data:
-  NODE_ENV: "production"
-  NEXT_TELEMETRY_DISABLED: "1"
-  # WebSocket 服务器地址（生产环境）
-  # 格式：ws://domain:port 或 wss://domain
-  NEXT_PUBLIC_WS_URL: "ws://factory.dev.aimstek.cn:3001"
-  # 这里可以根据需要添加更多非敏感配置项
-
----
-# Secret - 敏感信息
-apiVersion: v1
-kind: Secret
-metadata:
-  name: xuanwu-factory-secret
-  namespace: xuanwu-factory
-type: Opaque
-stringData:
-  # 数据库配置（请替换为实际值）
-  DATABASE_URL: "mysql://root:root@192.168.154.154:3306/xuanwu_next"
-
-  # Kubernetes 管理配置（使用 doc/k8s/generate-admin-token.sh 生成）
-  K8S_API_SERVER: "https://192.168.44.201:6443"
-  K8S_BEARER_TOKEN: "eyJhbGciOiJSUzI1NiIsImtpZCI6IkZQMTdlaFNsWjFmU25iWlRwUHd1M1hXNmM3bGR5OHBhRFV5M0k4Nk0xTGcifQ.eyJhdWQiOlsiaHR0cHM6Ly9rdWJlcm5ldGVzLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWwiXSwiZXhwIjoxNzkzNzcyNTQ0LCJpYXQiOjE3NjIyMzY1NDQsImlzcyI6Imh0dHBzOi8va3ViZXJuZXRlcy5kZWZhdWx0LnN2Yy5jbHVzdGVyLmxvY2FsIiwia3ViZXJuZXRlcy5pbyI6eyJuYW1lc3BhY2UiOiJ4dWFud3UtZmFjdG9yeSIsInNlcnZpY2VhY2NvdW50Ijp7Im5hbWUiOiJ4dWFud3UtZmFjdG9yeS1hZG1pbiIsInVpZCI6IjkzZmM1YjllLTA4NTgtNDA5Ny1iODg5LWJkMjQ0NTRjYTAzMCJ9fSwibmJmIjoxNzYyMjM2NTQ0LCJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6eHVhbnd1LWZhY3Rvcnk6eHVhbnd1LWZhY3RvcnktYWRtaW4ifQ.xcZtKUAJ3tzxWpmehiVzkR20zSCdFlRhY_QpspVNjiJPXv2O89bz84Lmcld4yuO6kpcD7yWQuZaz6mpjQEbTvT3PIIw9WGONx76tLYTj_7PVwYs9GOmudQZy3D0ABmsbpvxhd1Sn1vgJ8N5ZBAQ8P0wFGaSqDhir66V4DxT5rPlVkgMMjM-cXbefQbW8ftyHB8djKejCKBmovf-uAGw6lZT8ngQp3x4pQxQVgyDKdHYpwS37KPCLuhUUH229ti4e4o9FKuS1mMd3osPfywcCfaV60JEmFvY8k53MNgi4FLUXqifIgi-LxfCxMPPLS-3jvmdswL7VC6HBsVaDB-iU1w"
-  # 如果有 CA 证书，请替换下面的值；否则设置 K8S_SKIP_TLS_VERIFY 为 true
-  # K8S_CA_CERT_DATA: "LS0tLS1CRUdJTi...(Base64 encoded CA certificate)"
-  K8S_SKIP_TLS_VERIFY: "true"  # 跳过 TLS 验证（适用于自签名证书）
-
-  # Jenkins 配置（用于触发镜像构建）
-  JENKINS_BASE_URL: "http://192.168.44.121"  # Jenkins 访问地址
-  JENKINS_USER: "xuanwu"  # Jenkins 用户名
-  JENKINS_API_TOKEN: "1112e29a2d923515b98730268f45a01d3c"  # Jenkins API Token（需替换）
-  JENKINS_JOB_NAME: "CICD-STD/build-by-dockerfile"  # Jenkins Job 名称
-  # JENKINS_JOB_TOKEN: ""  # （可选）Jenkins Job Token
-  # JENKINS_BUILD_TIMEOUT_MS: "900000"  # （可选）构建超时时间，默认 15 分钟
-  # JENKINS_POLL_INTERVAL_MS: "5000"  # （可选）轮询间隔，默认 5 秒
-
-  # Prometheus 配置（用于查询历史监控数据）
-  # 默认使用外部域名（推荐）
-  PROMETHEUS_URL: "http://prometheus.dev.aimstek.cn"
-  # 或使用集群内部服务名
-  # PROMETHEUS_URL: "http://prometheus-k8s.kuboard:9090"
-  # 或使用完整的集群内部服务地址
-  # PROMETHEUS_URL: "http://prometheus-k8s.monitoring.svc.cluster.local:9090"
-
-  # Grafana 配置（可选，用于跳转到 Grafana 仪表板）
-  # NEXT_PUBLIC_GRAFANA_URL: "http://grafana.yourdomain.com"
-  # 可选：提供完整 kubeconfig（支持纯文本或 Base64 原文）
-  # KUBECONFIG_DATA: |
-  #   apiVersion: v1
-  #   kind: Config
-  #   clusters:
-  #   - cluster:
-  #       server: https://your-k8s-api-server
-  #       certificate-authority-data: LS0tLS1Zb3VyLUNBLS1EQVRBLUhlcmUtLS0tLQ==
-  #     name: xuanwu-factory-cluster
-  #   contexts:
-  #   - context:
-  #       cluster: xuanwu-factory-cluster
-  #       user: xuanwu-factory-admin
-  #     name: xuanwu-factory-context
-  #   current-context: xuanwu-factory-context
-  #   users:
-  #   - name: xuanwu-factory-admin
-  #     user:
-  #       token: paste-admin-token-here
-
----
-# Deployment - 应用部署
+# Deployment - xuanwu-factory-next
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: xuanwu-factory
+  name: xuanwu-factory-next
   namespace: xuanwu-factory
   labels:
-    app: xuanwu-factory
+    app: xuanwu-factory-next
 spec:
   replicas: 1
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      app: xuanwu-factory-next
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-  selector:
-    matchLabels:
-      app: xuanwu-factory
+      maxSurge: 25%
+      maxUnavailable: 25%
   template:
     metadata:
       labels:
-        app: xuanwu-factory
-      annotations:
-        # 自动重启以应用配置更新
-        prometheus.io/scrape: "false"
+        app: xuanwu-factory-next
     spec:
-      # 使用非 root 用户运行（与 Dockerfile 一致）
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        fsGroup: 1001
-      
       containers:
-      - name: xuanwu-factory
-        image: nexus.aimstek.cn/xuanwu-factory:20251113-111400  # 替换为实际镜像地址
-        imagePullPolicy: Always
+      - name: xuanwu-factory-next
+        image: nexus.aimstek.cn/xuanwu-factory/xuanwu-factory-next:dev-251126-155059
+        imagePullPolicy: IfNotPresent
         
         ports:
-        - name: http
+        - name: port-3000-0
           containerPort: 3000
           protocol: TCP
-        - name: websocket
+        - name: port-3001-1
           containerPort: 3001
           protocol: TCP
         
         env:
-        # 从 ConfigMap 加载
-        - name: NODE_ENV
-          valueFrom:
-            configMapKeyRef:
-              name: xuanwu-factory-config
-              key: NODE_ENV
-        
-        - name: NEXT_PUBLIC_WS_URL
-          valueFrom:
-            configMapKeyRef:
-              name: xuanwu-factory-config
-              key: NEXT_PUBLIC_WS_URL
-        
-        # 从 Secret 加载
+        - name: WS_URL
+          value: ws://xuanwu-factory-next-ws.xuanwu-factory.dev.aimstek.cn
         - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: DATABASE_URL
-        
-        # K8s 管理配置（如果应用需要管理集群资源）
-        - name: K8S_API_SERVER
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: K8S_API_SERVER
-              optional: true
-
-        - name: K8S_BEARER_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: K8S_BEARER_TOKEN
-              optional: true
-
-        - name: K8S_CA_CERT_DATA
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: K8S_CA_CERT_DATA
-              optional: true
-
-        - name: K8S_SKIP_TLS_VERIFY
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: K8S_SKIP_TLS_VERIFY
-              optional: true
-
-        - name: KUBECONFIG_DATA
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: KUBECONFIG_DATA
-              optional: true
-
-        # Jenkins 配置（用于触发镜像构建）
-        - name: JENKINS_BASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: JENKINS_BASE_URL
-              optional: true
-
+          value: mysql://root:root@192.168.154.154:3306/xuanwu_next
         - name: JENKINS_USER
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: JENKINS_USER
-              optional: true
-
-        - name: JENKINS_API_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: JENKINS_API_TOKEN
-              optional: true
-
+          value: xuanwu
+        - name: JENKINS_BASE_URL
+          value: http://192.168.44.121
         - name: JENKINS_JOB_NAME
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: JENKINS_JOB_NAME
-              optional: true
-
-        - name: JENKINS_JOB_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: JENKINS_JOB_TOKEN
-              optional: true
-
-        - name: JENKINS_BUILD_TIMEOUT_MS
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: JENKINS_BUILD_TIMEOUT_MS
-              optional: true
-
-        - name: JENKINS_POLL_INTERVAL_MS
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: JENKINS_POLL_INTERVAL_MS
-              optional: true
-
-        # Prometheus 配置（用于查询历史监控数据）
-        - name: PROMETHEUS_URL
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: PROMETHEUS_URL
-              optional: true
-
-        # Grafana 配置（可选）
-        - name: NEXT_PUBLIC_GRAFANA_URL
-          valueFrom:
-            secretKeyRef:
-              name: xuanwu-factory-secret
-              key: NEXT_PUBLIC_GRAFANA_URL
-              optional: true
-
-        # 资源限制
-        resources:
-          requests:
-            cpu: 250m
-            memory: 512Mi
-          limits:
-            cpu: 1000m
-            memory: 1Gi
+          value: CICD-STD/build-by-dockerfile
+        - name: JENKINS_API_TOKEN
+          value: 1112e29a2d923515b98730268f45a01d3c
         
-        # 健康检查
-        livenessProbe:
-          httpGet:
-            path: /api/health
-            port: 3000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
+        resources: {}
         
-        readinessProbe:
-          httpGet:
-            path: /api/health
-            port: 3000
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
-        
-        # 启动探针（给应用足够的启动时间）
-        startupProbe:
-          httpGet:
-            path: /api/health
-            port: 3000
-          initialDelaySeconds: 0
-          periodSeconds: 10
-          timeoutSeconds: 3
-          failureThreshold: 30
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
       
-      # 如果使用私有镜像仓库
-      # imagePullSecrets:
-      # - name: registry-secret
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
 
 ---
-# Service - 集群内部访问
+# Service - xuanwu-factory-next
 apiVersion: v1
 kind: Service
 metadata:
-  name: xuanwu-factory
+  name: xuanwu-factory-next
   namespace: xuanwu-factory
   labels:
-    app: xuanwu-factory
+    app: xuanwu-factory-next
+    managed-by: xuanwu-platform
 spec:
   type: ClusterIP
+  selector:
+    app: xuanwu-factory-next
   ports:
-  - port: 80
+  - name: port-3000-0
+    port: 3000
     targetPort: 3000
     protocol: TCP
-    name: http
-  - port: 3001
+  - name: port-3001-1
+    port: 3001
     targetPort: 3001
     protocol: TCP
-    name: websocket
-  selector:
-    app: xuanwu-factory
+  sessionAffinity: None
+  internalTrafficPolicy: Cluster
 
 ---
-# Ingress - 外部访问（使用 Nginx Ingress Controller）
+# Ingress - xuanwu-factory-next
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: xuanwu-factory
+  name: xuanwu-factory-next-ingress
   namespace: xuanwu-factory
-  annotations:
-    # Nginx Ingress 配置
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    # WebSocket 支持
-    nginx.ingress.kubernetes.io/websocket-services: "xuanwu-factory"
-    
-    # HTTPS 配置（如果使用 cert-manager）
-    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  labels:
+    app: xuanwu-factory-next
+    managed-by: xuanwu-platform
 spec:
   ingressClassName: nginx
-  
-  # TLS 配置（可选）
-  # tls:
-  # - hosts:
-  #   - factory.yourdomain.com
-  #   secretName: xuanwu-factory-tls
-  
   rules:
-  - host: factory.dev.aimstek.cn  # 替换为实际域名
+  - host: xuanwu-factory-next.xuanwu-factory.dev.aimstek.cn
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: xuanwu-factory
+            name: xuanwu-factory-next
             port:
-              number: 80
-
----
-# HorizontalPodAutoscaler - 自动扩缩容（可选）
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: xuanwu-factory
-  namespace: xuanwu-factory
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: xuanwu-factory
-  minReplicas: 1
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Percent
-        value: 50
-        periodSeconds: 60
-    scaleUp:
-      stabilizationWindowSeconds: 0
-      policies:
-      - type: Percent
-        value: 100
-        periodSeconds: 30
-      - type: Pods
-        value: 1
-        periodSeconds: 30
-      selectPolicy: Max
+              number: 3000
+  - host: xuanwu-factory-next-ws.xuanwu-factory.dev.aimstek.cn
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: xuanwu-factory-next
+            port:
+              number: 3001

@@ -2403,7 +2403,7 @@ export default function ServiceDetailPage() {
               <div className="flex flex-wrap items-start gap-3">
                 <div className="flex items-center gap-2">
                   <h1 className="text-2xl font-bold text-gray-900">{service.name}</h1>
-                  {canRenameService ? (
+                  {canRenameService && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -2414,14 +2414,13 @@ export default function ServiceDetailPage() {
                       <PencilLine className="h-4 w-4" />
                       重命名
                     </Button>
-                  ) : null}
+                  )}
                 </div>
                 <Badge variant="outline">
                   {service.type === ServiceType.APPLICATION && 'Application'}
                   {service.type === ServiceType.DATABASE && 'Database'}
                   {service.type === ServiceType.IMAGE && 'Image'}
                 </Badge>
-                {/* 简化状态显示 */}
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${statusColor}`} />
                   <span className="text-sm text-gray-700">{statusLabel}</span>
@@ -2445,7 +2444,6 @@ export default function ServiceDetailPage() {
                   {buildingImage ? '构建中...' : '构建'}
                 </Button>
               )}
-              {/* 部署按钮 - 所有服务类型都支持 */}
               <Button
                 onClick={handleDeploy}
                 disabled={deploying || normalizedStatus === 'building'}
@@ -2454,7 +2452,6 @@ export default function ServiceDetailPage() {
                 <Rocket className="w-4 h-4" />
                 {deploying ? '部署中...' : '部署'}
               </Button>
-
               {normalizedStatus === 'stopped' && (
                 <Button onClick={handleStart} className="gap-2">
                   <Play className="w-4 h-4" />
@@ -2473,7 +2470,7 @@ export default function ServiceDetailPage() {
               </Button>
               {normalizedStatus === 'running' && (
                 <Button 
-                  onClick={() => router.push(`/projects/${projectId}/services/${serviceId}/terminal`)}
+                  onClick={() => window.open(`/projects/${projectId}/services/${serviceId}/terminal`, '_blank')}
                   variant="outline" 
                   className="gap-2"
                 >
@@ -2496,7 +2493,7 @@ export default function ServiceDetailPage() {
       </div>
 
       {/* 主内容区 */}
-      <div className="max-w-[1800px] mx-auto p-6">
+      <div className="max-w-7xl mx-auto p-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="bg-white">
             <TabsTrigger value="status" className="gap-2">
