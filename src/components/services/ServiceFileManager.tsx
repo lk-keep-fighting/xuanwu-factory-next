@@ -279,16 +279,63 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
         return
       }
 
+      const fileArray = Array.from(files)
+      const totalFiles = fileArray.length
+      
       setUploading(true)
+      
+      // 显示开始上传的提示
+      const uploadingToast = toast.loading(
+        totalFiles > 1 
+          ? `正在上传 ${totalFiles} 个文件...` 
+          : `正在上传 ${fileArray[0]?.name ?? '文件'}...`
+      )
+      
       try {
-        for (const file of Array.from(files)) {
-          await serviceSvc.uploadServiceFile(serviceId, currentPathRef.current, file)
+        let successCount = 0
+        let failedFiles: string[] = []
+        
+        for (let i = 0; i < fileArray.length; i++) {
+          const file = fileArray[i]
+          try {
+            // 更新进度提示
+            if (totalFiles > 1) {
+              toast.loading(
+                `正在上传 ${file.name} (${i + 1}/${totalFiles})...`,
+                { id: uploadingToast }
+              )
+            }
+            
+            await serviceSvc.uploadServiceFile(serviceId, currentPathRef.current, file)
+            successCount++
+          } catch (fileError) {
+            failedFiles.push(file.name)
+            console.error(`上传文件 ${file.name} 失败:`, fileError)
+          }
         }
-        toast.success(
-          files.length > 1 ? `已上传 ${files.length} 个文件` : `文件 ${files[0]?.name ?? ''} 上传成功`
-        )
+        
+        // 关闭加载提示
+        toast.dismiss(uploadingToast)
+        
+        // 显示结果
+        if (successCount === totalFiles) {
+          toast.success(
+            totalFiles > 1 
+              ? `成功上传 ${totalFiles} 个文件` 
+              : `文件 ${fileArray[0]?.name ?? ''} 上传成功`
+          )
+        } else if (successCount > 0) {
+          toast.warning(
+            `成功上传 ${successCount} 个文件，${failedFiles.length} 个失败：${failedFiles.join(', ')}`
+          )
+        } else {
+          toast.error(`所有文件上传失败`)
+        }
+        
+        // 刷新目录列表
         void loadAndActivateDirectory(currentPathRef.current)
       } catch (uploadError) {
+        toast.dismiss(uploadingToast)
         const message = uploadError instanceof Error ? uploadError.message : '上传文件失败'
         toast.error(`上传文件失败：${message}`)
       } finally {
@@ -495,15 +542,16 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
               <Table>
                 <TableHeader className="bg-gray-50">
                   <TableRow>
-                    <TableHead className="w-1/2">名称</TableHead>
-                    <TableHead className="w-1/4">类型</TableHead>
+                    <TableHead className="w-2/5">名称</TableHead>
+                    <TableHead className="w-1/6">类型</TableHead>
+                    <TableHead className="w-1/6 text-right">大小</TableHead>
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading && !entries.length ? (
                     <TableRow>
-                      <TableCell colSpan={3} className="py-10 text-center text-sm text-gray-500">
+                      <TableCell colSpan={4} className="py-10 text-center text-sm text-gray-500">
                         <div className="flex items-center justify-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin" />
                           正在加载...
@@ -514,13 +562,26 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
 
                   {!loading && !entries.length ? (
                     <TableRow>
-                      <TableCell colSpan={3} className="py-10 text-center text-sm text-gray-500">
+                      <TableCell colSpan={4} className="py-10 text-center text-sm text-gray-500">
                         当前目录下没有可显示的文件。
                       </TableCell>
                     </TableRow>
                   ) : null}
 
-                  {entries.map((entry, index) => (
+                  {entries.map((entry, index) => {
+                    // 格式化文件大小
+                    const formatSize = (bytes: number | undefined) => {
+                      if (bytes === undefined || bytes === null) return '-'
+                      if (bytes === 0) return '0 B'
+                      const units = ['B', 'KB', 'MB', 'GB']
+                      const k = 1024
+                      const i = Math.floor(Math.log(bytes) / Math.log(k))
+                      const value = bytes / Math.pow(k, i)
+                      const decimals = i === 0 ? 0 : value >= 100 ? 1 : 2
+                      return `${value.toFixed(decimals)} ${units[i]}`
+                    }
+
+                    return (
                     <TableRow key={`${entry.path || entry.name || 'entry'}-${entry.type}-${index}`}>
                       <TableCell>
                         {entry.type === 'directory' ? (
@@ -557,6 +618,13 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
                       <TableCell className="text-sm text-gray-500">
                         {entry.type === 'directory' ? '目录' : '文件'}
                       </TableCell>
+                      <TableCell className="text-right text-sm text-gray-600 font-mono">
+                        {entry.type === 'directory' ? (
+                          <span className="text-gray-400">--</span>
+                        ) : (
+                          formatSize((entry as any).size)
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         {entry.type === 'directory' ? (
                           <span className="text-xs text-gray-400">--</span>
@@ -575,7 +643,8 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
                         )}
                       </TableCell>
                     </TableRow>
-                  ))}
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>

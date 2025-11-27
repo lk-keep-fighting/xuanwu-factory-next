@@ -17,6 +17,12 @@ export class K8sPodExecutor implements CommandExecutor {
   constructor(private readonly podInfo: PodInfo) {}
 
   async exec(command: string[], stdin?: Buffer): Promise<ExecResult> {
+    const stdinSize = stdin ? (stdin.length / 1024).toFixed(2) : '0'
+    const cmdStr = command.join(' ').substring(0, 100)
+    
+    console.log(`[Executor] 执行命令: ${this.podInfo.namespace}/${this.podInfo.podName}, stdin: ${stdinSize}KB, cmd: ${cmdStr}...`)
+    
+    const startTime = Date.now()
     const result = await k8sService.execInPod(
       this.podInfo.namespace,
       this.podInfo.podName,
@@ -24,6 +30,9 @@ export class K8sPodExecutor implements CommandExecutor {
       command,
       stdin ? { stdin } : undefined
     )
+    const duration = Date.now() - startTime
+    
+    console.log(`[Executor] 命令完成: 耗时 ${duration}ms, stdout: ${result.stdout.length}B, stderr: ${result.stderr.length}B, exitCode: ${result.exitCode}`)
 
     return {
       stdout: result.stdout,

@@ -65,17 +65,44 @@ export class PodFileSystem implements FileSystem {
   async list(path: string): Promise<FileListResult> {
     const normalizedPath = normalizePath(path)
     
-    const script = this.buildScript([
-      `TARGET=${escapeShellArg(normalizedPath)}`,
-      'if [ ! -e "$TARGET" ]; then exit 44; fi',
-      'if [ ! -d "$TARGET" ]; then exit 45; fi',
-      'cd "$TARGET" && ls -a -p'
-    ])
+    // 使用兼容性最好的方法获取文件信息（包括大小）
+    // 构建完整的shell脚本（不能用分号分隔，因为有if/then/else结构）
+    const script = `
+TARGET=${escapeShellArg(normalizedPath)}
+if [ ! -e "$TARGET" ]; then exit 44; fi
+if [ ! -d "$TARGET" ]; then exit 45; fi
+cd "$TARGET"
+
+# 尝试 GNU find 的 -printf（Ubuntu/Debian/CentOS等）
+if find . -maxdepth 1 -mindepth 1 -printf "%y\\t%s\\t%f\\n" 2>/dev/null | head -1 >/dev/null 2>&1; then
+  find . -maxdepth 1 -mindepth 1 -printf "%y\\t%s\\t%f\\n"
+else
+  # 降级到 POSIX 兼容方法（Alpine/BusyBox等）
+  find . -maxdepth 1 -mindepth 1 | while IFS= read -r file; do
+    name=$(basename "$file")
+    if [ -d "$file" ]; then
+      echo "d\\t0\\t$name"
+    else
+      # 尝试使用 stat -c（GNU coreutils）
+      if stat -c "%s" "$file" >/dev/null 2>&1; then
+        size=$(stat -c "%s" "$file" 2>/dev/null || echo 0)
+      # 降级到 stat -f（BSD/macOS）
+      elif stat -f "%z" "$file" >/dev/null 2>&1; then
+        size=$(stat -f "%z" "$file" 2>/dev/null || echo 0)
+      # 最后降级到 wc -c
+      else
+        size=$(wc -c < "$file" 2>/dev/null || echo 0)
+      fi
+      echo "f\\t$size\\t$name"
+    fi
+  done
+fi
+`.trim()
 
     const result = await this.executor.exec(['sh', '-c', script])
     this.checkExitCode(result.exitCode, result.stderr)
 
-    const entries = this.parseDirectoryListing(
+    const entries = this.parseDirectoryListingWithSize(
       result.stdout.toString('utf8'),
       normalizedPath
     )
@@ -111,6 +138,24 @@ export class PodFileSystem implements FileSystem {
     const normalizedDir = normalizePath(dirPath)
     const sanitizedFileName = validateFileName(fileName)
     const targetFilePath = joinPath(normalizedDir, sanitizedFileName)
+    const fileSizeKB = (content.length / 1024).toFixed(2)
+
+    console.log(`[PodFS] 开始写入文件: ${targetFilePath}, 大小: ${fileSizeKB}KB`)
+
+    // 检查文件大小限制（10MB）
+    const maxSizeBytes = 10 * 1024 * 1024
+    if (content.length > maxSizeBytes) {
+      throw new FileSystemError(
+        `文件过大（${fileSizeKB}KB），最大支持10MB`,
+        FileSystemErrorCode.EXEC_FAILED,
+        400
+      )
+    }
+
+    // 警告：大文件上传可能很慢
+    if (content.length > 100 * 1024) {
+      console.warn(`[PodFS] 警告: 文件较大（${fileSizeKB}KB），上传可能需要较长时间`)
+    }
 
     const script = this.buildScript([
       `TARGET_DIR=${escapeShellArg(normalizedDir)}`,
@@ -118,7 +163,12 @@ export class PodFileSystem implements FileSystem {
       `cat > ${escapeShellArg(targetFilePath)}`
     ])
 
+    const startTime = Date.now()
     const result = await this.executor.exec(['sh', '-c', script], content)
+    const duration = Date.now() - startTime
+    
+    console.log(`[PodFS] 写入完成: ${targetFilePath}, 耗时: ${duration}ms`)
+    
     this.checkExitCode(result.exitCode, result.stderr)
 
     return { path: targetFilePath }
@@ -186,7 +236,7 @@ export class PodFileSystem implements FileSystem {
   }
 
   /**
-   * 解析 ls -a -p 输出
+   * 解析 ls -a -p 输出（旧方法，保留兼容）
    */
   private parseDirectoryListing(
     rawOutput: string,
@@ -209,6 +259,69 @@ export class PodFileSystem implements FileSystem {
         isHidden: cleanName.startsWith('.')
       }
     })
+
+    // 目录优先，字母排序
+    return entries.sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === 'directory' ? -1 : 1
+      }
+      return a.name.localeCompare(b.name, 'zh-CN')
+    })
+  }
+
+  /**
+   * 解析自定义格式的文件列表（包含文件大小）
+   * 
+   * 输出格式（使用tab分隔）：
+   * d\t0\tdirname          # 目录
+   * f\t1234\tfilename.txt  # 文件
+   */
+  private parseDirectoryListingWithSize(
+    rawOutput: string,
+    basePath: string
+  ): FileEntry[] {
+    const lines = rawOutput
+      .split('\n')
+      .map((line) => line.replace(/\r/g, '').trim())
+      .filter((line) => line.length > 0)
+
+    const entries = lines.map((line) => {
+      // 解析格式：类型\t大小\t名称
+      const parts = line.split('\t')
+      
+      if (parts.length < 3) {
+        return null
+      }
+      
+      const typeChar = parts[0]
+      const sizeStr = parts[1]
+      const name = parts[2]
+      
+      // 跳过 . 和 ..
+      if (name === '.' || name === '..') {
+        return null
+      }
+      
+      const isDirectory = typeChar === 'd'
+      const type: FileEntry['type'] = isDirectory ? 'directory' : 'file'
+      
+      const entry: FileEntry = {
+        name,
+        path: joinPath(basePath, name),
+        type,
+        isHidden: name.startsWith('.')
+      }
+      
+      // 文件才有大小
+      if (!isDirectory) {
+        const sizeBytes = parseInt(sizeStr, 10)
+        if (!isNaN(sizeBytes)) {
+          entry.size = sizeBytes
+        }
+      }
+      
+      return entry
+    }).filter((entry): entry is FileEntry => entry !== null)
 
     // 目录优先，字母排序
     return entries.sort((a, b) => {

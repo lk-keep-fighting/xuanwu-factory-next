@@ -94,6 +94,8 @@ export interface K8sFileEntry {
   path: string
   type: K8sFileEntryType
   isHidden: boolean
+  size?: number  // 文件大小（字节），目录为undefined
+  sizeFormatted?: string  // 格式化的文件大小，如 "1.5 MB"
 }
 
 export interface K8sFileListResult {

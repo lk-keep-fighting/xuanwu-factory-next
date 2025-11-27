@@ -3840,9 +3840,22 @@ class K8sService {
     // Create lock key based on pod identity
     const lockKey = `${namespace}/${podName}/${containerName}`
     
-    // Wait for any existing exec on this pod to complete
-    while (this.podExecLocks.has(lockKey)) {
-      await this.podExecLocks.get(lockKey)
+    // Wait for any existing exec on this pod to complete (with timeout)
+    const existingLock = this.podExecLocks.get(lockKey)
+    if (existingLock) {
+      try {
+        // 等待现有锁，但最多等待5秒
+        await Promise.race([
+          existingLock,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('等待Pod锁超时')), 5000)
+          )
+        ])
+      } catch (error) {
+        // 如果等待超时，强制清除锁
+        console.warn(`[K8s] 强制清除Pod锁: ${lockKey}`)
+        this.podExecLocks.delete(lockKey)
+      }
     }
     
     // Create and register new lock
@@ -3887,11 +3900,23 @@ class K8sService {
     const stdinStream = options.stdin ? Readable.from([options.stdin]) : null
     let status: k8s.V1Status | null = null
 
-    await new Promise<void>((resolve, reject) => {
+    // 添加超时保护
+    const execPromise = new Promise<void>((resolve, reject) => {
       let stdoutFinished = false
       let stderrFinished = false
       let socketClosed = false
       let rejected = false
+      let ws: any = null
+
+      const cleanup = () => {
+        if (ws && typeof ws.close === 'function') {
+          try {
+            ws.close()
+          } catch (error) {
+            console.error('[K8s] Error closing websocket:', error)
+          }
+        }
+      }
 
       const maybeResolve = () => {
         if (rejected) {
@@ -3907,8 +3932,21 @@ class K8sService {
           return
         }
         rejected = true
+        cleanup()
         reject(error instanceof Error ? error : new Error(String(error)))
       }
+
+      // 设置超时
+      const timeoutId = setTimeout(() => {
+        if (!rejected) {
+          rejected = true
+          cleanup()
+          const cmdStr = command.join(' ')
+          const stdinSize = options.stdin ? `${(options.stdin.length / 1024).toFixed(2)}KB` : '0KB'
+          console.error(`[K8s] Pod命令执行超时: ${namespace}/${podName}/${containerName}, stdin: ${stdinSize}, 命令: ${cmdStr.substring(0, 100)}`)
+          reject(new Error(`Pod命令执行超时 (120秒)，可能是网络慢或文件过大`))
+        }
+      }, 120000) // 120秒超时（2分钟）
 
       stdoutStream.on('finish', () => {
         stdoutFinished = true
@@ -3925,15 +3963,22 @@ class K8sService {
         .exec(namespace, podName, containerName, command, stdoutStream, stderrStream, stdinStream, false, (execStatus) => {
           status = execStatus
         })
-        .then((ws) => {
+        .then((websocket) => {
+          ws = websocket
           ws.on('close', () => {
+            clearTimeout(timeoutId)
             socketClosed = true
             maybeResolve()
           })
           ws.on('error', handleError)
         })
-        .catch(handleError)
+        .catch((error) => {
+          clearTimeout(timeoutId)
+          handleError(error)
+        })
     })
+
+    await execPromise
 
     return {
       stdout: Buffer.concat(stdoutChunks),

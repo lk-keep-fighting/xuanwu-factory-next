@@ -166,3 +166,55 @@ export async function writeFile(
   const fs = await createFileSystemForService(serviceId)
   return fs.write(dirPath, fileName, content)
 }
+
+/**
+ * 便捷方法：使用 kubectl cp 写入文件（推荐）
+ */
+export async function writeFileViaKubectl(
+  serviceId: string,
+  dirPath: string,
+  fileName: string,
+  content: Buffer
+): Promise<{ path: string }> {
+  const { uploadFileViaKubectl } = await import('@/lib/filesystem/kubectl-filesystem')
+  
+  // 1. 查询服务信息
+  const service = await prisma.service.findUnique({
+    where: { id: serviceId },
+    select: {
+      name: true,
+      project: {
+        select: { identifier: true }
+      }
+    }
+  })
+
+  if (!service) {
+    throw new FileSystemError('服务不存在', FileSystemErrorCode.NOT_FOUND, 404)
+  }
+
+  const serviceName = service.name?.trim()
+  if (!serviceName) {
+    throw new FileSystemError('服务名称缺失', FileSystemErrorCode.INVALID_NAME, 400)
+  }
+
+  const namespace = service.project?.identifier?.trim()
+  if (!namespace) {
+    throw new FileSystemError('项目缺少编号', FileSystemErrorCode.INVALID_NAME, 400)
+  }
+
+  // 2. 获取 Pod 信息
+  const podInfo = await getPodInfo(serviceName, namespace)
+
+  // 3. 使用 kubectl cp 上传
+  return uploadFileViaKubectl(
+    {
+      namespace: podInfo.namespace,
+      podName: podInfo.podName,
+      containerName: podInfo.containerName
+    },
+    dirPath,
+    fileName,
+    content
+  )
+}

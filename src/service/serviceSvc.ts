@@ -574,24 +574,38 @@ export const serviceSvc = {
     formData.append('path', directoryPath || '/')
     formData.append('file', file)
 
-    const response = await fetch(`${API_BASE}/${serviceId}/files`, {
-      method: 'POST',
-      body: formData
-    })
+    // 创建超时控制器
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 120000) // 120秒超时（2分钟）
 
-    const payload = await response.json().catch(() => null)
+    try {
+      const response = await fetch(`${API_BASE}/${serviceId}/files`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal
+      })
 
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
-          ? ((payload as { error?: string }).error as string)
-          : '上传文件失败'
-      throw new Error(message)
-    }
+      const payload = await response.json().catch(() => null)
 
-    return {
-      success: Boolean((payload as { success?: boolean })?.success ?? true),
-      path: (payload as { path?: string })?.path
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+            ? ((payload as { error?: string }).error as string)
+            : '上传文件失败'
+        throw new Error(message)
+      }
+
+      return {
+        success: Boolean((payload as { success?: boolean })?.success ?? true),
+        path: (payload as { path?: string })?.path
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('上传超时，请检查文件大小或网络连接')
+      }
+      throw error
+    } finally {
+      clearTimeout(timeoutId)
     }
   },
 
