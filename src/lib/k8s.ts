@@ -1134,49 +1134,50 @@ class K8sService {
       })
 
       if (!pods.items.length) {
-        console.warn(`[K8s] 未找到 Pod: namespace=${targetNamespace}, app=${serviceName}`)
+        console.warn(`[K8s][Metrics] 未找到 Pod: namespace=${targetNamespace}, app=${serviceName}`)
         return null
       }
 
       // Step 2: 找到第一个 Running 状态的 Pod
       const runningPod = pods.items.find((p) => p.status?.phase === 'Running')
       if (!runningPod) {
-        console.warn(`[K8s] 未找到 Running 状态的 Pod: namespace=${targetNamespace}, app=${serviceName}`)
+        console.warn(`[K8s][Metrics] 未找到 Running 状态的 Pod: namespace=${targetNamespace}, app=${serviceName}`)
         return null
       }
 
       const podName = runningPod.metadata?.name
       if (!podName) {
+        console.warn(`[K8s][Metrics] Pod 名称缺失`)
         return null
       }
 
-      // Step 3: 使用 kc.makeApiClient 调用 Metrics API
+      console.log(`[K8s][Metrics] 正在获取 Pod metrics: ${podName}`)
+
+      // Step 3: 使用 Kubernetes API 调用 Metrics
       const metricsPath = `/apis/metrics.k8s.io/v1beta1/namespaces/${targetNamespace}/pods/${podName}`
-      const cluster = this.kc.getCurrentCluster()
       
+      // 使用 makeApiRequest 方法（更安全的方式）
+      const cluster = this.kc.getCurrentCluster()
       if (!cluster) {
-        console.warn('[K8s] 无法获取当前集群信息')
+        console.warn('[K8s][Metrics] 无法获取当前集群信息')
         return null
       }
 
-      // 使用 KubeConfig 的内置方法发起 HTTP 请求
-      const requestOptions = await this.kc.applyToHTTPSOptions({} as https.RequestOptions)
-      const url = new URL(metricsPath, cluster.server)
-
-      // 构造 https 请求，使用 this.kc.requestOptions 中配置的 agent
-      const reqOptions: https.RequestOptions = {
-        ...requestOptions,
-        hostname: url.hostname,
-        port: url.port || 443,
-        path: url.pathname + url.search,
+      const opts: https.RequestOptions = {
         method: 'GET',
-        // @ts-expect-error - requestOptions 可能包含自定义 agent
-        agent: (this.kc.requestOptions as any)?.httpsAgent || requestOptions.agent
+        path: metricsPath
       }
+
+      // 应用认证配置
+      await this.kc.applyToHTTPSOptions(opts)
+
+      const url = new URL(cluster.server)
+      opts.hostname = url.hostname
+      opts.port = url.port || '443'
 
       // 使用 Promise 包装 https.request
       const data = await new Promise<any>((resolve, reject) => {
-        const req = https.request(reqOptions, (res) => {
+        const req = https.request(opts, (res) => {
           let body = ''
           res.on('data', (chunk) => {
             body += chunk
@@ -1189,7 +1190,12 @@ class K8sService {
                 reject(new Error(`解析 JSON 失败: ${err}`))
               }
             } else {
-              reject(new Error(`HTTP ${res.statusCode}: ${body}`))
+              // 特殊处理 404 错误（Metrics Server 未安装）
+              if (res.statusCode === 404) {
+                reject(new Error('Metrics Server 未安装或不可用'))
+              } else {
+                reject(new Error(`HTTP ${res.statusCode}: ${body}`))
+              }
             }
           })
         })
@@ -1202,7 +1208,7 @@ class K8sService {
       })
 
       if (!data || !data.containers?.length) {
-        console.warn('[K8s] Metrics API 返回数据为空')
+        console.warn('[K8s][Metrics] Metrics API 返回数据为空或无容器数据')
         return null
       }
 
@@ -1220,6 +1226,8 @@ class K8sService {
       const cpuUsagePercent = cpuLimit ? this.calculateCpuPercent(cpuUsed, cpuLimit) : undefined
       const memoryUsagePercent = memoryLimit ? this.calculateMemoryPercent(memoryUsed, memoryLimit) : undefined
 
+      console.log(`[K8s][Metrics] ✅ 成功获取 metrics: CPU=${cpuUsed}, Memory=${memoryUsed}`)
+
       return {
         cpu: {
           used: cpuUsed,
@@ -1235,7 +1243,14 @@ class K8sService {
       }
     } catch (error: any) {
       // Metrics Server 未安装或 Pod 无 metrics，静默失败
-      console.warn(`[K8s] 获取 metrics 失败: ${error.message}`)
+      const errorMessage = error.message || '未知错误'
+      if (errorMessage.includes('Metrics Server')) {
+        console.warn(`[K8s][Metrics] ⚠️  ${errorMessage}`)
+      } else if (errorMessage.includes('404') || errorMessage.includes('not found')) {
+        console.warn(`[K8s][Metrics] ⚠️  Metrics API 不可用 (404)`)
+      } else {
+        console.warn(`[K8s][Metrics] ⚠️  获取失败: ${errorMessage}`)
+      }
       return null
     }
   }

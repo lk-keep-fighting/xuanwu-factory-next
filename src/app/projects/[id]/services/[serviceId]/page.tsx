@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { AlertTriangle, ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink, PencilLine, Folder } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, Trash2, RefreshCw, Settings, Terminal, FileText, Activity, Rocket, HardDrive, Save, Plus, X, Globe, FileCode, Check, Box, Loader2, ExternalLink, PencilLine, Folder, TrendingUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -26,6 +26,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { ServiceFileManager } from '@/components/services/ServiceFileManager'
+import { ResourceUsageChart } from '@/components/services/ResourceUsageChart'
+import { useMetricsHistory } from '@/hooks/useMetricsHistory'
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { projectSvc } from '@/service/projectSvc'
@@ -386,6 +388,18 @@ export default function ServiceDetailPage() {
   const [podEvents, setPodEvents] = useState<PodEvent[]>([])
   const [podEventsLoading, setPodEventsLoading] = useState(false)
   const [podEventsError, setPodEventsError] = useState<string | null>(null)
+  const [metricsEnabled, setMetricsEnabled] = useState(true) // 默认启用，让 hook 立即开始获取数据
+  const [metricsTimeRange, setMetricsTimeRange] = useState('1h')
+  
+  // 使用 Prometheus 历史数据 hook
+  const { dataPoints: metricsHistory, isLoading: metricsLoading, error: metricsError, refresh: refreshMetrics } = useMetricsHistory({
+    serviceId: serviceId || '',
+    timeRange: metricsTimeRange, // 查询时间范围
+    refreshInterval: 60000, // 每60秒刷新一次
+    enabled: metricsEnabled && Boolean(serviceId), // 通过状态控制是否启用
+    mode: 'prometheus' // 使用 Prometheus 模式
+  })
+  
   const pendingNetworkDeployStorageKey = useMemo(
     () => (serviceId ? `service:${serviceId}:pending-network-deploy` : null),
     [serviceId]
@@ -1511,6 +1525,18 @@ export default function ServiceDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceId])
 
+  // 根据服务状态控制 metrics 采集
+  useEffect(() => {
+    if (!k8sStatusInfo) {
+      setMetricsEnabled(false)
+      return
+    }
+    
+    // 只在服务运行时启用 metrics 采集
+    const status = k8sStatusInfo.status?.toLowerCase()
+    setMetricsEnabled(status === 'running')
+  }, [k8sStatusInfo])
+
   useEffect(() => {
     if (service?.type === ServiceType.APPLICATION) {
       setBuildBranch((prev) => (prev.trim() ? prev : service?.git_branch || 'main'))
@@ -2513,90 +2539,104 @@ export default function ServiceDetailPage() {
 
           {/* 服务状态 */}
           <TabsContent value="status" className="space-y-6">
-            {/* 运行状态卡片 */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Activity className="w-5 h-5" />
-                  运行状态
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {/* 状态显示 */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">服务状态</span>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-                    <span className="text-sm font-medium">{statusLabel}</span>
-                  </div>
-                </div>
-
-                {/* Pod 信息 */}
-                {normalizedK8sStatus && k8sStatusInfo ? (
-                  <>
-                    {typeof k8sStatusInfo.replicas === 'number' && k8sStatusInfo.replicas > 0 ? (
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600">副本数</span>
-                        <div className="flex items-center gap-1">
-                          <span className="font-medium">{k8sStatusInfo.replicas}</span>
-                          {typeof k8sStatusInfo.readyReplicas === 'number' ? (
-                            <span className={k8sStatusInfo.readyReplicas === k8sStatusInfo.replicas ? 'text-green-600' : 'text-amber-600'}>
-                              (就绪 {k8sStatusInfo.readyReplicas})
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-
-                {/* 错误信息 */}
-                {hasK8sStatusError ? (
-                  <div className="text-xs text-red-500 bg-red-50 p-2 rounded">{k8sStatusErrorMessage}</div>
-                ) : null}
-
-                {/* 镜像拉取错误 */}
-                {k8sStatusInfo?.podStatus?.imagePullFailed ? (
-                  <div className="flex items-start gap-2 text-xs bg-red-50 p-2 rounded">
-                    <AlertTriangle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
-                    <div className="text-red-600">
-                      <span className="font-medium">镜像拉取失败</span>
-                      {k8sStatusInfo.podStatus.imagePullError ? (
-                        <p className="mt-0.5">{k8sStatusInfo.podStatus.imagePullError}</p>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-
-                {/* 刷新按钮 */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full gap-2"
-                  onClick={() => {
-                    void fetchK8sStatus({ showToast: true })
-                    void loadPodEvents(false)
-                  }}
-                  disabled={k8sStatusLoading}
-                >
-                  {k8sStatusLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                  刷新状态
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* 资源使用卡片 */}
-            {k8sStatusInfo?.metrics && (
+            {/* 运行状态和资源使用 - 并排显示 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* 运行状态卡片 */}
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Activity className="w-5 h-5" />
-                    资源使用
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Activity className="w-5 h-5" />
+                      运行状态
+                    </CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        void fetchK8sStatus({ showToast: true })
+                        void loadPodEvents(false)
+                      }}
+                      disabled={k8sStatusLoading}
+                    >
+                      {k8sStatusLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* 状态显示 */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">服务状态</span>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                      <span className="text-sm font-medium">{statusLabel}</span>
+                    </div>
+                  </div>
+
+                  {/* Pod 信息 */}
+                  {normalizedK8sStatus && k8sStatusInfo ? (
+                    <>
+                      {typeof k8sStatusInfo.replicas === 'number' && k8sStatusInfo.replicas > 0 ? (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-600">副本数</span>
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">{k8sStatusInfo.replicas}</span>
+                            {typeof k8sStatusInfo.readyReplicas === 'number' ? (
+                              <span className={k8sStatusInfo.readyReplicas === k8sStatusInfo.replicas ? 'text-green-600' : 'text-amber-600'}>
+                                (就绪 {k8sStatusInfo.readyReplicas})
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {/* 错误信息 */}
+                  {hasK8sStatusError ? (
+                    <div className="text-xs text-red-500 bg-red-50 p-2 rounded">{k8sStatusErrorMessage}</div>
+                  ) : null}
+
+                  {/* 镜像拉取错误 */}
+                  {k8sStatusInfo?.podStatus?.imagePullFailed ? (
+                    <div className="flex items-start gap-2 text-xs bg-red-50 p-2 rounded">
+                      <AlertTriangle className="h-3 w-3 text-red-500 mt-0.5 flex-shrink-0" />
+                      <div className="text-red-600">
+                        <span className="font-medium">镜像拉取失败</span>
+                        {k8sStatusInfo.podStatus.imagePullError ? (
+                          <p className="mt-0.5">{k8sStatusInfo.podStatus.imagePullError}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              {/* 资源使用卡片 */}
+              {k8sStatusInfo?.metrics ? (
+                <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <HardDrive className="w-5 h-5" />
+                      资源使用
+                    </CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void fetchK8sStatus({ showToast: true })}
+                      disabled={k8sStatusLoading}
+                    >
+                      {k8sStatusLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                    </Button>
+                  </div>
                   <CardDescription className="text-xs">
                     更新时间：{new Date(k8sStatusInfo.metrics.timestamp).toLocaleTimeString('zh-CN')}
                   </CardDescription>
@@ -2689,6 +2729,122 @@ export default function ServiceDetailPage() {
                   </div>
                 </CardContent>
               </Card>
+              ) : normalizedStatus === 'running' && !k8sStatusLoading ? (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <HardDrive className="w-5 h-5" />
+                        资源使用
+                      </CardTitle>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void fetchK8sStatus({ showToast: true })}
+                        disabled={k8sStatusLoading}
+                      >
+                        {k8sStatusLoading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-center py-6">
+                      <AlertTriangle className="w-6 h-6 text-amber-500 mx-auto mb-2" />
+                      <p className="text-sm text-gray-600 mb-1">资源监控数据不可用</p>
+                      <p className="text-xs text-gray-500">
+                        可能原因：Metrics Server 未安装或 Pod 刚启动
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+            </div>
+
+            {/* 资源使用趋势图 - Prometheus */}
+            {normalizedStatus === 'running' && (
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-gray-700" />
+                  <h3 className="text-base font-semibold">资源监控</h3>
+                  <span className="text-xs text-gray-500">
+                    {metricsLoading ? '加载中...' : metricsError ? `错误: ${metricsError}` : `显示最近 ${metricsTimeRange} 的数据`}
+                  </span>
+                </div>
+                
+                {/* 时间范围选择器 */}
+                <div className="flex gap-2">
+                  {['1h', '6h', '24h', '7d'].map(range => (
+                    <Button
+                      key={range}
+                      size="sm"
+                      variant={metricsTimeRange === range ? 'default' : 'outline'}
+                      onClick={() => {
+                        setMetricsTimeRange(range)
+                        refreshMetrics(range)
+                      }}
+                      disabled={metricsLoading}
+                    >
+                      {range}
+                    </Button>
+                  ))}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => refreshMetrics()}
+                    disabled={metricsLoading}
+                  >
+                    {metricsLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            {normalizedStatus === 'running' && (
+              <div>
+                {metricsLoading && metricsHistory.length === 0 ? (
+                  <Card>
+                    <CardContent className="flex items-center justify-center h-[300px]">
+                      <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+                    </CardContent>
+                  </Card>
+                ) : metricsError ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center h-[300px] text-center">
+                      <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
+                      <p className="text-sm text-gray-600">{metricsError}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => refreshMetrics()}
+                        className="mt-4"
+                      >
+                        重试
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : metricsHistory.length > 0 ? (
+                  <ResourceUsageChart
+                    data={metricsHistory}
+                    showCpu={true}
+                    showMemory={true}
+                    height={300}
+                  />
+                ) : (
+                  <Card>
+                    <CardContent className="flex items-center justify-center h-[300px] text-gray-500 text-sm">
+                      暂无数据
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             )}
 
             {/* 最近事件卡片 */}
