@@ -37,11 +37,20 @@ RUN pnpm build
 # ============ 阶段 4: 运行时镜像 ============
 FROM node:20-alpine AS runner
 
-# 安装必要的系统依赖
+# 安装必要的系统依赖（包括 kubectl）
 RUN apk add --no-cache \
     ca-certificates \
     curl \
-    tzdata
+    tzdata && \
+    # 安装 kubectl（自动检测架构）
+    ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi && \
+    if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi && \
+    echo "Installing kubectl for ${ARCH}..." && \
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl" && \
+    chmod +x kubectl && \
+    mv kubectl /usr/local/bin/kubectl && \
+    kubectl version --client || echo "kubectl installed"
 
 # 设置时区
 ENV TZ=Asia/Shanghai

@@ -14,6 +14,43 @@ metadata:
     app: xuanwu-factory
 
 ---
+# ServiceAccount - 用于 kubectl 访问
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: xuanwu-factory-next-sa
+  namespace: xuanwu-factory
+
+---
+# ClusterRole - 定义所需权限
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: xuanwu-factory-pod-exec
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec"]
+  verbs: ["get", "list", "create"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+
+---
+# ClusterRoleBinding - 绑定权限到 ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: xuanwu-factory-next-pod-exec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: xuanwu-factory-pod-exec
+subjects:
+- kind: ServiceAccount
+  name: xuanwu-factory-next-sa
+  namespace: xuanwu-factory
+
+---
 # Deployment - xuanwu-factory-next
 apiVersion: apps/v1
 kind: Deployment
@@ -39,6 +76,7 @@ spec:
       labels:
         app: xuanwu-factory-next
     spec:
+      serviceAccountName: xuanwu-factory-next-sa
       containers:
       - name: xuanwu-factory-next
         image: nexus.aimstek.cn/xuanwu-factory/xuanwu-factory-next:dev-251126-155059

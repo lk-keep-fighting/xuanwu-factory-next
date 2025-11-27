@@ -139,19 +139,19 @@ done
 
     console.log(`[PodFS] 开始写入文件: ${targetFilePath}, 大小: ${fileSizeKB}KB`)
 
-    // 检查文件大小限制（10MB）
-    const maxSizeBytes = 10 * 1024 * 1024
+    // 检查文件大小限制（50MB，WebSocket exec 方式的实际限制）
+    const maxSizeBytes = 50 * 1024 * 1024
     if (content.length > maxSizeBytes) {
       throw new FileSystemError(
-        `文件过大（${fileSizeKB}KB），最大支持10MB`,
+        `文件过大（${fileSizeKB}KB），WebSocket 方式最大支持 50MB。建议使用 kubectl cp 方式上传大文件。`,
         FileSystemErrorCode.EXEC_FAILED,
         400
       )
     }
 
     // 警告：大文件上传可能很慢
-    if (content.length > 100 * 1024) {
-      console.warn(`[PodFS] 警告: 文件较大（${fileSizeKB}KB），上传可能需要较长时间`)
+    if (content.length > 5 * 1024 * 1024) {
+      console.warn(`[PodFS] 警告: 文件较大（${fileSizeKB}KB），上传可能需要较长时间（建议使用 kubectl cp）`)
     }
 
     const script = this.buildScript([

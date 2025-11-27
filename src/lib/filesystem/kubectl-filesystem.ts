@@ -259,10 +259,19 @@ export async function downloadFileViaKubectl(
  */
 export async function checkKubectlAvailable(): Promise<boolean> {
   try {
-    // 使用简单的 version 命令，兼容所有kubectl版本
-    const { stdout } = await execAsync('kubectl version --client', { timeout: 5000 })
-    console.log('[KubectlFS] kubectl 可用:', stdout.split('\n')[0])
-    return true
+    // 检查 kubectl 命令是否存在
+    const { stdout } = await execAsync('kubectl version --client --output=json', { timeout: 5000 })
+    console.log('[KubectlFS] kubectl 客户端版本:', JSON.parse(stdout).clientVersion?.gitVersion || 'unknown')
+    
+    // 检查是否能访问 K8s API（in-cluster 或 kubeconfig）
+    try {
+      await execAsync('kubectl cluster-info', { timeout: 5000 })
+      console.log('[KubectlFS] kubectl 可用: ✅ 已连接到集群')
+      return true
+    } catch (clusterError) {
+      console.warn('[KubectlFS] kubectl 已安装但无法连接到集群:', clusterError)
+      return false
+    }
   } catch (error) {
     console.error('[KubectlFS] kubectl 不可用:', error)
     return false
