@@ -65,38 +65,30 @@ export class PodFileSystem implements FileSystem {
   async list(path: string): Promise<FileListResult> {
     const normalizedPath = normalizePath(path)
     
-    // 使用兼容性最好的方法获取文件信息（包括大小）
-    // 构建完整的shell脚本（不能用分号分隔，因为有if/then/else结构）
+    // 使用最兼容的方法获取文件信息（包括大小）
+    // 避免使用 -printf，因为BusyBox find不支持
     const script = `
 TARGET=${escapeShellArg(normalizedPath)}
 if [ ! -e "$TARGET" ]; then exit 44; fi
 if [ ! -d "$TARGET" ]; then exit 45; fi
 cd "$TARGET"
 
-# 尝试 GNU find 的 -printf（Ubuntu/Debian/CentOS等）
-if find . -maxdepth 1 -mindepth 1 -printf "%y\\t%s\\t%f\\n" 2>/dev/null | head -1 >/dev/null 2>&1; then
-  find . -maxdepth 1 -mindepth 1 -printf "%y\\t%s\\t%f\\n"
-else
-  # 降级到 POSIX 兼容方法（Alpine/BusyBox等）
-  find . -maxdepth 1 -mindepth 1 | while IFS= read -r file; do
-    name=$(basename "$file")
-    if [ -d "$file" ]; then
-      echo "d\\t0\\t$name"
+# 使用 POSIX 兼容方法（所有系统都支持）
+find . -maxdepth 1 -mindepth 1 2>/dev/null | while IFS= read -r file; do
+  name=\${file#./}
+  if [ -d "$file" ]; then
+    echo "d\\t0\\t$name"
+  else
+    # 尝试使用 stat -c（GNU coreutils）
+    if stat -c "%s" "$file" >/dev/null 2>&1; then
+      size=$(stat -c "%s" "$file" 2>/dev/null || echo 0)
+    # 降级到 wc -c（所有POSIX系统）
     else
-      # 尝试使用 stat -c（GNU coreutils）
-      if stat -c "%s" "$file" >/dev/null 2>&1; then
-        size=$(stat -c "%s" "$file" 2>/dev/null || echo 0)
-      # 降级到 stat -f（BSD/macOS）
-      elif stat -f "%z" "$file" >/dev/null 2>&1; then
-        size=$(stat -f "%z" "$file" 2>/dev/null || echo 0)
-      # 最后降级到 wc -c
-      else
-        size=$(wc -c < "$file" 2>/dev/null || echo 0)
-      fi
-      echo "f\\t$size\\t$name"
+      size=$(wc -c < "$file" 2>/dev/null || echo 0)
     fi
-  done
-fi
+    echo "f\\t$size\\t$name"
+  fi
+done
 `.trim()
 
     const result = await this.executor.exec(['sh', '-c', script])
