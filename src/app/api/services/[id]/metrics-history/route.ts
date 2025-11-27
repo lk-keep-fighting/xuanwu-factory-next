@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
 // Prometheus 配置
-const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus-k8s.kuboard:9090'
+const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus.dev.aimstek.cn'
 
 interface PrometheusQueryParams {
   query: string

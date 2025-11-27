@@ -50,6 +50,17 @@ stringData:
   # JENKINS_JOB_TOKEN: ""  # （可选）Jenkins Job Token
   # JENKINS_BUILD_TIMEOUT_MS: "900000"  # （可选）构建超时时间，默认 15 分钟
   # JENKINS_POLL_INTERVAL_MS: "5000"  # （可选）轮询间隔，默认 5 秒
+
+  # Prometheus 配置（用于查询历史监控数据）
+  # 默认使用外部域名（推荐）
+  PROMETHEUS_URL: "http://prometheus.dev.aimstek.cn"
+  # 或使用集群内部服务名
+  # PROMETHEUS_URL: "http://prometheus-k8s.kuboard:9090"
+  # 或使用完整的集群内部服务地址
+  # PROMETHEUS_URL: "http://prometheus-k8s.monitoring.svc.cluster.local:9090"
+
+  # Grafana 配置（可选，用于跳转到 Grafana 仪表板）
+  # NEXT_PUBLIC_GRAFANA_URL: "http://grafana.yourdomain.com"
   # 可选：提供完整 kubeconfig（支持纯文本或 Base64 原文）
   # KUBECONFIG_DATA: |
   #   apiVersion: v1
@@ -221,6 +232,22 @@ spec:
             secretKeyRef:
               name: xuanwu-factory-secret
               key: JENKINS_POLL_INTERVAL_MS
+              optional: true
+
+        # Prometheus 配置（用于查询历史监控数据）
+        - name: PROMETHEUS_URL
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: PROMETHEUS_URL
+              optional: true
+
+        # Grafana 配置（可选）
+        - name: NEXT_PUBLIC_GRAFANA_URL
+          valueFrom:
+            secretKeyRef:
+              name: xuanwu-factory-secret
+              key: NEXT_PUBLIC_GRAFANA_URL
               optional: true
 
         # 资源限制
