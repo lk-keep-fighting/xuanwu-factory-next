@@ -71,22 +71,24 @@ export class PodFileSystem implements FileSystem {
 TARGET=${escapeShellArg(normalizedPath)}
 if [ ! -e "$TARGET" ]; then exit 44; fi
 if [ ! -d "$TARGET" ]; then exit 45; fi
-cd "$TARGET"
+cd "$TARGET" || exit 1
 
-# 使用 POSIX 兼容方法（所有系统都支持）
-find . -maxdepth 1 -mindepth 1 2>/dev/null | while IFS= read -r file; do
-  name=\${file#./}
+# 使用 ls 配合循环，更可靠
+for file in * .[!.]* ..?*; do
+  # 跳过不存在的文件（glob 没匹配到）
+  [ -e "$file" ] || continue
+  # 跳过 . 和 ..
+  [ "$file" = "." ] && continue
+  [ "$file" = ".." ] && continue
+  
   if [ -d "$file" ]; then
-    echo "d\\t0\\t$name"
+    echo "d	0	$file"
   else
-    # 尝试使用 stat -c（GNU coreutils）
-    if stat -c "%s" "$file" >/dev/null 2>&1; then
-      size=$(stat -c "%s" "$file" 2>/dev/null || echo 0)
-    # 降级到 wc -c（所有POSIX系统）
-    else
+    # 尝试获取文件大小
+    if [ -f "$file" ]; then
       size=$(wc -c < "$file" 2>/dev/null || echo 0)
+      echo "f	$size	$file"
     fi
-    echo "f\\t$size\\t$name"
   fi
 done
 `.trim()
@@ -94,8 +96,11 @@ done
     const result = await this.executor.exec(['sh', '-c', script])
     this.checkExitCode(result.exitCode, result.stderr)
 
+    const rawOutput = result.stdout.toString('utf8')
+    console.log(`[PodFS] 原始输出长度: ${rawOutput.length}B, 内容预览: ${rawOutput.substring(0, 200)}`)
+    
     const entries = this.parseDirectoryListingWithSize(
-      result.stdout.toString('utf8'),
+      rawOutput,
       normalizedPath
     )
 
@@ -276,6 +281,8 @@ done
       .split('\n')
       .map((line) => line.replace(/\r/g, '').trim())
       .filter((line) => line.length > 0)
+
+    console.log(`[PodFS] 解析行数: ${lines.length}, 前3行: ${JSON.stringify(lines.slice(0, 3))}`)
 
     const entries = lines.map((line) => {
       // 解析格式：类型\t大小\t名称
