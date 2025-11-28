@@ -3,16 +3,7 @@
 import { useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { Card, CardContent } from '@/components/ui/card'
-
-export interface MetricsDataPoint {
-  timestamp: number // Unix timestamp in milliseconds
-  cpuUsed: number // in millicores
-  cpuLimit?: number // in millicores
-  cpuPercent?: number // percentage
-  memoryUsed: number // in bytes
-  memoryLimit?: number // in bytes
-  memoryPercent?: number // percentage
-}
+import type { MetricsDataPoint } from '@/types/service-tabs'
 
 interface ResourceUsageChartProps {
   data: MetricsDataPoint[]
