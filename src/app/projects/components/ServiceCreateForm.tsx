@@ -666,7 +666,7 @@ export default function ServiceCreateForm({
         serviceData.git_path = data.git_path?.trim() || '.'
         serviceData.build_type = data.build_type || BuildType.DOCKERFILE
         serviceData.dockerfile_path = data.dockerfile_path?.trim() || 'Dockerfile'
-        serviceData.port = data.port ? parseInt(data.port) : 3000
+        serviceData.port = data.port ? parseInt(data.port) : 8080
         serviceData.replicas = data.replicas ? parseInt(data.replicas) : 1
         serviceData.command = data.command
         serviceData.auto_deploy = data.auto_deploy === 'true'
@@ -1282,8 +1282,7 @@ export default function ServiceCreateForm({
                   id="port"
                   type="number"
                   {...register('port')}
-                  placeholder="3000"
-                  defaultValue="3000"
+                  placeholder="8080"
                 />
               </div>
               <div className="space-y-2">

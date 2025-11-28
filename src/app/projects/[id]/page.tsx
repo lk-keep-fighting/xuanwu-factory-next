@@ -312,10 +312,15 @@ const getConnectivityLabel = (
   imageService: ImageService | null
 ) => {
   const networkPorts = extractNetworkPorts(service.network_config)
-  const primaryNetworkPort = typeof networkPorts[0] === 'number' ? networkPorts[0] : null
 
   if (applicationService) {
-    const portValue = normalizeNumericValue(applicationService.port) ?? primaryNetworkPort
+    // 优先使用 network_config 中的端口（最新配置），其次使用 port 字段
+    if (networkPorts.length > 0) {
+      return networkPorts.length === 1 
+        ? `端口 ${networkPorts[0]}` 
+        : `端口 ${networkPorts.join(', ')}`
+    }
+    const portValue = normalizeNumericValue(applicationService.port)
     return portValue !== null ? `端口 ${portValue}` : '-'
   }
 
@@ -335,14 +340,20 @@ const getConnectivityLabel = (
       return labels.join(' / ')
     }
 
-    return primaryNetworkPort !== null ? `端口 ${primaryNetworkPort}` : '-'
+    return networkPorts.length > 0 
+      ? (networkPorts.length === 1 ? `端口 ${networkPorts[0]}` : `端口 ${networkPorts.join(', ')}`)
+      : '-'
   }
 
   if (imageService) {
-    return primaryNetworkPort !== null ? `端口 ${primaryNetworkPort}` : '-'
+    return networkPorts.length > 0 
+      ? (networkPorts.length === 1 ? `端口 ${networkPorts[0]}` : `端口 ${networkPorts.join(', ')}`)
+      : '-'
   }
 
-  return primaryNetworkPort !== null ? `端口 ${primaryNetworkPort}` : '-'
+  return networkPorts.length > 0 
+    ? (networkPorts.length === 1 ? `端口 ${networkPorts[0]}` : `端口 ${networkPorts.join(', ')}`)
+    : '-'
 }
 
 const getReplicasLabel = (

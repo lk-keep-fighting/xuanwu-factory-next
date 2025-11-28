@@ -390,7 +390,7 @@ export default function ServiceDetailPage() {
   const [podEventsError, setPodEventsError] = useState<string | null>(null)
   const [metricsEnabled, setMetricsEnabled] = useState(true) // 默认启用，让 hook 立即开始获取数据
   const [metricsTimeRange, setMetricsTimeRange] = useState('1h')
-  
+
   // 使用 Prometheus 历史数据 hook
   const { dataPoints: metricsHistory, isLoading: metricsLoading, error: metricsError, refresh: refreshMetrics } = useMetricsHistory({
     serviceId: serviceId || '',
@@ -399,7 +399,7 @@ export default function ServiceDetailPage() {
     enabled: metricsEnabled && Boolean(serviceId), // 通过状态控制是否启用
     mode: 'prometheus' // 使用 Prometheus 模式
   })
-  
+
   const pendingNetworkDeployStorageKey = useMemo(
     () => (serviceId ? `service:${serviceId}:pending-network-deploy` : null),
     [serviceId]
@@ -1214,15 +1214,15 @@ export default function ServiceDetailPage() {
           const parsed = parseImageReference(serviceType === 'application' ? (service as any)?.built_image : undefined)
           const nextValue: ImageReferenceValue = fallbackImage
             ? {
-                optionId: fallbackImage.id ?? null,
-                image: fallbackImage.image,
-                tag: fallbackImage.tag
-              }
+              optionId: fallbackImage.id ?? null,
+              image: fallbackImage.image,
+              tag: fallbackImage.tag
+            }
             : {
-                optionId: null,
-                image: parsed.image,
-                tag: parsed.tag
-              }
+              optionId: null,
+              image: parsed.image,
+              tag: parsed.tag
+            }
 
           const fallbackFullImage = fallbackImage?.full_image ?? (nextValue.image ? formatImageReference(nextValue.image, nextValue.tag) : null)
 
@@ -1531,7 +1531,7 @@ export default function ServiceDetailPage() {
       setMetricsEnabled(false)
       return
     }
-    
+
     // 只在服务运行时启用 metrics 采集
     const status = k8sStatusInfo.status?.toLowerCase()
     setMetricsEnabled(status === 'running')
@@ -2085,8 +2085,8 @@ export default function ServiceDetailPage() {
           let usernameValue =
             supportedType === DatabaseType.MYSQL
               ? (typeof updateData.username === 'string'
-                  ? updateData.username
-                  : originalDatabase.username ?? '')
+                ? updateData.username
+                : originalDatabase.username ?? '')
               : ''
           let passwordValue =
             typeof updateData.password === 'string'
@@ -2095,8 +2095,8 @@ export default function ServiceDetailPage() {
           let databaseNameValue =
             supportedType === DatabaseType.MYSQL
               ? (typeof updateData.database_name === 'string'
-                  ? updateData.database_name
-                  : originalDatabase.database_name ?? '')
+                ? updateData.database_name
+                : originalDatabase.database_name ?? '')
               : ''
 
           if (supportedType === DatabaseType.MYSQL) {
@@ -2469,9 +2469,9 @@ export default function ServiceDetailPage() {
                 重启
               </Button>
               {normalizedStatus === 'running' && (
-                <Button 
+                <Button
                   onClick={() => window.open(`/projects/${projectId}/services/${serviceId}/terminal`, '_blank')}
-                  variant="outline" 
+                  variant="outline"
                   className="gap-2"
                 >
                   <Terminal className="w-4 h-4" />
@@ -2502,7 +2502,7 @@ export default function ServiceDetailPage() {
             </TabsTrigger>
             <TabsTrigger value="general" className="gap-2">
               <Settings className="w-4 h-4" />
-              通用配置
+              基础配置
             </TabsTrigger>
             <TabsTrigger value="environment" className="gap-2">
               <FileText className="w-4 h-4" />
@@ -2615,117 +2615,117 @@ export default function ServiceDetailPage() {
               {/* 资源使用卡片 */}
               {k8sStatusInfo?.metrics ? (
                 <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <HardDrive className="w-5 h-5" />
-                      资源使用
-                    </CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void fetchK8sStatus({ showToast: true })}
-                      disabled={k8sStatusLoading}
-                    >
-                      {k8sStatusLoading ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      )}
-                    </Button>
-                  </div>
-                  <CardDescription className="text-xs">
-                    更新时间：{new Date(k8sStatusInfo.metrics.timestamp).toLocaleTimeString('zh-CN')}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* CPU 使用 */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600">CPU</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm">
-                          {k8sStatusInfo.metrics.cpu.used}
-                          {k8sStatusInfo.metrics.cpu.limit && ` / ${k8sStatusInfo.metrics.cpu.limit}`}
-                        </span>
-                        {k8sStatusInfo.metrics.cpu.usagePercent !== undefined && (
-                          <span
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <HardDrive className="w-5 h-5" />
+                        资源使用
+                      </CardTitle>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void fetchK8sStatus({ showToast: true })}
+                        disabled={k8sStatusLoading}
+                      >
+                        {k8sStatusLoading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                    <CardDescription className="text-xs">
+                      更新时间：{new Date(k8sStatusInfo.metrics.timestamp).toLocaleTimeString('zh-CN')}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* CPU 使用 */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">CPU</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm">
+                            {k8sStatusInfo.metrics.cpu.used}
+                            {k8sStatusInfo.metrics.cpu.limit && ` / ${k8sStatusInfo.metrics.cpu.limit}`}
+                          </span>
+                          {k8sStatusInfo.metrics.cpu.usagePercent !== undefined && (
+                            <span
+                              className={cn(
+                                'text-sm font-medium',
+                                k8sStatusInfo.metrics.cpu.usagePercent > 80
+                                  ? 'text-red-600'
+                                  : k8sStatusInfo.metrics.cpu.usagePercent > 60
+                                    ? 'text-amber-600'
+                                    : 'text-green-600'
+                              )}
+                            >
+                              {k8sStatusInfo.metrics.cpu.usagePercent.toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {/* 进度条 */}
+                      {k8sStatusInfo.metrics.cpu.usagePercent !== undefined && (
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
                             className={cn(
-                              'text-sm font-medium',
+                              'h-2 rounded-full transition-all',
                               k8sStatusInfo.metrics.cpu.usagePercent > 80
-                                ? 'text-red-600'
+                                ? 'bg-red-500'
                                 : k8sStatusInfo.metrics.cpu.usagePercent > 60
-                                  ? 'text-amber-600'
-                                  : 'text-green-600'
+                                  ? 'bg-amber-500'
+                                  : 'bg-green-500'
                             )}
-                          >
-                            {k8sStatusInfo.metrics.cpu.usagePercent.toFixed(1)}%
-                          </span>
-                        )}
-                      </div>
+                            style={{ width: `${Math.min(k8sStatusInfo.metrics.cpu.usagePercent, 100)}%` }}
+                          />
+                        </div>
+                      )}
                     </div>
-                    {/* 进度条 */}
-                    {k8sStatusInfo.metrics.cpu.usagePercent !== undefined && (
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div
-                          className={cn(
-                            'h-2 rounded-full transition-all',
-                            k8sStatusInfo.metrics.cpu.usagePercent > 80
-                              ? 'bg-red-500'
-                              : k8sStatusInfo.metrics.cpu.usagePercent > 60
-                                ? 'bg-amber-500'
-                                : 'bg-green-500'
-                          )}
-                          style={{ width: `${Math.min(k8sStatusInfo.metrics.cpu.usagePercent, 100)}%` }}
-                        />
-                      </div>
-                    )}
-                  </div>
 
-                  {/* 内存使用 */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600">内存</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm">
-                          {k8sStatusInfo.metrics.memory.used}
-                          {k8sStatusInfo.metrics.memory.limit && ` / ${k8sStatusInfo.metrics.memory.limit}`}
-                        </span>
-                        {k8sStatusInfo.metrics.memory.usagePercent !== undefined && (
-                          <span
-                            className={cn(
-                              'text-sm font-medium',
-                              k8sStatusInfo.metrics.memory.usagePercent > 80
-                                ? 'text-red-600'
-                                : k8sStatusInfo.metrics.memory.usagePercent > 60
-                                  ? 'text-amber-600'
-                                  : 'text-green-600'
-                            )}
-                          >
-                            {k8sStatusInfo.metrics.memory.usagePercent.toFixed(1)}%
+                    {/* 内存使用 */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">内存</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm">
+                            {k8sStatusInfo.metrics.memory.used}
+                            {k8sStatusInfo.metrics.memory.limit && ` / ${k8sStatusInfo.metrics.memory.limit}`}
                           </span>
-                        )}
-                      </div>
-                    </div>
-                    {/* 进度条 */}
-                    {k8sStatusInfo.metrics.memory.usagePercent !== undefined && (
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div
-                          className={cn(
-                            'h-2 rounded-full transition-all',
-                            k8sStatusInfo.metrics.memory.usagePercent > 80
-                              ? 'bg-red-500'
-                              : k8sStatusInfo.metrics.memory.usagePercent > 60
-                                ? 'bg-amber-500'
-                                : 'bg-green-500'
+                          {k8sStatusInfo.metrics.memory.usagePercent !== undefined && (
+                            <span
+                              className={cn(
+                                'text-sm font-medium',
+                                k8sStatusInfo.metrics.memory.usagePercent > 80
+                                  ? 'text-red-600'
+                                  : k8sStatusInfo.metrics.memory.usagePercent > 60
+                                    ? 'text-amber-600'
+                                    : 'text-green-600'
+                              )}
+                            >
+                              {k8sStatusInfo.metrics.memory.usagePercent.toFixed(1)}%
+                            </span>
                           )}
-                          style={{ width: `${Math.min(k8sStatusInfo.metrics.memory.usagePercent, 100)}%` }}
-                        />
+                        </div>
                       </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                      {/* 进度条 */}
+                      {k8sStatusInfo.metrics.memory.usagePercent !== undefined && (
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className={cn(
+                              'h-2 rounded-full transition-all',
+                              k8sStatusInfo.metrics.memory.usagePercent > 80
+                                ? 'bg-red-500'
+                                : k8sStatusInfo.metrics.memory.usagePercent > 60
+                                  ? 'bg-amber-500'
+                                  : 'bg-green-500'
+                            )}
+                            style={{ width: `${Math.min(k8sStatusInfo.metrics.memory.usagePercent, 100)}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
               ) : normalizedStatus === 'running' && !k8sStatusLoading ? (
                 <Card>
                   <CardHeader className="pb-3">
@@ -2771,7 +2771,7 @@ export default function ServiceDetailPage() {
                     {metricsLoading ? '加载中...' : metricsError ? `错误: ${metricsError}` : `显示最近 ${metricsTimeRange} 的数据`}
                   </span>
                 </div>
-                
+
                 {/* 时间范围选择器 */}
                 <div className="flex gap-2">
                   {['1h', '6h', '24h', '7d'].map(range => (
@@ -2803,7 +2803,7 @@ export default function ServiceDetailPage() {
                 </div>
               </div>
             )}
-            
+
             {normalizedStatus === 'running' && (
               <div>
                 {metricsLoading && metricsHistory.length === 0 ? (
@@ -2888,8 +2888,8 @@ export default function ServiceDetailPage() {
                     {podEvents.slice(0, 10).map((event, index) => {
                       const isWarning = event.type === 'Warning'
                       return (
-                        <div 
-                          key={index} 
+                        <div
+                          key={index}
                           className={cn(
                             'text-xs p-2 rounded border',
                             isWarning ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
@@ -3320,8 +3320,8 @@ export default function ServiceDetailPage() {
                             const isDeployable = status === 'success'
                             const isUpdating = Boolean(
                               ongoingDeploymentInfo &&
-                                ((ongoingDeploymentInfo.id && image.id === ongoingDeploymentInfo.id) ||
-                                  (ongoingDeploymentFullImage && image.full_image === ongoingDeploymentFullImage))
+                              ((ongoingDeploymentInfo.id && image.id === ongoingDeploymentInfo.id) ||
+                                (ongoingDeploymentFullImage && image.full_image === ongoingDeploymentFullImage))
                             )
                             const metadata =
                               image.metadata && typeof image.metadata === 'object'
@@ -3506,130 +3506,130 @@ export default function ServiceDetailPage() {
                   <p className="text-xs text-gray-500">可选。覆盖容器镜像的默认启动命令</p>
                 </div>
                 <div className="border-t border-gray-200 pt-4 mt-4">
-                      <h4 className="text-sm font-medium text-gray-700 mb-3">资源配置</h4>
-                      
-                      {/* 资源请求 (Requests) */}
-                      <div className="space-y-3 mb-4">
-                        <div className="flex items-center gap-2">
-                          <h5 className="text-xs font-medium text-gray-600">资源请求 (Requests)</h5>
-                          <span className="text-xs text-gray-400">• 容器所需的最小资源</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label className="text-xs">CPU 请求</Label>
-                            {isEditing ? (
-                              <div className="flex gap-2">
-                                <Input
-                                  type="number"
-                                  placeholder="如: 100"
-                                  value={cpuRequestValue}
-                                  onChange={(e) => setCpuRequestValue(e.target.value)}
-                                  className="flex-1"
-                                />
-                                <Select value={cpuRequestUnit} onValueChange={(value: 'm' | 'core') => setCpuRequestUnit(value)}>
-                                  <SelectTrigger className="w-32">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="m">m (millicores)</SelectItem>
-                                    <SelectItem value="core">核 (cores)</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            ) : (
-                              <Input value={service.resource_requests?.cpu || '-'} disabled />
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="text-xs">内存请求</Label>
-                            {isEditing ? (
-                              <div className="flex gap-2">
-                                <Input
-                                  type="number"
-                                  placeholder="如: 128"
-                                  value={memoryRequestValue}
-                                  onChange={(e) => setMemoryRequestValue(e.target.value)}
-                                  className="flex-1"
-                                />
-                                <Select value={memoryRequestUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryRequestUnit(value)}>
-                                  <SelectTrigger className="w-20">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="Mi">Mi</SelectItem>
-                                    <SelectItem value="Gi">Gi</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            ) : (
-                              <Input value={service.resource_requests?.memory || '-'} disabled />
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">资源配置</h4>
 
-                      {/* 资源限制 (Limits) */}
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                          <h5 className="text-xs font-medium text-gray-600">资源限制 (Limits)</h5>
-                          <span className="text-xs text-gray-400">• 容器可使用的最大资源</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label className="text-xs">CPU 限制</Label>
-                            {isEditing ? (
-                              <div className="flex gap-2">
-                                <Input
-                                  type="number"
-                                  placeholder="如: 1000"
-                                  value={cpuValue}
-                                  onChange={(e) => setCpuValue(e.target.value)}
-                                  className="flex-1"
-                                />
-                                <Select value={cpuUnit} onValueChange={(value: 'm' | 'core') => setCpuUnit(value)}>
-                                  <SelectTrigger className="w-32">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="m">m (millicores)</SelectItem>
-                                    <SelectItem value="core">核 (cores)</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            ) : (
-                              <Input value={service.resource_limits?.cpu || '-'} disabled />
-                            )}
+                  {/* 资源请求 (Requests) */}
+                  <div className="space-y-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <h5 className="text-xs font-medium text-gray-600">资源请求 (Requests)</h5>
+                      <span className="text-xs text-gray-400">• 容器所需的最小资源</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-xs">CPU 请求</Label>
+                        {isEditing ? (
+                          <div className="flex gap-2">
+                            <Input
+                              type="number"
+                              placeholder="如: 100"
+                              value={cpuRequestValue}
+                              onChange={(e) => setCpuRequestValue(e.target.value)}
+                              className="flex-1"
+                            />
+                            <Select value={cpuRequestUnit} onValueChange={(value: 'm' | 'core') => setCpuRequestUnit(value)}>
+                              <SelectTrigger className="w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="m">m (millicores)</SelectItem>
+                                <SelectItem value="core">核 (cores)</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
-                          <div className="space-y-2">
-                            <Label className="text-xs">内存限制</Label>
-                            {isEditing ? (
-                              <div className="flex gap-2">
-                                <Input
-                                  type="number"
-                                  placeholder="如: 512"
-                                  value={memoryValue}
-                                  onChange={(e) => setMemoryValue(e.target.value)}
-                                  className="flex-1"
-                                />
-                                <Select value={memoryUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryUnit(value)}>
-                                  <SelectTrigger className="w-20">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="Mi">Mi</SelectItem>
-                                    <SelectItem value="Gi">Gi</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            ) : (
-                              <Input value={service.resource_limits?.memory || '-'} disabled />
-                            )}
+                        ) : (
+                          <Input value={service.resource_requests?.cpu || '-'} disabled />
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">内存请求</Label>
+                        {isEditing ? (
+                          <div className="flex gap-2">
+                            <Input
+                              type="number"
+                              placeholder="如: 128"
+                              value={memoryRequestValue}
+                              onChange={(e) => setMemoryRequestValue(e.target.value)}
+                              className="flex-1"
+                            />
+                            <Select value={memoryRequestUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryRequestUnit(value)}>
+                              <SelectTrigger className="w-20">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Mi">Mi</SelectItem>
+                                <SelectItem value="Gi">Gi</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
-                        </div>
+                        ) : (
+                          <Input value={service.resource_requests?.memory || '-'} disabled />
+                        )}
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+
+                  {/* 资源限制 (Limits) */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <h5 className="text-xs font-medium text-gray-600">资源限制 (Limits)</h5>
+                      <span className="text-xs text-gray-400">• 容器可使用的最大资源</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-xs">CPU 限制</Label>
+                        {isEditing ? (
+                          <div className="flex gap-2">
+                            <Input
+                              type="number"
+                              placeholder="如: 1000"
+                              value={cpuValue}
+                              onChange={(e) => setCpuValue(e.target.value)}
+                              className="flex-1"
+                            />
+                            <Select value={cpuUnit} onValueChange={(value: 'm' | 'core') => setCpuUnit(value)}>
+                              <SelectTrigger className="w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="m">m (millicores)</SelectItem>
+                                <SelectItem value="core">核 (cores)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : (
+                          <Input value={service.resource_limits?.cpu || '-'} disabled />
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">内存限制</Label>
+                        {isEditing ? (
+                          <div className="flex gap-2">
+                            <Input
+                              type="number"
+                              placeholder="如: 512"
+                              value={memoryValue}
+                              onChange={(e) => setMemoryValue(e.target.value)}
+                              className="flex-1"
+                            />
+                            <Select value={memoryUnit} onValueChange={(value: 'Mi' | 'Gi') => setMemoryUnit(value)}>
+                              <SelectTrigger className="w-20">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Mi">Mi</SelectItem>
+                                <SelectItem value="Gi">Gi</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : (
+                          <Input value={service.resource_limits?.memory || '-'} disabled />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Database 配置 */}
             {service.type === ServiceType.DATABASE && (
@@ -4211,8 +4211,25 @@ export default function ServiceDetailPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-6">
+
                 <div className="space-y-2">
-                  <Label>Service 类型</Label>
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={headlessServiceEnabled}
+                      onChange={(e) => setHeadlessServiceEnabled(e.target.checked)}
+                    />
+                    项目空间内开放所有端口(Headless Service)
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    启用后会额外创建新服务名 {service?.name ? `${service.name}-headless` : 'Headless Service'}，
+                    用于在同一命名空间内通过新服务名直接访问所有 Pod。
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>单独开放端口</Label>
                   <Select
                     value={networkServiceType}
                     onValueChange={(value) =>
@@ -4225,26 +4242,11 @@ export default function ServiceDetailPage() {
                     <SelectContent>
                       <SelectItem value="ClusterIP">ClusterIP（集群内部）</SelectItem>
                       <SelectItem value="NodePort">NodePort（节点端口）</SelectItem>
-                      <SelectItem value="LoadBalancer">LoadBalancer（负载均衡）</SelectItem>
+                      {/* <SelectItem value="LoadBalancer">LoadBalancer（负载均衡）</SelectItem> */}
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4"
-                      checked={headlessServiceEnabled}
-                      onChange={(e) => setHeadlessServiceEnabled(e.target.checked)}
-                    />
-                    启用 Headless Service
-                  </label>
-                  <p className="text-xs text-gray-500">
-                    启用后平台会额外创建 {service?.name ? `${service.name}-headless` : 'Headless Service'}，
-                    用于在同一命名空间内通过服务名直接访问所有 Pod，原有域名与端口配置保持不变。
-                  </p>
-                </div>
 
                 {networkPorts.length === 0 ? (
                   <p className="text-gray-500 text-center py-8">
@@ -4337,35 +4339,40 @@ export default function ServiceDetailPage() {
                           </div>
 
                           <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4"
-                                checked={port.enableDomain}
-                                onChange={(e) => handleToggleDomain(port.id, e.target.checked)}
-                              />
-                              启用域名访问
-                            </label>
-                            <p className="text-xs text-gray-500">
-                              启用后可通过{' '}
-                              <span className="font-mono text-gray-700">{previewDomain}</span> 访问该端口
-                            </p>
-                            {port.enableDomain && (
-                              <div className="space-y-3">
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium text-gray-700">域名前缀</Label>
-                                  <div className="flex items-center gap-2">
-                                    <Input
-                                      placeholder={defaultDomainPrefix}
-                                      value={port.domainPrefix}
-                                      onChange={(e) => handleDomainPrefixChange(port.id, e.target.value)}
-                                    />
-                                    <span className="text-sm text-gray-500">.{domainSuffixText}</span>
-                                  </div>
+                            <div className="flex items-center gap-4">
+                              <label className="flex items-center gap-2 text-sm font-medium text-gray-900 whitespace-nowrap">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4"
+                                  checked={port.enableDomain}
+                                  onChange={(e) => handleToggleDomain(port.id, e.target.checked)}
+                                />
+                                启用域名访问
+                              </label>
+                              {port.enableDomain && (
+                                <div className="flex items-center gap-2 flex-1">
+                                  <Input
+                                    placeholder={defaultDomainPrefix}
+                                    value={port.domainPrefix}
+                                    onChange={(e) => handleDomainPrefixChange(port.id, e.target.value)}
+                                    className="max-w-[200px]"
+                                  />
+                                  <span className="text-sm text-gray-500 whitespace-nowrap">.{domainSuffixText}</span>
                                 </div>
+                              )}
+                            </div>
+                            {port.enableDomain && (
+                              <div className="space-y-2">
                                 <div className="rounded-md bg-gray-100 px-3 py-2 text-xs text-gray-600">
-                                  实际域名：
-                                  <span className="ml-1 font-mono text-gray-900">{previewDomain}</span>
+                                  实际访问域名：
+                                  <a
+                                    href={`http://${previewDomain}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="ml-1 font-mono text-blue-600 hover:text-blue-700 hover:underline"
+                                  >
+                                    {previewDomain}
+                                  </a>
                                 </div>
                                 {!projectIdentifier && (
                                   <p className="text-xs text-amber-600">
@@ -4745,8 +4752,8 @@ export default function ServiceDetailPage() {
                   const isActive = Boolean(matchesActiveById || matchesActiveByFullImage)
                   const isUpdating = Boolean(
                     ongoingDeploymentInfo &&
-                      ((ongoingDeploymentInfo.id && image.id === ongoingDeploymentInfo.id) ||
-                        (ongoingDeploymentFullImage && image.full_image === ongoingDeploymentFullImage))
+                    ((ongoingDeploymentInfo.id && image.id === ongoingDeploymentInfo.id) ||
+                      (ongoingDeploymentFullImage && image.full_image === ongoingDeploymentFullImage))
                   )
                   const metadata =
                     image.metadata && typeof image.metadata === 'object'
