@@ -108,20 +108,27 @@ export async function uploadFileViaKubectl(
     const message = error instanceof Error ? error.message : '上传失败'
     console.error(`[KubectlFS] 上传失败:`, error)
     
-    // 解析错误类型
+    // 如果是权限问题，尝试使用 kubectl exec 方式
+    if (message.includes('Permission denied')) {
+      console.log(`[KubectlFS] kubectl cp 权限不足，尝试使用 kubectl exec 方式`)
+      try {
+        return await uploadFileViaKubectlExec(podInfo, remoteFilePath, content, tempFilePath)
+      } catch (execError) {
+        console.error(`[KubectlFS] kubectl exec 方式也失败:`, execError)
+        throw new FileSystemError(
+          '权限不足，无法写入目标目录',
+          FileSystemErrorCode.EXEC_FAILED,
+          403
+        )
+      }
+    }
+    
+    // 解析其他错误类型
     if (message.includes('No such file or directory')) {
       throw new FileSystemError(
         '目标目录不存在',
         FileSystemErrorCode.NOT_FOUND,
         404
-      )
-    }
-    
-    if (message.includes('Permission denied')) {
-      throw new FileSystemError(
-        '权限不足',
-        FileSystemErrorCode.EXEC_FAILED,
-        403
       )
     }
     
@@ -147,6 +154,95 @@ export async function uploadFileViaKubectl(
     } catch (cleanupError) {
       console.warn(`[KubectlFS] 清理临时文件失败:`, cleanupError)
     }
+  }
+}
+
+/**
+ * 使用 kubectl exec 上传文件（备用方案，用于权限受限的目录）
+ */
+async function uploadFileViaKubectlExec(
+  podInfo: KubectlPodInfo,
+  remoteFilePath: string,
+  content: Buffer,
+  tempFilePath: string
+): Promise<{ path: string }> {
+  const { namespace, podName, containerName } = podInfo
+  
+  const fileSizeKB = (content.length / 1024).toFixed(2)
+  console.log(`[KubectlFS] 使用 kubectl exec 方式上传: ${remoteFilePath}, 大小: ${fileSizeKB}KB`)
+  
+  try {
+    const startTime = Date.now()
+    const { spawn } = await import('child_process')
+    
+    // 使用 kubectl exec 配合 dd 命令写入文件
+    // dd 命令可以从 stdin 读取并写入文件
+    const args = [
+      'exec',
+      '-i', // 保持 stdin 打开
+      podName,
+      '-n',
+      namespace
+    ]
+    
+    if (containerName) {
+      args.push('-c', containerName)
+    }
+    
+    args.push('--', 'dd', `of=${remoteFilePath}`)
+    
+    const kubectlCmd = `kubectl ${args.join(' ')}`
+    console.log(`[KubectlFS] 执行命令: ${kubectlCmd}`)
+    
+    const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const proc = spawn('kubectl', args, {
+        timeout: 30000
+      })
+      
+      let stdout = ''
+      let stderr = ''
+      
+      proc.stdout?.on('data', (data) => {
+        stdout += data.toString()
+      })
+      
+      proc.stderr?.on('data', (data) => {
+        stderr += data.toString()
+      })
+      
+      proc.on('error', (error) => {
+        reject(error)
+      })
+      
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve({ stdout, stderr })
+        } else {
+          reject(new Error(`kubectl exec 退出码: ${code}\n${stderr}`))
+        }
+      })
+      
+      // 将文件内容写入 stdin
+      proc.stdin?.write(content)
+      proc.stdin?.end()
+    })
+    
+    const duration = Date.now() - startTime
+    const { stderr } = result
+    
+    // dd 命令会输出统计信息到 stderr，这是正常的
+    if (stderr && !stderr.includes('records in') && !stderr.includes('records out')) {
+      console.warn(`[KubectlFS] stderr: ${stderr}`)
+    }
+    
+    console.log(`[KubectlFS] kubectl exec 上传完成: ${remoteFilePath}, 耗时: ${duration}ms`)
+    
+    return { path: remoteFilePath }
+    
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'kubectl exec 上传失败'
+    console.error(`[KubectlFS] kubectl exec 上传失败:`, error)
+    throw new Error(message)
   }
 }
 

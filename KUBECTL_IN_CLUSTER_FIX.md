@@ -165,6 +165,35 @@ rules:
    kubectl exec -it deployment/xuanwu-factory-next -n xuanwu-factory -- kubectl get pods -n xuanwu-factory
    ```
 
+## 权限问题处理
+
+### 问题：上传到受限目录（如 /opt）时权限不足
+
+**症状**：
+```
+[KubectlFS] 上传失败: Error: kubectl cp 退出码: 1
+tar: can't open 'file.txt': Permission denied
+```
+
+**原因**：
+- `kubectl cp` 使用 `tar` 命令在目标 Pod 中解压文件
+- 如果目标目录需要特殊权限（如 `/opt`），tar 可能无法写入
+
+**解决方案**：
+代码已实现自动降级机制：
+1. 首先尝试 `kubectl cp`（最快）
+2. 如果遇到权限问题，自动降级到 `kubectl exec` + `dd` 命令
+3. `dd` 命令以 Pod 内用户身份运行，可以写入用户有权限的目录
+
+**日志示例**：
+```
+[KubectlFS] kubectl cp 权限不足，尝试使用 kubectl exec 方式
+[KubectlFS] 使用 kubectl exec 方式上传: /opt/file.txt, 大小: 15.15KB
+[KubectlFS] kubectl exec 上传完成: /opt/file.txt, 耗时: 234ms
+```
+
 ## 总结
 
 通过配置 kubectl 使用 in-cluster 认证，容器内的 kubectl 可以利用 ServiceAccount 的权限访问 K8s API，从而实现高性能的文件上传功能。
+
+当遇到权限受限的目录时，系统会自动降级到 `kubectl exec` 方式，确保上传成功。
