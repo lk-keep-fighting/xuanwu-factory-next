@@ -310,7 +310,21 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
             successCount++
           } catch (fileError) {
             failedFiles.push(file.name)
+            const errorMessage = fileError instanceof Error ? fileError.message : '未知错误'
             console.error(`上传文件 ${file.name} 失败:`, fileError)
+            
+            // 如果是第一个文件失败，显示详细错误
+            if (failedFiles.length === 1 && totalFiles === 1) {
+              toast.dismiss(uploadingToast)
+              toast.error(`上传失败：${errorMessage}`, {
+                duration: 6000 // 延长显示时间
+              })
+              setUploading(false)
+              if (fileInputRef.current) {
+                fileInputRef.current.value = ''
+              }
+              return
+            }
           }
         }
         

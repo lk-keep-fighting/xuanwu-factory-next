@@ -45,6 +45,25 @@ export async function uploadFileViaKubectl(
   const fileSizeKB = (content.length / 1024).toFixed(2)
   console.log(`[KubectlFS] 开始上传: ${remoteFilePath}, 大小: ${fileSizeKB}KB`)
   
+  // 提取目录路径
+  const dirPath = remotePath.endsWith('/') ? remotePath.slice(0, -1) : remotePath
+  
+  // 检查目录是否可写（仅对系统目录进行检查，避免影响性能）
+  const systemDirs = ['/usr', '/opt', '/etc', '/bin', '/sbin', '/lib', '/var', '/sys', '/proc']
+  const isSystemDir = systemDirs.some(dir => dirPath.startsWith(dir))
+  
+  if (isSystemDir) {
+    console.log(`[KubectlFS] 检测到系统目录 ${dirPath}，检查可写性...`)
+    const writeCheck = await checkDirectoryWritable(podInfo, dirPath)
+    if (!writeCheck.writable) {
+      throw new FileSystemError(
+        writeCheck.message || `目录 ${dirPath} 不可写`,
+        FileSystemErrorCode.EXEC_FAILED,
+        403
+      )
+    }
+  }
+  
   try {
     // 1. 写入临时文件
     await fsWriteFile(tempFilePath, content)
@@ -115,8 +134,11 @@ export async function uploadFileViaKubectl(
         return await uploadFileViaKubectlExec(podInfo, remoteFilePath, content, tempFilePath)
       } catch (execError) {
         console.error(`[KubectlFS] kubectl exec 方式也失败:`, execError)
+        
+        // 提供简洁的错误信息和建议
+        const dirPath = remoteFilePath.substring(0, remoteFilePath.lastIndexOf('/'))
         throw new FileSystemError(
-          '权限不足，无法写入目标目录',
+          `目录 ${dirPath} 权限不足。Pod 以非 root 用户运行，请上传到 /app、/tmp 或 /home 目录。`,
           FileSystemErrorCode.EXEC_FAILED,
           403
         )
@@ -154,6 +176,71 @@ export async function uploadFileViaKubectl(
     } catch (cleanupError) {
       console.warn(`[KubectlFS] 清理临时文件失败:`, cleanupError)
     }
+  }
+}
+
+/**
+ * 检测目录是否可写
+ */
+async function checkDirectoryWritable(
+  podInfo: KubectlPodInfo,
+  dirPath: string
+): Promise<{ writable: boolean; message?: string }> {
+  const { namespace, podName, containerName } = podInfo
+  
+  try {
+    const { spawn } = await import('child_process')
+    
+    // 使用 test -w 命令检查目录是否可写
+    const args = [
+      'exec',
+      podName,
+      '-n',
+      namespace
+    ]
+    
+    if (containerName) {
+      args.push('-c', containerName)
+    }
+    
+    args.push('--', 'sh', '-c', `test -w "${dirPath}" && echo "writable" || echo "not-writable"`)
+    
+    const result = await new Promise<string>((resolve, reject) => {
+      const proc = spawn('kubectl', args, {
+        timeout: 5000
+      })
+      
+      let stdout = ''
+      
+      proc.stdout?.on('data', (data) => {
+        stdout += data.toString()
+      })
+      
+      proc.on('error', (error) => {
+        reject(error)
+      })
+      
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve(stdout.trim())
+        } else {
+          reject(new Error(`检测失败，退出码: ${code}`))
+        }
+      })
+    })
+    
+    if (result === 'writable') {
+      return { writable: true }
+    } else {
+      return { 
+        writable: false, 
+        message: `目录 ${dirPath} 不可写。建议使用 /app、/tmp 或 /home 目录。`
+      }
+    }
+  } catch (error) {
+    console.warn(`[KubectlFS] 无法检测目录可写性:`, error)
+    // 检测失败时假设可写，让实际上传操作来处理错误
+    return { writable: true }
   }
 }
 
