@@ -50,7 +50,7 @@ const CurrentDeploymentStatus = memo(function CurrentDeploymentStatus({
           
           {currentDeployment ? (
             <div role="status">
-              <div className="text-xs text-gray-600 mb-2">活跃部署</div>
+              <div className="text-xs text-gray-600 mb-2">当前运行版本</div>
               <div className="flex items-center gap-2 mb-2">
                 <CheckCircle className="h-4 w-4 text-green-600" aria-hidden="true" />
                 <span className="text-sm font-mono">{currentDeployment.display}</span>
@@ -66,7 +66,7 @@ const CurrentDeploymentStatus = memo(function CurrentDeploymentStatus({
             </div>
           ) : (
             <div className="text-sm text-gray-500 text-center py-2">
-              暂无活跃部署
+              暂无运行中的部署
             </div>
           )}
         </div>
@@ -213,6 +213,7 @@ const BuildHistory = memo(function BuildHistory({
   imagesLoading,
   imagesError,
   imagePagination,
+  currentDeployment,
   onRefresh,
   onPageChange,
   onBuild,
@@ -222,6 +223,7 @@ const BuildHistory = memo(function BuildHistory({
   imagesLoading: boolean
   imagesError: string | null
   imagePagination: DeploymentsTabProps['imagePagination']
+  currentDeployment: DeploymentsTabProps['currentDeployment']
   onRefresh: () => Promise<void>
   onPageChange: (page: number) => void
   onBuild: (branch: string, tag: string) => Promise<void>
@@ -300,6 +302,14 @@ const BuildHistory = memo(function BuildHistory({
                 const jenkinsBuildUrl = getJenkinsBuildUrl(image)
                 const isSuccess = image.build_status.toLowerCase() === 'success'
                 const canDeploy = isSuccess && image.id
+                
+                // 判断是否是当前部署使用的镜像
+                const isCurrentlyDeployed = Boolean(
+                  currentDeployment && (
+                    (currentDeployment.id && image.id === currentDeployment.id) ||
+                    (currentDeployment.fullImage && image.full_image === currentDeployment.fullImage)
+                  )
+                )
 
                 return (
                   <div 
@@ -310,9 +320,14 @@ const BuildHistory = memo(function BuildHistory({
                       <div className="flex items-center gap-2 flex-wrap">
                         {getStatusIcon(image.build_status)}
                         {getStatusBadge(image.build_status)}
-                        {image.is_active && (
-                          <Badge variant="outline" className="text-xs">
-                            活跃
+                        {isCurrentlyDeployed && (
+                          <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-300">
+                            当前部署
+                          </Badge>
+                        )}
+                        {image.is_active && !isCurrentlyDeployed && (
+                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-300">
+                            最新构建
                           </Badge>
                         )}
                       </div>
@@ -461,6 +476,7 @@ export const DeploymentsTab = memo(function DeploymentsTab({
             imagesLoading={imagesLoading}
             imagesError={imagesError}
             imagePagination={imagePagination}
+            currentDeployment={currentDeployment}
             onRefresh={onRefreshImages}
             onPageChange={onPageChange}
             onBuild={onBuild}

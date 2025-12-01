@@ -1,0 +1,433 @@
+pipeline {
+  agent any
+  options { timestamps() }
+
+  // 严格使用 Jenkins配置.md 中的字段（参数名与文档一致）
+  parameters {
+    string(name: 'SERVICE_ID', defaultValue: '', description: '平台内部服务 ID（可选）')
+    string(name: 'SERVICE_NAME', defaultValue: '', description: '服务名称（可选）')
+    string(name: 'PROJECT_ID', defaultValue: '', description: '所属项目 ID（可选）')
+    string(name: 'PROJECT_IDENTIFIER', defaultValue: '', description: '项目标识（可选）')
+
+    string(name: 'GIT_REPOSITORY', defaultValue: '', description: 'Git 仓库地址（必填）')
+    string(name: 'GIT_BRANCH', defaultValue: 'main', description: '构建分支')
+    string(name: 'GIT_PATH', defaultValue: '', description: '仓库内相对子路径（可选）')
+    string(name: 'GIT_PROVIDER', defaultValue: '', description: 'Git 提供商标识（可选）')
+
+    string(name: 'DOCKERFILE_PATH', defaultValue: 'Dockerfile', description: 'Dockerfile 路径（可选）')
+    string(name: 'BUILD_TYPE', defaultValue: '', description: '构建方式（dockerfile）（可选）')
+    text(name: 'BUILD_ARGS', defaultValue: '', description: 'JSON 字符串，描述额外的 build-arg（可选）')
+
+    string(name: 'IMAGE_REPOSITORY', defaultValue: '', description: '镜像仓库路径（不含标签）')
+    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: '镜像标签（会自动追加 commit ID）')
+    string(name: 'FULL_IMAGE', defaultValue: '', description: '完整镜像名（{repository}:{tag}，优先）')
+    booleanParam(name: 'APPEND_COMMIT_ID', defaultValue: true, description: '是否在镜像 tag 后追加 commit ID')
+    
+    string(name: 'SERVICE_IMAGE_ID', defaultValue: '', description: '平台侧镜像记录 ID（回调时使用）')
+    string(name: 'BUILD_CALLBACK_URL', defaultValue: '', description: '构建完成后回调平台的接口地址（可选）')
+    string(name: 'BUILD_CALLBACK_SECRET', defaultValue: '', description: '回调接口认证令牌（可选）')
+  }
+
+  environment {
+    GIT_CREDENTIALS = 'jenkins-gitlab'
+    // nexus 凭证与镜像仓库地址（可由运维在 Job 配置中覆盖）
+    NEXUS_CREDENTIALS = 'nexus-admin'
+    NEXUS_IMAGE_REPO = 'nexus.aimstek.cn'
+    
+    // 回调相关配置（可在环境变量中配置默认值）
+    BUILD_CALLBACK_BASE_URL = "${env.BUILD_CALLBACK_BASE_URL ?: 'http://api.xuanwu-factory.dev.aimstek.cn'}"
+    BUILD_START_TIME = "${currentBuild.startTimeInMillis}"
+  }
+
+  stages {
+    stage('Send Building Status') {
+      when { 
+        expression { 
+          return (params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()
+        } 
+      }
+      steps {
+        script {
+          SendBuildCallback('building', 'Build started')
+        }
+      }
+    }
+    
+    stage('Checkout') {
+      steps {
+        script {
+          def repo = params.GIT_REPOSITORY?.trim()
+          def branch = params.GIT_BRANCH?.trim() ?: 'main'
+          env.BUILD_SUBPATH = ''
+          def rawSubpath = params.GIT_PATH?.trim()
+
+          if (!repo) {
+            error 'Missing GIT_REPOSITORY parameter'
+          }
+
+          echo "Checking out ${repo} @ ${branch}"
+          checkout([$class: 'GitSCM', branches: [[name: branch]], userRemoteConfigs: [[url: repo, credentialsId: env.GIT_CREDENTIALS]]])
+
+          // 获取 Git commit ID
+          env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+          env.GIT_COMMIT_FULL = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+          env.GIT_COMMIT_MESSAGE = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+          env.GIT_AUTHOR = sh(script: 'git log -1 --pretty=%an', returnStdout: true).trim()
+          
+          echo "=== Git Commit Info ==="
+          echo "Commit ID (short): ${env.GIT_COMMIT_SHORT}"
+          echo "Commit ID (full): ${env.GIT_COMMIT_FULL}"
+          echo "Commit Message: ${env.GIT_COMMIT_MESSAGE}"
+          echo "Author: ${env.GIT_AUTHOR}"
+          echo "======================="
+
+          if (rawSubpath) {
+            def normalized = rawSubpath.replaceFirst('^/','').replaceFirst('/\$','').trim()
+            if (normalized == '' || normalized == '.' || normalized == './') {
+              echo "Using repository root (ignoring subpath: ${rawSubpath})"
+              env.BUILD_SUBPATH = ''
+            } else {
+              env.BUILD_SUBPATH = normalized
+              echo "Detected subpath: ${env.BUILD_SUBPATH}"
+            }
+          }
+        }
+      }
+    }
+
+    stage('Build Image') {
+      steps {
+        script {
+          echo "=== Build Parameters ==="
+          echo "FULL_IMAGE: ${params.FULL_IMAGE}"
+          echo "IMAGE_REPOSITORY: ${params.IMAGE_REPOSITORY}"
+          echo "IMAGE_TAG: ${params.IMAGE_TAG}"
+          echo "APPEND_COMMIT_ID: ${params.APPEND_COMMIT_ID}"
+          echo "NEXUS_IMAGE_REPO: ${env.NEXUS_IMAGE_REPO}"
+          echo "========================"
+          
+          def image = params.FULL_IMAGE?.trim()
+          def finalTag = params.IMAGE_TAG?.trim() ?: 'latest'
+          
+          // 如果启用了追加 commit ID，则在 tag 后追加
+          if (params.APPEND_COMMIT_ID && env.GIT_COMMIT_SHORT) {
+            // 如果 tag 是 latest，则替换为 commit ID
+            if (finalTag == 'latest') {
+              finalTag = env.GIT_COMMIT_SHORT
+            } else {
+              // 否则追加 commit ID
+              finalTag = "${finalTag}-${env.GIT_COMMIT_SHORT}"
+            }
+            echo "Tag with commit ID: ${finalTag}"
+          }
+          
+          // 如果传入了 FULL_IMAGE，也要检查是否需要追加前缀
+          if (image) {
+            echo "FULL_IMAGE provided: ${image}"
+            def lastColon = image.lastIndexOf(':')
+            def imageNoTag = lastColon > 0 ? image.substring(0, lastColon) : image
+            
+            // 检查是否需要追加 Nexus 前缀
+            if (env.NEXUS_IMAGE_REPO?.trim()) {
+              def firstSlashIdx = imageNoTag.indexOf('/')
+              def firstPart = firstSlashIdx > 0 ? imageNoTag.substring(0, firstSlashIdx) : imageNoTag
+              def hasDomain = firstPart.contains('.') || firstPart.contains(':')
+              
+              if (!hasDomain) {
+                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
+                imageNoTag = "${nexusHost}/${imageNoTag}"
+                echo "Auto-prepended Nexus registry to FULL_IMAGE: ${imageNoTag}"
+              } else {
+                echo "FULL_IMAGE already has registry prefix: ${imageNoTag}"
+              }
+            }
+            image = "${imageNoTag}:${finalTag}"
+            echo "Final FULL_IMAGE: ${image}"
+          } else {
+            // 如果没有 FULL_IMAGE，使用 IMAGE_REPOSITORY
+            def imageRepo = params.IMAGE_REPOSITORY?.trim()
+            if (imageRepo) {
+              echo "IMAGE_REPOSITORY provided: ${imageRepo}"
+              if (env.NEXUS_IMAGE_REPO?.trim()) {
+                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
+                def firstSlashIdx = imageRepo.indexOf('/')
+                def firstPart = firstSlashIdx > 0 ? imageRepo.substring(0, firstSlashIdx) : imageRepo
+                def hasDomain = firstPart.contains('.') || firstPart.contains(':')
+                
+                if (!hasDomain) {
+                  imageRepo = "${nexusHost}/${imageRepo}"
+                  echo "Auto-prepended Nexus registry: ${imageRepo}"
+                } else {
+                  echo "Registry already present in IMAGE_REPOSITORY: ${imageRepo}"
+                }
+              }
+              image = "${imageRepo}:${finalTag}"
+              echo "Constructed FULL_IMAGE: ${image}"
+            } else if (env.NEXUS_IMAGE_REPO?.trim()) {
+              echo "No IMAGE_REPOSITORY, trying to infer from other parameters"
+              def name = params.SERVICE_NAME?.trim() ?: params.PROJECT_IDENTIFIER?.trim()
+              if (!name) {
+                def git = params.GIT_REPOSITORY?.trim()
+                if (git) { name = git.tokenize('/').last().replace('.git','') }
+              }
+              if (!name) { error 'Cannot infer image name: set IMAGE_REPOSITORY or SERVICE_NAME/PROJECT_IDENTIFIER' }
+              image = "${env.NEXUS_IMAGE_REPO}/${name}:${finalTag}"
+              echo "Constructed FULL_IMAGE from NEXUS_IMAGE_REPO: ${image}"
+            } else {
+              error 'IMAGE_REPOSITORY or FULL_IMAGE or NEXUS_IMAGE_REPO is required'
+            }
+          }
+
+          // 解析 BUILD_ARGS
+          def buildArgFlags = ''
+          if (params.BUILD_ARGS?.trim()) {
+            try {
+              def parsed = readJSON text: params.BUILD_ARGS
+              parsed.each { k, v -> if (v != null) { def safe = v.toString().replace("'","'\\\\''"); buildArgFlags += " --build-arg ${k}='${safe}'" } }
+            } catch (e) {
+              echo "BUILD_ARGS invalid JSON, ignoring: ${params.BUILD_ARGS}"
+            }
+          }
+
+          // 添加 Git 信息作为 build args
+          buildArgFlags += " --build-arg GIT_COMMIT=${env.GIT_COMMIT_FULL}"
+          buildArgFlags += " --build-arg GIT_COMMIT_SHORT=${env.GIT_COMMIT_SHORT}"
+          buildArgFlags += " --build-arg GIT_BRANCH=${params.GIT_BRANCH}"
+
+          def subpath = env.BUILD_SUBPATH?.trim()
+          echo "Running docker build with legacy mode"
+          
+          def dockerBuildCmd = "set -eu; DOCKER_BUILDKIT=0 docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
+          
+          if (subpath) {
+            dir(subpath) {
+              sh dockerBuildCmd
+            }
+          } else {
+            sh dockerBuildCmd
+          }
+          env.COMPUTED_IMAGE = image
+          env.COMPUTED_TAG = finalTag
+          echo "=== Final Image Tag ==="
+          echo "COMPUTED_IMAGE: ${env.COMPUTED_IMAGE}"
+          echo "COMPUTED_TAG: ${env.COMPUTED_TAG}"
+          echo "========================"
+        }
+      }
+    }
+
+    stage('Push Image') {
+      when { expression { return env.COMPUTED_IMAGE || params.FULL_IMAGE } }
+      steps {
+        script {
+          def imageToPush = env.COMPUTED_IMAGE ?: params.FULL_IMAGE
+          if (!imageToPush) { error 'No image to push' }
+            def credsId = env.NEXUS_CREDENTIALS
+
+            def lastColon = imageToPush.lastIndexOf(':')
+            def lastSlash = imageToPush.lastIndexOf('/')
+            def tag = 'latest'
+            def imageNoTag = imageToPush
+            if (lastColon > -1 && lastColon > lastSlash) {
+              tag = imageToPush.substring(lastColon + 1)
+              imageNoTag = imageToPush.substring(0, lastColon)
+            }
+            
+            def firstSlashIdx = imageNoTag.indexOf('/')
+            def registryAddr = ''
+            def dockerName = imageNoTag
+            
+            if (firstSlashIdx > 0) {
+              def firstPart = imageNoTag.substring(0, firstSlashIdx)
+              if (firstPart.contains('.') || firstPart.contains(':')) {
+                registryAddr = firstPart
+                dockerName = imageNoTag.substring(firstSlashIdx + 1)
+                echo "Detected registry: ${registryAddr}, image: ${dockerName}:${tag}"
+              } else {
+                registryAddr = ''
+                dockerName = imageNoTag
+                echo "No registry detected, using Docker Hub for image: ${dockerName}:${tag}"
+              }
+            }
+
+            PushDockerImage(registryAddr, credsId, dockerName, tag)
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('success', 'Build and push completed successfully')
+        }
+      }
+    }
+    failure {
+      script {
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('failed', "Build failed: ${currentBuild.result ?: 'FAILURE'}")
+        }
+      }
+    }
+    always {
+      sh 'docker image prune -f || true'
+    }
+  }
+}
+
+def PushDockerImage(registry_addr,registry_credentials_id,docker_image_name,version){
+    withCredentials([usernamePassword(credentialsId: registry_credentials_id, passwordVariable: 'password', usernameVariable: 'username')]) {
+      def fullImageName = registry_addr ? "${registry_addr}/${docker_image_name}" : docker_image_name
+      def fullImageTag = "${fullImageName}:${version}"
+      
+      if (registry_addr) {
+        sh """
+        set -eu
+        echo "\$password" | docker login -u "\$username" --password-stdin "${registry_addr}"
+        docker push "${fullImageTag}"
+        docker rmi "${fullImageTag}"
+        """
+      } else {
+        sh """
+        set -eu
+        echo "\$password" | docker login -u "\$username" --password-stdin
+        docker push "${fullImageTag}"
+        docker rmi "${fullImageTag}"
+        """
+      }
+    }
+}
+
+// 发送构建回调到平台
+def SendBuildCallback(status, message) {
+  def callbackUrl = params.BUILD_CALLBACK_URL?.trim()
+  
+  if (!callbackUrl && env.BUILD_CALLBACK_BASE_URL?.trim() && params.SERVICE_ID?.trim()) {
+    callbackUrl = "${env.BUILD_CALLBACK_BASE_URL.trim()}/api/services/${params.SERVICE_ID.trim()}/build/callback"
+  }
+  
+  if (!callbackUrl) {
+    echo "Skipping callback: no BUILD_CALLBACK_URL or BUILD_CALLBACK_BASE_URL configured"
+    return
+  }
+  
+  def serviceImageId = params.SERVICE_IMAGE_ID?.trim()
+  if (!serviceImageId) {
+    echo "Skipping callback: SERVICE_IMAGE_ID not provided"
+    return
+  }
+  
+  def durationMs = currentBuild.duration ?: (System.currentTimeMillis() - env.BUILD_START_TIME.toLong())
+  
+  def queueId = resolveQueueId()
+  def queueUrl = buildQueueUrl(queueId)
+
+  def callbackData = [
+    service_image_id: serviceImageId,
+    status: status,
+    full_image: env.COMPUTED_IMAGE ?: params.FULL_IMAGE?.trim() ?: '',
+    image_tag: env.COMPUTED_TAG ?: params.IMAGE_TAG?.trim() ?: '',
+    duration_ms: durationMs,
+    build_number: env.BUILD_NUMBER,
+    build_url: env.BUILD_URL,
+    queue_url: queueUrl,
+    result: currentBuild.result ?: (status == 'success' ? 'SUCCESS' : (status == 'failed' ? 'FAILURE' : 'BUILDING')),
+    build_logs: message,
+    metadata: [
+      builder: 'jenkins',
+      node: env.NODE_NAME ?: 'unknown',
+      job_name: env.JOB_NAME,
+      git_branch: params.GIT_BRANCH,
+      git_repository: params.GIT_REPOSITORY,
+      git_commit: env.GIT_COMMIT_FULL ?: '',
+      git_commit_short: env.GIT_COMMIT_SHORT ?: '',
+      git_commit_message: env.GIT_COMMIT_MESSAGE ?: '',
+      git_author: env.GIT_AUTHOR ?: ''
+    ]
+  ]
+  
+  def jsonPayload = groovy.json.JsonOutput.toJson(callbackData)
+  
+  echo "=== Sending Build Callback ==="
+  echo "URL: ${callbackUrl}"
+  echo "Status: ${status}"
+  echo "Image: ${callbackData.full_image}"
+  echo "Tag: ${callbackData.image_tag}"
+  echo "Commit: ${env.GIT_COMMIT_SHORT}"
+  echo "Duration: ${durationMs}ms"
+  echo "=============================="
+  
+  try {
+    def authHeader = ''
+    def secret = params.BUILD_CALLBACK_SECRET?.trim()
+    if (secret) {
+      authHeader = "-H 'X-Build-Callback-Secret: ${secret}'"
+    }
+    
+    def curlCmd = """
+      curl -X POST '${callbackUrl}' \\
+        -H 'Content-Type: application/json' \\
+        ${authHeader} \\
+        -d '${jsonPayload.replace("'", "'\\\\''")}' \\
+        --connect-timeout 10 \\
+        --max-time 30 \\
+        -w '\\nHTTP Status: %{http_code}'
+    """
+    
+    def response = sh(script: curlCmd, returnStdout: true).trim()
+    echo "Callback response: ${response}"
+    
+    if (response.contains('HTTP Status: 2')) {
+      echo "✓ Build callback sent successfully"
+    } else {
+      echo "⚠ Build callback may have failed, check response above"
+    }
+  } catch (Exception e) {
+    echo "✗ Failed to send build callback: ${e.message}"
+  }
+}
+
+def resolveQueueId() {
+  def queueId = ''
+  try {
+    def directId = currentBuild?.queueId
+    if (directId) {
+      queueId = directId.toString()
+    }
+  } catch (MissingPropertyException ignored) {
+  } catch (Exception e) {
+    echo "Unable to read queueId from RunWrapper: ${e.message}"
+  }
+
+  if (queueId) {
+    return queueId
+  }
+
+  def envQueueId = env.BUILD_QUEUE_ID?.trim()
+  if (envQueueId) {
+    return envQueueId
+  }
+
+  echo "Queue id not available from Jenkins; queue_url will be omitted. Set BUILD_QUEUE_ID to override."
+  return ''
+}
+
+def buildQueueUrl(queueId) {
+  def buildUrl = env.BUILD_URL?.trim()
+  if (!buildUrl || !queueId) {
+    return ''
+  }
+
+  try {
+    def sanitized = buildUrl.replace("/execution/node/", "/")
+    if (env.BUILD_NUMBER) {
+      sanitized = sanitized.replace("/${env.BUILD_NUMBER}/", "/queue/item/${queueId}/")
+    }
+    return sanitized
+  } catch (Exception e) {
+    echo "Unable to construct queue URL: ${e.message}"
+    return ''
+  }
+}
