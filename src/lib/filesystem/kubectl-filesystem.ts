@@ -264,8 +264,9 @@ export async function checkKubectlAvailable(): Promise<boolean> {
     console.log('[KubectlFS] kubectl 客户端版本:', JSON.parse(stdout).clientVersion?.gitVersion || 'unknown')
     
     // 检查是否能访问 K8s API（in-cluster 或 kubeconfig）
+    // 使用更轻量的命令来检查连接性
     try {
-      await execAsync('kubectl cluster-info', { timeout: 5000 })
+      await execAsync('kubectl get --raw /healthz', { timeout: 3000 })
       console.log('[KubectlFS] kubectl 可用: ✅ 已连接到集群')
       return true
     } catch (clusterError) {

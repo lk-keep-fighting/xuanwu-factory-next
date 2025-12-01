@@ -91,6 +91,11 @@ RUN chmod +x start-servers.sh
 RUN ln -s .pnpm/ws@8.18.3/node_modules/ws ./node_modules/ws && \
     ln -s .pnpm/@kubernetes+client-node@1.4.0/node_modules/@kubernetes ./node_modules/@kubernetes
 
+# 配置 kubectl 使用 in-cluster 认证
+# 创建 .kube 目录并设置权限
+RUN mkdir -p /home/nextjs/.kube && \
+    chown -R nextjs:nodejs /home/nextjs/.kube
+
 # 切换到非 root 用户
 USER nextjs
 
