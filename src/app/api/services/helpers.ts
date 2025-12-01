@@ -31,6 +31,7 @@ export const SERVICE_MUTABLE_FIELDS = [
   'volume_size',
   'internal_host',
   'internal_connection_url',
+  'mysql_config',
   'image',
   'tag',
   'health_check'

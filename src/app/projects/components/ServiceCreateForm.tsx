@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/shadcn-io/combobox'
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
+import { MySQLConfigForm } from '@/components/services/MySQLConfigForm'
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
 import {
@@ -37,7 +38,8 @@ import {
   SUPPORTED_DATABASE_TYPES,
   DATABASE_TYPE_METADATA,
   type SupportedDatabaseType,
-  type NetworkConfigV2
+  type NetworkConfigV2,
+  type MySQLConfig
 } from '@/types/project'
 import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Database as DatabaseIcon, Plus, Trash2, Loader2, RefreshCcw } from 'lucide-react'
@@ -151,6 +153,13 @@ export default function ServiceCreateForm({
     }
   })
   const [selectedDatabaseType, setSelectedDatabaseType] = useState<SupportedDatabaseType>(DatabaseType.MYSQL)
+  const [mysqlConfig, setMysqlConfig] = useState<MySQLConfig>({
+    lower_case_table_names: 1,
+    max_connections: 200,
+    character_set_server: 'utf8mb4',
+    collation_server: 'utf8mb4_unicode_ci',
+    innodb_buffer_pool_size: '256M'
+  })
   
   // 环境变量管理
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
@@ -629,10 +638,11 @@ export default function ServiceCreateForm({
     }
 
     if (dbType === DatabaseType.MYSQL) {
-      const encodedUser = encodeURIComponent(username || 'root')
+      // JDBC 连接字符串格式
       const encodedPassword = encodeURIComponent(password || '')
-      const encodedDatabase = database ? `/${encodeURIComponent(database)}` : ''
-      return `mysql://${encodedUser}:${encodedPassword}@${normalizedHost}:${normalizedPort}${encodedDatabase}`
+      const encodedDatabase = database ? encodeURIComponent(database) : ''
+      const dbName = encodedDatabase || 'mysql'
+      return `jdbc:mysql://${normalizedHost}:${normalizedPort}/${dbName}?user=${username || 'root'}&password=${encodedPassword}&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8`
     }
 
     const encodedPassword = password ? encodeURIComponent(password) : ''
@@ -689,15 +699,14 @@ export default function ServiceCreateForm({
         const version = (data.version ?? '').trim() || 'latest'
         const volumeSize = (data.volume_size ?? '').trim() || '10Gi'
 
-        const internalHost =
-          sanitizeDomainLabel(`service-${selectedDatabaseType}-${serviceData.name}`) ||
-          `service-${selectedDatabaseType}`
+        // 内部主机名就是服务名
+        const internalHost = serviceData.name
 
         const isMysql = selectedDatabaseType === DatabaseType.MYSQL
         const username = isMysql ? (data.username ?? '').trim() || 'admin' : ''
         const databaseName = isMysql ? (data.database_name ?? '').trim() || serviceData.name : ''
-        const password = (data.password ?? '').trim() || generatePassword()
-        const rootPassword = isMysql ? (data.root_password ?? '').trim() || generatePassword() : undefined
+        const password = (data.password ?? '').trim() || '1234@qwer'
+        const rootPassword = isMysql ? (data.root_password ?? '').trim() || '1234@qwer' : undefined
 
         serviceData.database_type = selectedDatabaseType
         serviceData.version = version
@@ -726,12 +735,13 @@ export default function ServiceCreateForm({
           delete serviceData.root_password
         }
 
+        // 连接字符串使用 root 用户和 root 密码
         const connectionUrl = generateConnectionUrl(
           selectedDatabaseType,
           internalHost,
           port,
-          username,
-          password,
+          'root',  // 使用 root 用户
+          rootPassword || '1234@qwer',  // 使用 root 密码
           databaseName
         )
 
@@ -739,6 +749,11 @@ export default function ServiceCreateForm({
           serviceData.internal_connection_url = connectionUrl
         } else {
           delete serviceData.internal_connection_url
+        }
+
+        // MySQL 配置
+        if (selectedDatabaseType === DatabaseType.MYSQL && mysqlConfig) {
+          serviceData.mysql_config = mysqlConfig
         }
       }
       // 镜像服务 - 基于现有镜像
@@ -1325,9 +1340,12 @@ export default function ServiceCreateForm({
       {/* Database - 内置数据库镜像 */}
       {serviceType === ServiceType.DATABASE && (
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className={`grid w-full ${selectedDatabaseType === DatabaseType.MYSQL ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <TabsTrigger value="general">基本配置</TabsTrigger>
             <TabsTrigger value="advanced">高级配置</TabsTrigger>
+            {selectedDatabaseType === DatabaseType.MYSQL && (
+              <TabsTrigger value="mysql-config">MySQL 配置</TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="general" className="space-y-4 mt-4">
@@ -1354,8 +1372,8 @@ export default function ServiceCreateForm({
               <Input
                 id="version"
                 {...register('version')}
-                placeholder="latest"
-                defaultValue="latest"
+                placeholder={selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "latest"}
+                defaultValue={selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "latest"}
               />
             </div>
 
@@ -1366,7 +1384,7 @@ export default function ServiceCreateForm({
             >
               {selectedDatabaseType === DatabaseType.MYSQL && (
                 <div className="space-y-2">
-                  <Label htmlFor="database_name">数据库名</Label>
+                  <Label htmlFor="database_name">默认数据库名</Label>
                   <Input
                     id="database_name"
                     {...register('database_name')}
@@ -1386,25 +1404,15 @@ export default function ServiceCreateForm({
             </div>
 
             {selectedDatabaseType === DatabaseType.MYSQL ? (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="username">用户名</Label>
-                  <Input
-                    id="username"
-                    {...register('username')}
-                    placeholder="admin"
-                    defaultValue="admin"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">数据库密码</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    {...register('password')}
-                    placeholder="自动生成"
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="root_password">Root 密码</Label>
+                <Input
+                  id="root_password"
+                  type="password"
+                  {...register('root_password')}
+                  placeholder="1234@qwer"
+                  defaultValue="1234@qwer"
+                />
               </div>
             ) : (
               <div className="space-y-2">
@@ -1439,17 +1447,40 @@ export default function ServiceCreateForm({
             </div>
 
             {selectedDatabaseType === DatabaseType.MYSQL && (
-              <div className="space-y-2">
-                <Label htmlFor="root_password">Root 密码</Label>
-                <Input
-                  id="root_password"
-                  type="password"
-                  {...register('root_password')}
-                  placeholder="自动生成"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="username">用户名</Label>
+                  <Input
+                    id="username"
+                    {...register('username')}
+                    placeholder="admin"
+                    defaultValue="admin"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">数据库密码</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    {...register('password')}
+                    placeholder="1234@qwer"
+                    defaultValue="1234@qwer"
+                  />
+                </div>
               </div>
             )}
           </TabsContent>
+
+          {/* MySQL 配置标签页 */}
+          {selectedDatabaseType === DatabaseType.MYSQL && (
+            <TabsContent value="mysql-config" className="space-y-4 mt-4">
+              <MySQLConfigForm
+                value={mysqlConfig}
+                onChange={setMysqlConfig}
+                showInitWarning={true}
+              />
+            </TabsContent>
+          )}
         </Tabs>
       )}
 

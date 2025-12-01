@@ -94,19 +94,20 @@ class K8sService {
       const kubeconfigData = process.env.KUBECONFIG_DATA?.trim()
       const apiServer = process.env.K8S_API_SERVER?.trim()
       const bearerToken = process.env.K8S_BEARER_TOKEN?.trim()
+      const isVerbose = process.env.K8S_VERBOSE === 'true'
 
       if (kubeconfigData) {
         const configValue = this.decodeConfigInput(kubeconfigData)
-        console.log('[K8s] 使用 KUBECONFIG_DATA 环境变量加载配置')
+        if (isVerbose) console.log('[K8s] 使用 KUBECONFIG_DATA 环境变量加载配置')
         this.kc.loadFromString(configValue)
       } else if (apiServer && bearerToken) {
-        console.log('[K8s] 使用 K8S_API_SERVER + K8S_BEARER_TOKEN 环境变量加载配置')
+        if (isVerbose) console.log('[K8s] 使用 K8S_API_SERVER + K8S_BEARER_TOKEN 环境变量加载配置')
         this.loadFromTokenEnv()
       } else if (process.env.KUBECONFIG) {
-        console.log('[K8s] 使用 KUBECONFIG 路径加载配置:', process.env.KUBECONFIG)
+        if (isVerbose) console.log('[K8s] 使用 KUBECONFIG 路径加载配置:', process.env.KUBECONFIG)
         this.kc.loadFromFile(process.env.KUBECONFIG)
       } else {
-        console.log('[K8s] 使用默认配置加载 (~/.kube/config)')
+        if (isVerbose) console.log('[K8s] 使用默认配置加载 (~/.kube/config)')
         this.kc.loadFromDefault()
       }
 
@@ -114,11 +115,13 @@ class K8sService {
       const currentContext = this.kc.getCurrentContext()
 
       if (currentCluster) {
-        console.log('[K8s] ✅ 配置加载成功')
-        console.log('[K8s]    集群:', currentCluster.name)
-        console.log('[K8s]    API Server:', currentCluster.server)
-        console.log('[K8s]    上下文:', currentContext)
-        console.log('[K8s]    TLS验证:', currentCluster.skipTLSVerify ? '已禁用 ⚠️' : '已启用')
+        if (isVerbose) {
+          console.log('[K8s] ✅ 配置加载成功')
+          console.log('[K8s]    集群:', currentCluster.name)
+          console.log('[K8s]    API Server:', currentCluster.server)
+          console.log('[K8s]    上下文:', currentContext)
+          console.log('[K8s]    TLS验证:', currentCluster.skipTLSVerify ? '已禁用 ⚠️' : '已启用')
+        }
       } else {
         console.warn('[K8s] ⚠️  配置加载但未找到当前集群')
       }
@@ -139,6 +142,7 @@ class K8sService {
    */
   private configureHttpsAgent(): void {
     const currentCluster = this.kc.getCurrentCluster()
+    const isVerbose = process.env.K8S_VERBOSE === 'true'
     
     // 如果集群配置了 skipTLSVerify 或没有提供 CA 证书，则禁用证书验证
     if (currentCluster?.skipTLSVerify || !currentCluster?.caData) {
@@ -152,9 +156,9 @@ class K8sService {
         httpsAgent
       }
       
-      console.log('[K8s] 🔓 已配置 HTTPS Agent：禁用证书验证（适用于自签名证书）')
+      if (isVerbose) console.log('[K8s] 🔓 已配置 HTTPS Agent：禁用证书验证（适用于自签名证书）')
     } else {
-      console.log('[K8s] 🔒 使用默认 HTTPS Agent：启用证书验证')
+      if (isVerbose) console.log('[K8s] 🔒 使用默认 HTTPS Agent：启用证书验证')
     }
   }
 
@@ -421,6 +425,121 @@ class K8sService {
     return DATABASE_DATA_PATHS[rawType as SupportedDatabaseType] ?? null
   }
 
+  /**
+   * 创建 MySQL ConfigMap
+   */
+  private async createMySQLConfigMap(
+    service: DatabaseService,
+    namespace: string
+  ): Promise<void> {
+    const serviceName = service.name?.trim()
+    if (!serviceName || !service.mysql_config) {
+      console.log('[K8s][MySQL] Skipping ConfigMap creation:', {
+        serviceName,
+        hasMysqlConfig: !!service.mysql_config
+      })
+      return
+    }
+
+    console.log('[K8s][MySQL] Creating ConfigMap with config:', service.mysql_config)
+    const { generateMyCnfContent } = await import('@/lib/mysql-config-templates')
+    const myCnfContent = generateMyCnfContent(service.mysql_config)
+    console.log('[K8s][MySQL] Generated my.cnf content:', myCnfContent)
+
+    const configMap: k8s.V1ConfigMap = {
+      metadata: {
+        name: `${serviceName}-config`,
+        namespace,
+        labels: {
+          app: serviceName,
+          'managed-by': 'xuanwu-platform',
+          'config-type': 'mysql'
+        }
+      },
+      data: {
+        'my.cnf': myCnfContent
+      }
+    }
+
+    try {
+      await this.coreApi.createNamespacedConfigMap({ namespace, body: configMap })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) === 409) {
+        // ConfigMap 已存在，更新它
+        const existing = await this.coreApi.readNamespacedConfigMap({
+          name: `${serviceName}-config`,
+          namespace
+        })
+        const resourceVersion = existing.metadata?.resourceVersion
+        const updatedConfigMap: k8s.V1ConfigMap = {
+          ...configMap,
+          metadata: {
+            ...configMap.metadata,
+            resourceVersion
+          }
+        }
+        await this.coreApi.replaceNamespacedConfigMap({
+          name: `${serviceName}-config`,
+          namespace,
+          body: updatedConfigMap
+        })
+      } else {
+        throw error
+      }
+    }
+  }
+
+  /**
+   * 更新 MySQL ConfigMap
+   */
+  async updateMySQLConfigMap(
+    service: DatabaseService,
+    namespace: string
+  ): Promise<void> {
+    await this.createMySQLConfigMap(service, namespace)
+  }
+
+  /**
+   * 重启 StatefulSet（通过添加注解触发滚动更新）
+   */
+  async restartStatefulSet(serviceName: string, namespace: string): Promise<void> {
+    const targetNamespace = namespace?.trim() || 'default'
+    
+    try {
+      const statefulSet = await this.appsApi.readNamespacedStatefulSet({
+        name: serviceName,
+        namespace: targetNamespace
+      })
+
+      const now = new Date().toISOString()
+      const updatedStatefulSet: k8s.V1StatefulSet = {
+        ...statefulSet,
+        spec: {
+          ...statefulSet.spec,
+          template: {
+            ...statefulSet.spec?.template,
+            metadata: {
+              ...statefulSet.spec?.template?.metadata,
+              annotations: {
+                ...statefulSet.spec?.template?.metadata?.annotations,
+                'kubectl.kubernetes.io/restartedAt': now
+              }
+            }
+          }
+        }
+      }
+
+      await this.appsApi.replaceNamespacedStatefulSet({
+        name: serviceName,
+        namespace: targetNamespace,
+        body: updatedStatefulSet
+      })
+    } catch (error: unknown) {
+      console.error('Failed to restart StatefulSet:', error)
+      throw new Error(`重启 StatefulSet 失败: ${this.getErrorMessage(error)}`)
+    }
+  }
+
   private async deployDatabaseStatefulSet(
     service: DatabaseService,
     namespace: string,
@@ -430,6 +549,11 @@ class K8sService {
 
     if (!serviceName) {
       throw new Error('数据库服务名称缺失，无法部署。')
+    }
+
+    // 为 MySQL 创建 ConfigMap
+    if (service.database_type === 'mysql' && service.mysql_config) {
+      await this.createMySQLConfigMap(service, namespace)
     }
 
     const containerPorts = networkConfig
@@ -491,6 +615,23 @@ class K8sService {
       }
     }
 
+    // 为 MySQL 挂载配置文件
+    const volumes = this.buildVolumes(service.volumes) || []
+    if (service.database_type === 'mysql' && service.mysql_config) {
+      volumes.push({
+        name: 'mysql-config',
+        configMap: {
+          name: `${serviceName}-config`
+        }
+      })
+      
+      volumeMounts.push({
+        name: 'mysql-config',
+        mountPath: '/etc/mysql/conf.d/my.cnf',
+        subPath: 'my.cnf'
+      })
+    }
+
     const statefulSet: k8s.V1StatefulSet = {
       metadata: {
         name: serviceName,
@@ -523,7 +664,7 @@ class K8sService {
                 volumeMounts: volumeMounts.length ? volumeMounts : undefined
               }
             ],
-            volumes: this.buildVolumes(service.volumes)
+            volumes: volumes.length ? volumes : undefined
           }
         },
         ...(volumeClaimTemplates ? { volumeClaimTemplates } : {})
@@ -2400,7 +2541,9 @@ class K8sService {
     console.log(`[K8s] 🚀 createProjectPVC called for namespace: ${normalized}`)
 
     if (!normalized || normalized === 'default') {
-      console.log('[K8s] Skipping PVC creation for default/empty namespace')
+      if (process.env.K8S_VERBOSE === 'true') {
+        console.log('[K8s] Skipping PVC creation for default/empty namespace')
+      }
       return
     }
 

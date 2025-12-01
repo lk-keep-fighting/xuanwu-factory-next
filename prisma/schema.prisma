@@ -54,6 +54,7 @@ model Service {
   volume_size             String?
   internal_host           String?
   internal_connection_url String?
+  mysql_config            Json?
   image                   String?
   tag                     String?
   health_check            Json?

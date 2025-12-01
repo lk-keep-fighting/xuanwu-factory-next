@@ -9,6 +9,8 @@ import { GeneralSection } from './configuration/GeneralSection'
 import { EnvironmentSection } from './configuration/EnvironmentSection'
 import { VolumesSection } from './configuration/VolumesSection'
 import { NetworkSection } from './configuration/NetworkSection'
+import { DatabaseConfigSection } from './configuration/DatabaseConfigSection'
+import { ServiceType, DatabaseType, type DatabaseService } from '@/types/project'
 
 /**
  * Configuration Tab Component
@@ -227,6 +229,25 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
           />
         </CardContent>
       </Card>
+
+      {/* Database Configuration Section - Only for MySQL databases */}
+      {service.type === ServiceType.DATABASE && 
+       (service as any).database_type === DatabaseType.MYSQL && (
+        <Card>
+          <CardHeader>
+            <CardTitle>数据库配置</CardTitle>
+          </CardHeader>
+          <CardContent role="region" aria-label="数据库配置">
+            <DatabaseConfigSection
+              service={service as unknown as DatabaseService}
+              onUpdate={() => {
+                // Trigger a refresh of the service data
+                window.location.reload()
+              }}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Resources Section - Placeholder */}
       <Card>

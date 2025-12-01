@@ -158,8 +158,8 @@ export async function POST(
       return NextResponse.json({ error: '请先构建镜像后再部署。' }, { status: 400 })
     }
 
-    // 只有 Application 类型需要 building 状态，Database 和 Image 直接部署
-    const initialDeployStatus = isApplicationService ? 'building' : 'running'
+    // Application 类型需要 building 状态，Database 和 Image 使用 deploying 状态
+    const initialDeployStatus = isApplicationService ? 'building' : 'deploying'
 
     try {
       await prisma.service.update({
@@ -198,10 +198,44 @@ export async function POST(
     try {
       await k8sService.deployService(typedService, namespace)
 
-      await prisma.service.update({
-        where: { id },
-        data: { status: 'running' }
-      })
+      // 对于 Database 和 Image 类型，等待 Pod 启动后再更新状态
+      if (!isApplicationService) {
+        const serviceName = serviceWithoutProject.name?.trim()
+        if (serviceName) {
+          // 等待 5 秒让 Pod 有时间启动
+          await wait(5000)
+          
+          try {
+            const status = await k8sService.getServiceStatus(serviceName, namespace)
+            const finalStatus = (status.status === 'Running' && status.readyReplicas > 0) 
+              ? 'running' 
+              : 'deploying'
+            
+            await prisma.service.update({
+              where: { id },
+              data: { status: finalStatus }
+            })
+          } catch (statusError) {
+            console.error('[Services][Deploy] 检查最终状态失败:', statusError)
+            // 保持 deploying 状态，让前端继续轮询
+            await prisma.service.update({
+              where: { id },
+              data: { status: 'deploying' }
+            })
+          }
+        } else {
+          await prisma.service.update({
+            where: { id },
+            data: { status: 'deploying' }
+          })
+        }
+      } else {
+        // Application 类型直接设为 running
+        await prisma.service.update({
+          where: { id },
+          data: { status: 'running' }
+        })
+      }
 
       if ((typedService.type ?? '').toLowerCase() === ServiceType.DATABASE) {
         const shouldEnsureNodePort = (() => {

@@ -2,6 +2,10 @@
 
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { Copy, Check } from 'lucide-react'
+import { useState } from 'react'
+import { toast } from 'sonner'
 import { ServiceType, DatabaseType, DATABASE_TYPE_METADATA, type SupportedDatabaseType } from '@/types/project'
 import type { Service, DatabaseService, Project } from '@/types/project'
 
@@ -11,6 +15,17 @@ interface GeneralSectionProps {
   isEditing: boolean
   editedService: Partial<Service>
   onUpdateService: (updates: Partial<Service>) => void
+}
+
+/**
+ * 判断服务是否已部署
+ * 已部署的服务包括：运行中、构建中、已停止
+ * 只有 pending 和 error 状态的服务可以修改初始化配置
+ */
+const isServiceDeployed = (service: Service): boolean => {
+  return service.status === 'running' || 
+         service.status === 'building' ||
+         service.status === 'stopped'
 }
 
 /**
@@ -29,6 +44,7 @@ export function GeneralSection({
   onUpdateService
 }: GeneralSectionProps) {
   const serviceType = service.type
+  const isDeployed = isServiceDeployed(service)
 
   // Application Service Configuration
   if (serviceType === ServiceType.APPLICATION) {
@@ -217,6 +233,19 @@ export function GeneralSection({
         {isMysqlDatabase && (
           <div className="space-y-4">
             <h3 className="text-sm font-medium text-gray-900">MySQL 配置</h3>
+            
+            {/* 部署后不可修改的提示 */}
+            {isDeployed && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="flex items-start gap-2">
+                  <div className="text-sm text-amber-800">
+                    ⚠️ <strong>部署后不可修改：</strong>数据库名、Root 密码、用户名和密码在初始化后无法通过界面修改。
+                    如需修改，请在 MySQL 内部使用 SQL 命令操作。
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="database-name">数据库名</Label>
@@ -224,35 +253,14 @@ export function GeneralSection({
                   id="database-name"
                   value={databaseNameInputValue}
                   onChange={(e) => onUpdateService({ database_name: e.target.value })}
-                  disabled={!isEditing}
+                  disabled={!isEditing || isDeployed}
+                  className={isDeployed ? 'bg-gray-100 cursor-not-allowed' : ''}
                   placeholder="mydb"
                 />
-                <p className="text-xs text-gray-500">初始创建的数据库名称</p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="database-username">用户名</Label>
-                <Input
-                  id="database-username"
-                  value={databaseUsernameValue}
-                  onChange={(e) => onUpdateService({ username: e.target.value })}
-                  disabled={!isEditing}
-                  placeholder="admin"
-                />
-                <p className="text-xs text-gray-500">数据库用户名</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="database-password">用户密码</Label>
-                <Input
-                  id="database-password"
-                  type="password"
-                  value={databasePasswordValue}
-                  onChange={(e) => onUpdateService({ password: e.target.value })}
-                  disabled={!isEditing}
-                  placeholder="••••••••"
-                />
-                <p className="text-xs text-gray-500">数据库用户密码</p>
+                <p className="text-xs text-gray-500">
+                  初始创建的数据库名称
+                  {isDeployed && <span className="text-amber-600"> （部署后不可修改）</span>}
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="database-root-password">Root 密码</Label>
@@ -261,10 +269,45 @@ export function GeneralSection({
                   type="password"
                   value={databaseRootPasswordValue}
                   onChange={(e) => onUpdateService({ root_password: e.target.value })}
-                  disabled={!isEditing}
+                  disabled={!isEditing || isDeployed}
+                  className={isDeployed ? 'bg-gray-100 cursor-not-allowed' : ''}
                   placeholder="••••••••"
                 />
-                <p className="text-xs text-gray-500">MySQL root 用户密码</p>
+                <p className="text-xs text-gray-500">
+                  MySQL root 用户密码
+                  {isDeployed && <span className="text-amber-600"> （部署后不可修改）</span>}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="database-username">自定义用户名</Label>
+                <Input
+                  id="database-username"
+                  value={databaseUsernameValue}
+                  onChange={(e) => onUpdateService({ username: e.target.value })}
+                  disabled={!isEditing || isDeployed}
+                  className={isDeployed ? 'bg-gray-100 cursor-not-allowed' : ''}
+                  placeholder="admin"
+                />
+                {isDeployed && (
+                  <p className="text-xs text-amber-600">部署后不可修改</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="database-password">自定义用户密码</Label>
+                <Input
+                  id="database-password"
+                  type="password"
+                  value={databasePasswordValue}
+                  onChange={(e) => onUpdateService({ password: e.target.value })}
+                  disabled={!isEditing || isDeployed}
+                  className={isDeployed ? 'bg-gray-100 cursor-not-allowed' : ''}
+                  placeholder="••••••••"
+                />
+                {isDeployed && (
+                  <p className="text-xs text-amber-600">部署后不可修改</p>
+                )}
               </div>
             </div>
           </div>
@@ -309,38 +352,19 @@ export function GeneralSection({
         <div className="space-y-4">
           <h3 className="text-sm font-medium text-gray-900">连接信息</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="internal-host">内部主机名</Label>
-              <Input
-                id="internal-host"
-                value={dbService?.internal_host || '-'}
-                disabled
-                className="bg-gray-50"
-              />
-              <p className="text-xs text-gray-500">集群内部访问地址</p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="port">端口</Label>
-              <Input
-                id="port"
-                value={dbService?.port || '-'}
-                disabled
-                className="bg-gray-50"
-              />
-              <p className="text-xs text-gray-500">数据库服务端口</p>
-            </div>
+            <CopyableField
+              label="内部主机名"
+              value={dbService?.internal_host || '-'}
+              description="集群内部访问地址"
+            />
+            <CopyableField
+              label="端口"
+              value={dbService?.port?.toString() || '-'}
+              description="数据库服务端口"
+            />
           </div>
           {dbService?.internal_connection_url && (
-            <div className="space-y-2">
-              <Label htmlFor="connection-url">连接字符串</Label>
-              <Input
-                id="connection-url"
-                value={dbService.internal_connection_url}
-                disabled
-                className="bg-gray-50 font-mono text-xs"
-              />
-              <p className="text-xs text-gray-500">内部连接 URL（自动生成）</p>
-            </div>
+            <ConnectionUrlDisplay url={dbService.internal_connection_url} />
           )}
         </div>
       </div>
@@ -421,6 +445,121 @@ export function GeneralSection({
   return (
     <div className="text-sm text-gray-500">
       未知的服务类型：{serviceType}
+    </div>
+  )
+}
+
+/**
+ * 可复制字段组件
+ * 用于显示只读信息，支持一键复制
+ */
+function CopyableField({ 
+  label, 
+  value, 
+  description 
+}: { 
+  label: string
+  value: string
+  description?: string 
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    if (value === '-') return
+    
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      toast.success('已复制到剪贴板')
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      toast.error('复制失败')
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex gap-2">
+        <Input
+          value={value}
+          readOnly
+          className="bg-gray-50 flex-1"
+        />
+        {value !== '-' && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleCopy}
+            className="shrink-0 px-2"
+          >
+            {copied ? (
+              <Check className="h-4 w-4 text-green-600" />
+            ) : (
+              <Copy className="h-4 w-4" />
+            )}
+          </Button>
+        )}
+      </div>
+      {description && (
+        <p className="text-xs text-gray-500">{description}</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 连接 URL 显示组件
+ * 使用 Input 组件展示，带复制按钮
+ */
+function ConnectionUrlDisplay({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      toast.success('已复制到剪贴板')
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      toast.error('复制失败')
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="connection-url">连接字符串</Label>
+      <div className="flex gap-2">
+        <Input
+          id="connection-url"
+          value={url}
+          readOnly
+          className="bg-gray-50 font-mono text-xs flex-1"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleCopy}
+          className="shrink-0"
+        >
+          {copied ? (
+            <>
+              <Check className="h-4 w-4 mr-1" />
+              已复制
+            </>
+          ) : (
+            <>
+              <Copy className="h-4 w-4 mr-1" />
+              复制
+            </>
+          )}
+        </Button>
+      </div>
+      <p className="text-xs text-gray-500">
+        内部连接 URL（自动生成），点击复制按钮获取完整字符串
+      </p>
     </div>
   )
 }

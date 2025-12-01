@@ -141,6 +141,21 @@ export interface ApplicationService extends BaseService {
   built_image?: string        // 构建后的镜像名称
 }
 
+// MySQL 配置接口
+export interface MySQLConfig {
+  lower_case_table_names?: 0 | 1 | 2
+  max_connections?: number
+  innodb_buffer_pool_size?: string
+  character_set_server?: string
+  collation_server?: string
+  innodb_log_file_size?: string
+  innodb_flush_log_at_trx_commit?: 0 | 1 | 2
+  innodb_flush_method?: string
+  thread_cache_size?: number
+  query_cache_size?: string
+  custom_config?: string
+}
+
 // Database 服务 - 内置数据库镜像
 export interface DatabaseService extends BaseService {
   type: ServiceType.DATABASE
@@ -161,6 +176,9 @@ export interface DatabaseService extends BaseService {
   
   // 持久化
   volume_size?: string       // 存储大小，如 10Gi
+  
+  // MySQL 配置（仅 MySQL 类型）
+  mysql_config?: MySQLConfig
   
   // 内部连接信息（自动生成）
   internal_host?: string     // 内部主机名
