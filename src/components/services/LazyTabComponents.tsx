@@ -48,9 +48,27 @@ export const LazyDeploymentsTab = dynamic(
   }
 )
 
+export const LazyEnvironmentTab = dynamic(
+  () => import('./EnvironmentTab').then(mod => ({ default: mod.EnvironmentTab })),
+  {
+    loading: () => <TabLoadingFallback />,
+    ssr: false
+  }
+)
+
+export const LazyNetworkTab = dynamic(
+  () => import('./NetworkTab').then(mod => ({ default: mod.NetworkTab })),
+  {
+    loading: () => <TabLoadingFallback />,
+    ssr: false
+  }
+)
+
 /**
  * Re-export types for convenience
  */
 export type { OverviewTabProps } from '@/types/service-tabs'
 export type { ConfigurationTabProps } from '@/types/service-tabs'
 export type { DeploymentsTabProps } from '@/types/service-tabs'
+export type { EnvironmentTabProps } from './EnvironmentTab'
+export type { NetworkTabProps } from './NetworkTab'

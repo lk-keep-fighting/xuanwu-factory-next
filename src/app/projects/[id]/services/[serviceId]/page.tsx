@@ -27,7 +27,7 @@ import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { ServiceFileManager } from '@/components/services/ServiceFileManager'
 import { ResourceUsageChart } from '@/components/services/ResourceUsageChart'
-import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab } from '@/components/services/LazyTabComponents'
+import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyNetworkTab } from '@/components/services/LazyTabComponents'
 import { useMetricsHistory } from '@/hooks/useMetricsHistory'
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
@@ -2554,10 +2554,50 @@ export default function ServiceDetailPage() {
           </TabsContent>
 
           {/* 环境变量 */}
-
-          {/* 卷挂载 */}
+          <TabsContent value="environment" className="space-y-6">
+            <LazyEnvironmentTab
+              isEditing={isEditing}
+              envVars={envVars}
+              onStartEdit={() => setIsEditing(true)}
+              onSave={handleSave}
+              onCancel={() => {
+                setIsEditing(false)
+                setEditedService(service)
+              }}
+              onUpdateEnvVars={setEnvVars}
+            />
+          </TabsContent>
 
           {/* 网络配置 */}
+          <TabsContent value="network" className="space-y-6">
+            <LazyNetworkTab
+              isEditing={isEditing}
+              networkServiceType={networkServiceType}
+              networkPorts={networkPorts}
+              headlessServiceEnabled={headlessServiceEnabled}
+              project={project}
+              hasPendingNetworkDeploy={hasPendingNetworkDeploy}
+              onStartEdit={() => setIsEditing(true)}
+              onSave={handleSave}
+              onCancel={() => {
+                setIsEditing(false)
+                setEditedService(service)
+              }}
+              onUpdateNetwork={(config) => {
+                setNetworkServiceType(config.serviceType)
+                setNetworkPorts(config.ports.map(p => ({
+                  id: generatePortId(),
+                  containerPort: String(p.containerPort),
+                  servicePort: String(p.servicePort ?? p.containerPort),
+                  protocol: p.protocol ?? 'TCP',
+                  nodePort: p.nodePort ? String(p.nodePort) : '',
+                  enableDomain: p.domain?.enabled ?? false,
+                  domainPrefix: p.domain?.prefix ?? ''
+                })))
+                setHeadlessServiceEnabled(config.headlessServiceEnabled)
+              }}
+            />
+          </TabsContent>
 
           {/* YAML 配置预览 */}
           <TabsContent value="yaml" className="space-y-6">

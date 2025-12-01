@@ -11,7 +11,9 @@ import {
   Rocket, 
   Terminal, 
   Folder, 
-  FileCode 
+  FileCode,
+  Globe,
+  Key
 } from 'lucide-react'
 import { TAB_VALUES, type TabValue, type TabConfig } from '@/types/service-tabs'
 import { ServiceType, type Service } from '@/types/project'
@@ -19,9 +21,11 @@ import { ServiceType, type Service } from '@/types/project'
 /**
  * Complete tab configuration with visibility rules
  * 
- * All service types (Application, Database, Image) show the same 6 common tabs:
+ * All service types (Application, Database, Image) show common tabs:
  * - Overview: Service status, resource metrics, recent events, and deployment status
- * - Configuration: General settings, environment variables, volumes, network, and resources
+ * - Configuration: General settings, volumes, and resources
+ * - Environment: Environment variables configuration
+ * - Network: Network and domain configuration
  * - Deployments: Deployment history, build history (for Application), and image management
  * - Logs: Real-time log viewing with refresh controls
  * - Files: File browser and manager with upload/download capabilities
@@ -38,8 +42,20 @@ export const TAB_CONFIGS: TabConfig[] = [
   },
   {
     value: TAB_VALUES.CONFIGURATION,
-    label: '配置',
+    label: '服务配置',
     icon: Settings,
+    visible: () => true // Always visible for all service types
+  },
+  {
+    value: TAB_VALUES.ENVIRONMENT,
+    label: '环境变量',
+    icon: Key,
+    visible: () => true // Always visible for all service types
+  },
+  {
+    value: TAB_VALUES.NETWORK,
+    label: '网络',
+    icon: Globe,
     visible: () => true // Always visible for all service types
   },
   {
@@ -117,14 +133,14 @@ export function getVisibleTabValues(service: Service | null): TabValue[] {
 }
 
 /**
- * Validate that all service types show the 6 common tabs
+ * Validate that all service types show the 8 common tabs
  * This is a utility function for testing/validation
  * 
- * @returns true if all service types show exactly 6 tabs
+ * @returns true if all service types show exactly 8 tabs
  */
 export function validateCommonTabsForAllTypes(): boolean {
   const serviceTypes = [ServiceType.APPLICATION, ServiceType.DATABASE, ServiceType.IMAGE]
-  const expectedTabCount = 6
+  const expectedTabCount = 8
   
   for (const serviceType of serviceTypes) {
     const mockService: Service = {

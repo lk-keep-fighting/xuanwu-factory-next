@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useCallback, useMemo } from 'react'
-import { RefreshCw, Rocket, Clock, CheckCircle, XCircle, AlertCircle, Box, GitBranch, Calendar, Timer, ChevronLeft, ChevronRight } from 'lucide-react'
+import { RefreshCw, Rocket, Clock, CheckCircle, XCircle, AlertCircle, Box, GitBranch, Calendar, Timer, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -215,7 +215,8 @@ const BuildHistory = memo(function BuildHistory({
   imagePagination,
   onRefresh,
   onPageChange,
-  onBuild
+  onBuild,
+  onDeploy
 }: {
   serviceImages: DeploymentsTabProps['serviceImages']
   imagesLoading: boolean
@@ -224,6 +225,7 @@ const BuildHistory = memo(function BuildHistory({
   onRefresh: () => Promise<void>
   onPageChange: (page: number) => void
   onBuild: (branch: string, tag: string) => Promise<void>
+  onDeploy: (imageId?: string) => Promise<void>
 }) {
   const getStatusIcon = (status: string) => {
     const normalizedStatus = status.toLowerCase()
@@ -245,6 +247,15 @@ const BuildHistory = memo(function BuildHistory({
       return <Badge variant="secondary">{status}</Badge>
     }
     return <Badge className={meta.badgeClass}>{meta.label}</Badge>
+  }
+
+  // Extract Jenkins build URL from metadata
+  const getJenkinsBuildUrl = (image: DeploymentsTabProps['serviceImages'][0]): string | null => {
+    if (!image.metadata || typeof image.metadata !== 'object') {
+      return null
+    }
+    const buildUrl = (image.metadata as Record<string, unknown>).buildUrl
+    return typeof buildUrl === 'string' ? buildUrl : null
   }
 
   return (
@@ -285,6 +296,10 @@ const BuildHistory = memo(function BuildHistory({
                              'branch' in image.metadata
                   ? String(image.metadata.branch)
                   : null
+                
+                const jenkinsBuildUrl = getJenkinsBuildUrl(image)
+                const isSuccess = image.build_status.toLowerCase() === 'success'
+                const canDeploy = isSuccess && image.id
 
                 return (
                   <div 
@@ -292,7 +307,7 @@ const BuildHistory = memo(function BuildHistory({
                     className="border border-gray-200 rounded-lg p-3 hover:bg-gray-50 transition-colors"
                   >
                     <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {getStatusIcon(image.build_status)}
                         {getStatusBadge(image.build_status)}
                         {image.is_active && (
@@ -301,11 +316,37 @@ const BuildHistory = memo(function BuildHistory({
                           </Badge>
                         )}
                       </div>
-                      {image.build_number && (
-                        <div className="text-xs text-gray-500">
-                          #{image.build_number}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {image.build_number && (
+                          <div className="text-xs text-gray-500">
+                            #{image.build_number}
+                          </div>
+                        )}
+                        {jenkinsBuildUrl && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs gap-1"
+                            onClick={() => window.open(jenkinsBuildUrl, '_blank')}
+                            title="查看 Jenkins 构建任务"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            Jenkins
+                          </Button>
+                        )}
+                        {canDeploy && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="h-6 px-2 text-xs gap-1"
+                            onClick={() => onDeploy(image.id)}
+                            title="部署此镜像"
+                          >
+                            <Rocket className="h-3 w-3" />
+                            部署
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     
                     <div className="space-y-1">
@@ -366,112 +407,7 @@ const BuildHistory = memo(function BuildHistory({
   )
 })
 
-/**
- * ImageVersionManagement - Shows image version management for Application services
- * Memoized to prevent unnecessary re-renders
- */
-const ImageVersionManagement = memo(function ImageVersionManagement({
-  service,
-  serviceImages,
-  currentDeployment,
-  onActivateImage,
-  onDeploy
-}: {
-  service: DeploymentsTabProps['service']
-  serviceImages: DeploymentsTabProps['serviceImages']
-  currentDeployment: DeploymentsTabProps['currentDeployment']
-  onActivateImage: (imageId: string) => Promise<void>
-  onDeploy: (imageId?: string) => Promise<void>
-}) {
-  // Filter to only show successful images
-  const successfulImages = serviceImages.filter(
-    (img) => img.build_status.toLowerCase() === 'success'
-  )
 
-  const currentImageId = currentDeployment?.id
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">镜像版本管理</CardTitle>
-        <CardDescription className="text-xs">
-          选择并激活镜像版本
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {successfulImages.length === 0 ? (
-          <div className="text-sm text-gray-500 text-center py-4">
-            暂无可用镜像版本
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-[300px] overflow-y-auto">
-            {successfulImages.map((image) => {
-              const isActive = image.id === currentImageId || image.is_active
-              const branch = image.metadata && 
-                           typeof image.metadata === 'object' &&
-                           'branch' in image.metadata
-                ? String(image.metadata.branch)
-                : null
-
-              return (
-                <div
-                  key={image.id}
-                  className={`border rounded-lg p-3 ${
-                    isActive ? 'border-green-500 bg-green-50' : 'border-gray-200'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-mono text-gray-900 truncate">
-                          {image.tag}
-                        </span>
-                        {isActive && (
-                          <Badge className="bg-green-100 text-green-800 text-xs">
-                            当前
-                          </Badge>
-                        )}
-                        {image.build_number && (
-                          <span className="text-xs text-gray-500">
-                            #{image.build_number}
-                          </span>
-                        )}
-                      </div>
-                      
-                      {branch && (
-                        <div className="text-xs text-gray-600 flex items-center gap-1 mb-1">
-                          <GitBranch className="h-3 w-3" />
-                          <span>{branch}</span>
-                        </div>
-                      )}
-                      
-                      {image.created_at && (
-                        <div className="text-xs text-gray-500">
-                          {formatDateTime(image.created_at)}
-                        </div>
-                      )}
-                    </div>
-                    
-                    {!isActive && image.id && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onActivateImage(image.id!)}
-                        className="ml-2"
-                      >
-                        激活
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-})
 
 /**
  * DeploymentsTab - Main component for deployments, builds, and image management
@@ -528,18 +464,6 @@ export const DeploymentsTab = memo(function DeploymentsTab({
             onRefresh={onRefreshImages}
             onPageChange={onPageChange}
             onBuild={onBuild}
-          />
-        </div>
-      )}
-
-      {/* Image Version Management - Only for Application services */}
-      {isApplicationService && (
-        <div role="region" aria-label="镜像版本管理">
-          <ImageVersionManagement
-            service={service}
-            serviceImages={serviceImages}
-            currentDeployment={currentDeployment}
-            onActivateImage={onActivateImage}
             onDeploy={onDeploy}
           />
         </div>

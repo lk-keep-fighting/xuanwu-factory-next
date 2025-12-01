@@ -28,9 +28,7 @@ export function useMetricsHistory({
 
   // 从 Prometheus 获取历史数据
   const fetchPrometheusData = useCallback(async (range: string) => {
-    console.log(`[useMetricsHistory] fetchPrometheusData 调用，range: ${range}, serviceId: ${serviceId}, mounted: ${mountedRef.current}`)
     if (!serviceId || !mountedRef.current) {
-      console.log('[useMetricsHistory] 跳过获取：serviceId 或 mounted 检查失败')
       return
     }
 
@@ -38,8 +36,6 @@ export function useMetricsHistory({
     setError(null)
 
     try {
-      console.log(`[useMetricsHistory] 查询 Prometheus 历史数据: ${range}`)
-      
       const response = await fetch(
         `/api/services/${serviceId}/metrics-history?range=${range}`
       )
@@ -56,13 +52,12 @@ export function useMetricsHistory({
 
       if (data.dataPoints && Array.isArray(data.dataPoints)) {
         setDataPoints(data.dataPoints)
-        console.log(`[useMetricsHistory] 获取到 ${data.dataPoints.length} 个数据点`)
       } else {
         setDataPoints([])
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '查询失败'
-      console.error('[useMetricsHistory] Prometheus 查询失败:', message)
+      console.error('[useMetricsHistory] 查询失败:', message)
       setError(message)
       setDataPoints([])
     } finally {
@@ -73,14 +68,10 @@ export function useMetricsHistory({
   // 当 timeRange 变化时，立即重新获取数据
   useEffect(() => {
     if (!enabled || !serviceId || mode !== 'prometheus') {
-      console.log(`[useMetricsHistory] 跳过 timeRange 变化处理：enabled=${enabled}, serviceId=${serviceId}, mode=${mode}`)
       return
     }
 
-    console.log(`[useMetricsHistory] timeRange 变化，重新获取数据: ${timeRange}`)
-    console.log(`[useMetricsHistory] 准备调用 fetchPrometheusData，函数类型:`, typeof fetchPrometheusData)
     void fetchPrometheusData(timeRange)
-    console.log(`[useMetricsHistory] fetchPrometheusData 调用完成`)
   }, [timeRange, enabled, serviceId, mode, fetchPrometheusData])
 
   // 启动自动刷新
@@ -91,7 +82,6 @@ export function useMetricsHistory({
 
     // 设置定时器（Prometheus 模式刷新间隔可以更长）
     intervalRef.current = setInterval(() => {
-      console.log(`[useMetricsHistory] 定时刷新，使用 timeRange: ${timeRange}`)
       void fetchPrometheusData(timeRange)
     }, refreshInterval)
 
@@ -105,11 +95,9 @@ export function useMetricsHistory({
 
   // 组件挂载和卸载时管理 mountedRef
   useEffect(() => {
-    console.log('[useMetricsHistory] 组件挂载，设置 mounted = true')
     mountedRef.current = true
     
     return () => {
-      console.log('[useMetricsHistory] 组件卸载，设置 mounted = false')
       mountedRef.current = false
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
@@ -120,7 +108,6 @@ export function useMetricsHistory({
   // 手动刷新
   const refresh = useCallback((range?: string) => {
     const rangeToUse = range || timeRange
-    console.log(`[useMetricsHistory] 手动刷新，使用 range: ${rangeToUse}`)
     void fetchPrometheusData(rangeToUse)
   }, [fetchPrometheusData, timeRange])
 

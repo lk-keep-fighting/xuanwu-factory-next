@@ -56,8 +56,6 @@ export async function GET(
     const start = now - rangeSeconds
     const end = now
 
-    console.log(`[Metrics History] 查询 ${serviceName} 的历史数据: ${range}`)
-
     // 3. 查询 Prometheus - CPU 使用率
     const cpuQuery = `rate(container_cpu_usage_seconds_total{namespace="${namespace}",pod=~"${serviceName}-.*",container!="",container!="POD"}[5m])`
     
@@ -78,8 +76,6 @@ export async function GET(
 
     // 6. 处理数据
     const dataPoints = processMetricsData(cpuData, memoryData, cpuLimitData, memoryLimitData)
-
-    console.log(`[Metrics History] 返回 ${dataPoints.length} 个数据点`)
 
     return NextResponse.json({
       serviceName,

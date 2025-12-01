@@ -31,7 +31,7 @@ function createMockService(type: ServiceType): Service {
 }
 
 /**
- * Validate that all service types show exactly 6 common tabs
+ * Validate that all service types show exactly 8 common tabs
  */
 function validateCommonTabs(): boolean {
   console.log('Validating common tabs for all service types...')
@@ -40,6 +40,8 @@ function validateCommonTabs(): boolean {
   const expectedTabs = [
     TAB_VALUES.OVERVIEW,
     TAB_VALUES.CONFIGURATION,
+    TAB_VALUES.ENVIRONMENT,
+    TAB_VALUES.NETWORK,
     TAB_VALUES.DEPLOYMENTS,
     TAB_VALUES.LOGS,
     TAB_VALUES.FILES,
@@ -56,9 +58,9 @@ function validateCommonTabs(): boolean {
     console.log(`  Visible tabs: ${visibleTabs.join(', ')}`)
     console.log(`  Tab count: ${visibleTabs.length}`)
     
-    // Check that we have exactly 6 tabs
-    if (visibleTabs.length !== 6) {
-      console.error(`  ❌ ERROR: Expected 6 tabs, got ${visibleTabs.length}`)
+    // Check that we have exactly 8 tabs
+    if (visibleTabs.length !== 8) {
+      console.error(`  ❌ ERROR: Expected 8 tabs, got ${visibleTabs.length}`)
       allValid = false
       continue
     }
@@ -123,12 +125,12 @@ function validateTabConfiguration(): boolean {
   
   let allValid = true
   
-  // Check that we have exactly 6 tab configurations
-  if (TAB_CONFIGS.length !== 6) {
-    console.error(`❌ ERROR: Expected 6 tab configurations, got ${TAB_CONFIGS.length}`)
+  // Check that we have exactly 8 tab configurations
+  if (TAB_CONFIGS.length !== 8) {
+    console.error(`❌ ERROR: Expected 8 tab configurations, got ${TAB_CONFIGS.length}`)
     allValid = false
   } else {
-    console.log('✅ Tab configuration count is correct (6 tabs)')
+    console.log('✅ Tab configuration count is correct (8 tabs)')
   }
   
   // Check that each tab has required properties

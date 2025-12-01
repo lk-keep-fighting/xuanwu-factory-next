@@ -11,6 +11,8 @@ import type { K8sServiceStatus } from './k8s'
 export const TAB_VALUES = {
   OVERVIEW: 'overview',
   CONFIGURATION: 'configuration',
+  ENVIRONMENT: 'environment',
+  NETWORK: 'network',
   DEPLOYMENTS: 'deployments',
   LOGS: 'logs',
   FILES: 'files',
@@ -23,9 +25,7 @@ export const TAB_VALUES = {
 export const LEGACY_TAB_VALUES = {
   STATUS: 'status',
   GENERAL: 'general',
-  ENVIRONMENT: 'environment',
-  VOLUMES: 'volumes',
-  NETWORK: 'network'
+  VOLUMES: 'volumes'
 } as const
 
 export type TabValue = typeof TAB_VALUES[keyof typeof TAB_VALUES]
