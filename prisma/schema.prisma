@@ -58,6 +58,7 @@ model Service {
   image                   String?
   tag                     String?
   health_check            Json?
+  debug_config            Json?
   created_at              DateTime                 @default(now()) @db.Timestamp(3)
   updated_at              DateTime                 @updatedAt @db.Timestamp(3)
   deployments             Deployment[]

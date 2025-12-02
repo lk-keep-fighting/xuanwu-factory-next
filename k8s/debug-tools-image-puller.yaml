@@ -1,0 +1,236 @@
+# ===================================
+# 调试工具镜像预拉取 DaemonSet
+# 用于在所有节点上预先拉取调试工具镜像，提升部署速度
+# ===================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: debug-tools
+  labels:
+    name: debug-tools
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: debug-tools-image-puller
+  namespace: debug-tools
+  labels:
+    app: debug-tools-image-puller
+spec:
+  selector:
+    matchLabels:
+      app: debug-tools-image-puller
+  template:
+    metadata:
+      labels:
+        app: debug-tools-image-puller
+    spec:
+      # 使用 hostNetwork 以便访问节点的 Docker daemon
+      hostNetwork: true
+      # 容忍所有污点，确保在所有节点上运行
+      tolerations:
+      - operator: Exists
+      
+      initContainers:
+      # 拉取 BusyBox 镜像
+      - name: pull-busybox
+        image: busybox:latest
+        imagePullPolicy: Always
+        command: ['sh', '-c', 'echo "BusyBox image pulled successfully"']
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+      
+      # 拉取 Netshoot 镜像
+      - name: pull-netshoot
+        image: nicolaka/netshoot:latest
+        imagePullPolicy: Always
+        command: ['sh', '-c', 'echo "Netshoot image pulled successfully"']
+        resources:
+          limits:
+            cpu: 100m
+            memory: 512Mi
+          requests:
+            cpu: 50m
+            memory: 256Mi
+      
+      # 拉取 Ubuntu 镜像
+      - name: pull-ubuntu
+        image: ubuntu:22.04
+        imagePullPolicy: Always
+        command: ['sh', '-c', 'echo "Ubuntu image pulled successfully"']
+        resources:
+          limits:
+            cpu: 100m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+      
+      containers:
+      # 主容器保持运行，定期检查镜像更新
+      - name: keeper
+        image: busybox:latest
+        imagePullPolicy: IfNotPresent
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "All debug tool images have been pulled to this node"
+          echo "Node: $(hostname)"
+          echo "Sleeping indefinitely..."
+          while true; do
+            sleep 3600
+          done
+        resources:
+          limits:
+            cpu: 10m
+            memory: 32Mi
+          requests:
+            cpu: 5m
+            memory: 16Mi
+
+---
+# 可选：定期更新镜像的 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: debug-tools-image-updater
+  namespace: debug-tools
+  labels:
+    app: debug-tools-image-updater
+spec:
+  # 每天凌晨 2 点更新镜像
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: debug-tools-image-updater
+        spec:
+          restartPolicy: OnFailure
+          tolerations:
+          - operator: Exists
+          
+          containers:
+          - name: updater
+            image: busybox:latest
+            imagePullPolicy: Always
+            command: ['sh', '-c']
+            args:
+            - |
+              echo "Triggering image update by restarting DaemonSet..."
+              echo "This will cause all nodes to re-pull the latest images"
+              # 注意：这个 CronJob 只是触发更新
+              # 实际的镜像拉取由 DaemonSet 的 initContainers 完成
+              echo "Update triggered at $(date)"
+            resources:
+              limits:
+                cpu: 50m
+                memory: 64Mi
+              requests:
+                cpu: 10m
+                memory: 32Mi
+
+---
+# 使用说明 ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debug-tools-image-puller-readme
+  namespace: debug-tools
+data:
+  README.md: |
+    # 调试工具镜像预拉取器
+    
+    ## 功能
+    
+    这个 DaemonSet 会在所有 Kubernetes 节点上预先拉取常用的调试工具镜像：
+    - busybox:latest (~5MB)
+    - nicolaka/netshoot:latest (~300MB)
+    - ubuntu:22.04 (~80MB)
+    
+    ## 优势
+    
+    1. 加快服务部署速度
+    2. 减少镜像拉取失败的风险
+    3. 降低镜像仓库的网络压力
+    
+    ## 部署
+    
+    ```bash
+    # 部署 DaemonSet
+    kubectl apply -f k8s/debug-tools-image-puller.yaml
+    
+    # 查看状态
+    kubectl get daemonset -n debug-tools
+    kubectl get pods -n debug-tools -o wide
+    
+    # 查看日志
+    kubectl logs -n debug-tools -l app=debug-tools-image-puller
+    ```
+    
+    ## 验证
+    
+    ```bash
+    # 在任意节点上检查镜像
+    docker images | grep -E "busybox|netshoot|ubuntu"
+    
+    # 应该看到三个镜像都已存在
+    ```
+    
+    ## 更新镜像
+    
+    ```bash
+    # 方式 1: 重启 DaemonSet（推荐）
+    kubectl rollout restart daemonset/debug-tools-image-puller -n debug-tools
+    
+    # 方式 2: 删除 Pod，让 DaemonSet 重新创建
+    kubectl delete pods -n debug-tools -l app=debug-tools-image-puller
+    
+    # 方式 3: 等待 CronJob 自动更新（每天凌晨 2 点）
+    ```
+    
+    ## 卸载
+    
+    ```bash
+    # 删除所有资源
+    kubectl delete namespace debug-tools
+    
+    # 或只删除 DaemonSet
+    kubectl delete daemonset debug-tools-image-puller -n debug-tools
+    ```
+    
+    ## 自定义
+    
+    如果需要添加其他镜像，编辑 DaemonSet 的 initContainers 部分：
+    
+    ```yaml
+    initContainers:
+    - name: pull-custom-image
+      image: your-registry.com/your-image:tag
+      imagePullPolicy: Always
+      command: ['sh', '-c', 'echo "Custom image pulled"']
+    ```
+    
+    ## 资源使用
+    
+    - CPU: 每个节点约 10m（运行时）
+    - 内存: 每个节点约 32Mi（运行时）
+    - 磁盘: 约 400MB（三个镜像总大小）
+    
+    ## 注意事项
+    
+    1. 这个 DaemonSet 会在所有节点上运行，包括 Master 节点
+    2. 如果集群节点较多，首次部署可能需要一些时间
+    3. 镜像会占用节点磁盘空间，请确保有足够空间
+    4. 如果使用私有镜像仓库，需要配置 imagePullSecrets

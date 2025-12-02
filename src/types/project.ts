@@ -85,6 +85,14 @@ export interface LegacyNetworkConfig {
 
 export type NetworkConfig = NetworkConfigV2 | LegacyNetworkConfig
 
+// 调试工具配置
+export interface DebugConfig {
+  enabled: boolean
+  toolset: 'busybox' | 'netshoot' | 'ubuntu' | 'custom'
+  customImage?: string
+  mountPath: string
+}
+
 // 服务基础接口
 export interface BaseService {
   id?: string
@@ -112,6 +120,8 @@ export interface BaseService {
   }>
   // 网络配置（Kubernetes Service）
   network_config?: NetworkConfig
+  // 调试工具配置
+  debug_config?: DebugConfig
 }
 
 // Application 服务 - 基于源码构建

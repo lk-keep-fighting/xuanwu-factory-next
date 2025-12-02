@@ -34,7 +34,8 @@ export const SERVICE_MUTABLE_FIELDS = [
   'mysql_config',
   'image',
   'tag',
-  'health_check'
+  'health_check',
+  'debug_config'
 ] as const
 
 export type ServiceFieldKey = (typeof SERVICE_MUTABLE_FIELDS)[number]

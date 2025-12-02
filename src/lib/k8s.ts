@@ -13,7 +13,8 @@ import {
   ServiceType,
   type NetworkConfigV2,
   DATABASE_TYPE_METADATA,
-  type SupportedDatabaseType
+  type SupportedDatabaseType,
+  type DebugConfig
 } from '@/types/project'
 import type {
   K8sImportCandidate,
@@ -314,6 +315,26 @@ class K8sService {
       await this.deployDatabaseStatefulSet(service as DatabaseService, targetNamespace, effectiveNetwork)
     } else {
       const commandConfig = this.parseCommand((service as ApplicationService | ImageService).command)
+      const debugConfig = service.debug_config as DebugConfig | null | undefined
+      
+      // 构建基础卷和卷挂载
+      const baseVolumes = this.buildVolumes(service.volumes) || []
+      const baseVolumeMounts = this.buildVolumeMounts(service.volumes, service.name) || []
+      
+      // 如果启用了调试工具，添加调试工具卷和挂载
+      const volumes = debugConfig?.enabled
+        ? [...baseVolumes, { name: 'debug-tools', emptyDir: {} }]
+        : baseVolumes
+      
+      const volumeMounts = debugConfig?.enabled
+        ? [
+            ...baseVolumeMounts,
+            {
+              name: 'debug-tools',
+              mountPath: debugConfig.mountPath || '/debug-tools'
+            }
+          ]
+        : baseVolumeMounts
       
       const deployment: k8s.V1Deployment = {
         metadata: {
@@ -331,6 +352,15 @@ class K8sService {
               labels: { app: service.name }
             },
             spec: {
+              // 添加 Init Container（如果启用了调试工具）
+              ...(debugConfig?.enabled && {
+                initContainers: [
+                  this.buildDebugInitContainer(
+                    debugConfig,
+                    debugConfig.mountPath || '/debug-tools'
+                  )
+                ]
+              }),
               containers: [{
                 name: service.name,
                 image: this.getImage(service),
@@ -345,9 +375,9 @@ class K8sService {
                   : undefined,
                 env: this.buildEnvVars(service),
                 resources: this.buildResources(service.resource_limits, service.resource_requests),
-                volumeMounts: this.buildVolumeMounts(service.volumes, service.name)
+                volumeMounts: volumeMounts.length ? volumeMounts : undefined
               }],
-              volumes: this.buildVolumes(service.volumes)
+              volumes: volumes.length ? volumes : undefined
             }
           }
         }
@@ -632,6 +662,20 @@ class K8sService {
       })
     }
 
+    // 如果启用了调试工具，添加调试工具卷和挂载
+    const debugConfig = service.debug_config as DebugConfig | null | undefined
+    if (debugConfig?.enabled) {
+      volumes.push({
+        name: 'debug-tools',
+        emptyDir: {}
+      })
+      
+      volumeMounts.push({
+        name: 'debug-tools',
+        mountPath: debugConfig.mountPath || '/debug-tools'
+      })
+    }
+
     const statefulSet: k8s.V1StatefulSet = {
       metadata: {
         name: serviceName,
@@ -652,6 +696,15 @@ class K8sService {
             labels: { app: serviceName }
           },
           spec: {
+            // 添加 Init Container（如果启用了调试工具）
+            ...(debugConfig?.enabled && {
+              initContainers: [
+                this.buildDebugInitContainer(
+                  debugConfig,
+                  debugConfig.mountPath || '/debug-tools'
+                )
+              ]
+            }),
             containers: [
               {
                 name: serviceName,
@@ -3157,6 +3210,98 @@ class K8sService {
         claimName: 'shared-nfs-pvc'
       }
     }]
+  }
+
+  /**
+   * 构建调试工具 Init Container
+   */
+  private buildDebugInitContainer(
+    debugConfig: DebugConfig,
+    mountPath: string
+  ): k8s.V1Container {
+    const toolsetImages: Record<string, string> = {
+      busybox: 'busybox:latest',
+      netshoot: 'nicolaka/netshoot:latest',
+      ubuntu: 'ubuntu:22.04'
+    }
+
+    const image = debugConfig.toolset === 'custom' && debugConfig.customImage
+      ? debugConfig.customImage
+      : toolsetImages[debugConfig.toolset] || toolsetImages.busybox
+
+    const installScript = this.generateDebugToolsInstallScript(debugConfig.toolset, mountPath)
+
+    return {
+      name: 'install-debug-tools',
+      image,
+      imagePullPolicy: 'IfNotPresent', // 优先使用本地缓存，避免频繁拉取
+      command: ['sh', '-c'],
+      args: [installScript],
+      volumeMounts: [
+        {
+          name: 'debug-tools',
+          mountPath
+        }
+      ]
+    }
+  }
+
+  /**
+   * 生成调试工具安装脚本
+   */
+  private generateDebugToolsInstallScript(
+    toolset: DebugConfig['toolset'],
+    mountPath: string
+  ): string {
+    switch (toolset) {
+      case 'busybox':
+        return `
+echo "Installing BusyBox debug tools..."
+cp /bin/busybox ${mountPath}/
+${mountPath}/busybox --install -s ${mountPath}/
+echo "BusyBox tools installed successfully at ${mountPath}"
+ls -la ${mountPath}/ | head -20
+        `.trim()
+
+      case 'netshoot':
+        return `
+echo "Installing Netshoot debug tools..."
+mkdir -p ${mountPath}/bin
+# 复制常用网络工具
+for tool in curl wget nc nslookup dig tcpdump netstat ss iperf3 mtr traceroute nmap; do
+  if command -v $tool >/dev/null 2>&1; then
+    cp $(command -v $tool) ${mountPath}/bin/ 2>/dev/null || true
+  fi
+done
+echo "Netshoot tools installed successfully at ${mountPath}/bin"
+ls -la ${mountPath}/bin/
+        `.trim()
+
+      case 'ubuntu':
+        return `
+echo "Installing Ubuntu debug tools..."
+mkdir -p ${mountPath}/bin
+# 复制基础工具
+for tool in bash sh ls cat grep ps top curl wget nc; do
+  if command -v $tool >/dev/null 2>&1; then
+    cp $(command -v $tool) ${mountPath}/bin/ 2>/dev/null || true
+  fi
+done
+echo "Ubuntu tools installed successfully at ${mountPath}/bin"
+echo "Note: You can install more tools using apt-get in the main container"
+ls -la ${mountPath}/bin/
+        `.trim()
+
+      default:
+        return `
+echo "Installing custom debug tools..."
+# 用户需要在自定义镜像中实现工具复制逻辑
+# 默认复制 /bin 和 /usr/bin 中的常用工具
+mkdir -p ${mountPath}/bin
+cp /bin/* ${mountPath}/bin/ 2>/dev/null || true
+echo "Custom tools installed at ${mountPath}/bin"
+        `.trim()
+    }
   }
 
   private buildImportCandidateFromWorkload(

@@ -75,8 +75,31 @@ spec:
     metadata:
       labels:
         app: xuanwu-factory-next
+      annotations:
+        # 启用 Ephemeral Container 调试支持
+        kubectl.kubernetes.io/default-container: xuanwu-factory-next
     spec:
       serviceAccountName: xuanwu-factory-next-sa
+      # 可选：添加共享卷用于 init container 方案
+      # volumes:
+      # - name: debug-tools
+      #   emptyDir: {}
+      
+      # 可选：Init Container 方案（按需启用）
+      # initContainers:
+      # - name: install-debug-tools
+      #   image: busybox:latest
+      #   command: ['sh', '-c']
+      #   args:
+      #   - |
+      #     echo "Installing debug tools..."
+      #     cp /bin/busybox /debug-tools/
+      #     /debug-tools/busybox --install -s /debug-tools/
+      #     echo "Debug tools installed successfully"
+      #   volumeMounts:
+      #   - name: debug-tools
+      #     mountPath: /debug-tools
+      
       containers:
       - name: xuanwu-factory-next
         image: nexus.aimstek.cn/xuanwu-factory/xuanwu-factory-next:dev-251126-155059
@@ -105,6 +128,11 @@ spec:
           value: 1112e29a2d923515b98730268f45a01d3c
         
         resources: {}
+        
+        # 可选：挂载调试工具卷（配合 init container 使用）
+        # volumeMounts:
+        # - name: debug-tools
+        #   mountPath: /debug-tools
         
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File

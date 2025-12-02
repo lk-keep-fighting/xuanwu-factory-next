@@ -399,6 +399,10 @@ export async function PUT(
   }
 
   const data = Object.fromEntries(dataEntries) as Prisma.ServiceUncheckedUpdateInput
+  
+  // 移除 project_id，因为它是关系字段，不能在 update 操作中直接修改
+  // 如果需要修改项目关联，应该使用单独的 API 端点
+  delete (data as { project_id?: unknown }).project_id
 
   try {
     const service = await prisma.service.update({

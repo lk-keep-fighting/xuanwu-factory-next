@@ -37,12 +37,21 @@ RUN pnpm build
 # ============ 阶段 4: 运行时镜像 ============
 FROM node:20-alpine AS runner
 
-# 安装必要的系统依赖（包括 kubectl）
+# 安装必要的系统依赖（包括 kubectl 和调试工具）
 RUN apk add --no-cache \
     ca-certificates \
     curl \
+    wget \
     tzdata \
-    kubectl && \
+    kubectl \
+    busybox-extras \
+    bind-tools \
+    netcat-openbsd \
+    tcpdump \
+    strace \
+    procps \
+    htop \
+    vim && \
     kubectl version --client || echo "kubectl installed"
 
 # 设置时区
