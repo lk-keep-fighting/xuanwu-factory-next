@@ -1,0 +1,25 @@
+# 基础镜像 - 包含 kubectl 和常用工具
+# 构建命令: docker build -f Dockerfile.base -t your-registry/node-kubectl:20-alpine .
+# 推送命令: docker push your-registry/node-kubectl:20-alpine
+
+FROM node:20-alpine
+
+# 一次性安装所有系统依赖
+RUN apk add --no-cache \
+    ca-certificates \
+    curl \
+    wget \
+    tzdata \
+    kubectl \
+    busybox-extras \
+    bind-tools \
+    netcat-openbsd \
+    tcpdump \
+    strace \
+    procps \
+    htop \
+    vim && \
+    kubectl version --client || echo "kubectl installed"
+
+# 设置时区
+ENV TZ=Asia/Shanghai
