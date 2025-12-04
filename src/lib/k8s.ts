@@ -1133,14 +1133,37 @@ class K8sService {
           labelSelector: `app=${serviceName}`
         })
 
-        // 检查 Pod 中的容器状态
+        // 检查 Pod 中的容器状态（只取第一个 Pod 的主容器状态，避免重复显示）
         const containerStatuses: any[] = []
         let imagePullFailed = false
         let imagePullError = ''
         
+        // 只取第一个 Pod 的容器状态用于显示
+        const firstPod = pods.items[0]
+        if (firstPod) {
+          const podContainerStatuses = firstPod.status?.containerStatuses || []
+          console.log(`[K8s][Deployment] Service ${serviceName} has ${podContainerStatuses.length} containers:`, 
+            podContainerStatuses.map((c: any) => c.name))
+          
+          // 过滤掉调试工具容器和其他辅助容器，只保留主应用容器
+          const mainContainers = podContainerStatuses.filter((status: any) => {
+            const name = status.name || ''
+            // 排除常见的 sidecar 和辅助容器
+            return !name.includes('debug-tools') && 
+                   !name.includes('sidecar') && 
+                   !name.includes('proxy') &&
+                   !name.includes('exporter') &&
+                   !name.includes('agent')
+          })
+          
+          // 如果过滤后没有容器，则显示所有容器
+          const containersToShow = mainContainers.length > 0 ? mainContainers : podContainerStatuses
+          containerStatuses.push(...containersToShow)
+        }
+        
+        // 检查所有 Pod 是否有镜像拉取失败
         for (const pod of pods.items) {
           const podContainerStatuses = pod.status?.containerStatuses || []
-          containerStatuses.push(...podContainerStatuses)
           
           // 检查是否有镜像拉取失败
           for (const containerStatus of podContainerStatuses) {
@@ -1240,14 +1263,37 @@ class K8sService {
           labelSelector: `app=${serviceName}`
         })
 
-        // 检查 Pod 中的容器状态
+        // 检查 Pod 中的容器状态（只取第一个 Pod 的主容器状态，避免重复显示）
         const containerStatuses: any[] = []
         let imagePullFailed = false
         let imagePullError = ''
         
+        // 只取第一个 Pod 的容器状态用于显示
+        const firstPod = pods.items[0]
+        if (firstPod) {
+          const podContainerStatuses = firstPod.status?.containerStatuses || []
+          console.log(`[K8s][StatefulSet] Service ${serviceName} has ${podContainerStatuses.length} containers:`, 
+            podContainerStatuses.map((c: any) => c.name))
+          
+          // 过滤掉调试工具容器和其他辅助容器，只保留主应用容器
+          const mainContainers = podContainerStatuses.filter((status: any) => {
+            const name = status.name || ''
+            // 排除常见的 sidecar 和辅助容器
+            return !name.includes('debug-tools') && 
+                   !name.includes('sidecar') && 
+                   !name.includes('proxy') &&
+                   !name.includes('exporter') &&
+                   !name.includes('agent')
+          })
+          
+          // 如果过滤后没有容器，则显示所有容器
+          const containersToShow = mainContainers.length > 0 ? mainContainers : podContainerStatuses
+          containerStatuses.push(...containersToShow)
+        }
+        
+        // 检查所有 Pod 是否有镜像拉取失败
         for (const pod of pods.items) {
           const podContainerStatuses = pod.status?.containerStatuses || []
-          containerStatuses.push(...podContainerStatuses)
           
           // 检查是否有镜像拉取失败
           for (const containerStatus of podContainerStatuses) {

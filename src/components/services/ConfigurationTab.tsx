@@ -8,6 +8,7 @@ import type { ConfigurationTabProps } from '@/types/service-tabs'
 import { GeneralSection } from './configuration/GeneralSection'
 import { VolumesSection } from './configuration/VolumesSection'
 import { DatabaseConfigSection } from './configuration/DatabaseConfigSection'
+import { ResourcesSection } from './configuration/ResourcesSection'
 import { ServiceType, DatabaseType, type DatabaseService } from '@/types/project'
 
 /**
@@ -34,6 +35,14 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
     networkServiceType,
     networkPorts,
     headlessServiceEnabled,
+    cpuValue,
+    cpuUnit,
+    memoryValue,
+    memoryUnit,
+    cpuRequestValue,
+    cpuRequestUnit,
+    memoryRequestValue,
+    memoryRequestUnit,
     hasPendingNetworkDeploy,
     onStartEdit,
     onSave,
@@ -41,7 +50,8 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
     onUpdateService,
     onUpdateEnvVars,
     onUpdateVolumes,
-    onUpdateNetwork
+    onUpdateNetwork,
+    onUpdateResources
   } = props
 
   // Extract service image for volume template detection - memoized
@@ -134,13 +144,24 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
         </Card>
       )}
 
-      {/* Resources Section - Placeholder */}
+      {/* Resources Section */}
       <Card>
         <CardHeader>
           <CardTitle>资源限制</CardTitle>
         </CardHeader>
         <CardContent role="region" aria-label="资源限制">
-          <p className="text-sm text-gray-500">资源限制配置将在后续任务中实现</p>
+          <ResourcesSection
+            isEditing={isEditing}
+            cpuValue={cpuValue}
+            cpuUnit={cpuUnit}
+            memoryValue={memoryValue}
+            memoryUnit={memoryUnit}
+            cpuRequestValue={cpuRequestValue}
+            cpuRequestUnit={cpuRequestUnit}
+            memoryRequestValue={memoryRequestValue}
+            memoryRequestUnit={memoryRequestUnit}
+            onUpdateResources={onUpdateResources}
+          />
         </CardContent>
       </Card>
     </div>
