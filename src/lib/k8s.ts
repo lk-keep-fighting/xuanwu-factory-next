@@ -1719,19 +1719,45 @@ class K8sService {
 
       console.log(`[K8s] 筛选后剩余 ${relevantEvents.length} 条相关事件`)
 
-      // 按时间倒序排序
+      // 按时间倒序排序，使用最精确的时间戳
       const sortedEvents = relevantEvents.sort((a, b) => {
-        const timeA = a.lastTimestamp || a.firstTimestamp
-        const timeB = b.lastTimestamp || b.firstTimestamp
+        // 优先使用 eventTime（RFC3339 格式，包含纳秒），其次使用 lastTimestamp/firstTimestamp
+        const timeA = a.eventTime || a.lastTimestamp || a.firstTimestamp || a.metadata?.creationTimestamp
+        const timeB = b.eventTime || b.lastTimestamp || b.firstTimestamp || b.metadata?.creationTimestamp
         
         if (!timeA && !timeB) return 0
         if (!timeA) return 1
         if (!timeB) return -1
         
-        const dateA = new Date(timeA).getTime()
-        const dateB = new Date(timeB).getTime()
+        // 转换为字符串进行比较（ISO 8601 格式可以直接字符串比较）
+        const timeStrA = typeof timeA === 'string' ? timeA : timeA.toISOString()
+        const timeStrB = typeof timeB === 'string' ? timeB : timeB.toISOString()
         
-        return dateB - dateA
+        // 直接比较 ISO 8601 字符串（包含完整精度）
+        // 这样可以保留纳秒级精度，而不会因为转换为毫秒而丢失精度
+        if (timeStrA !== timeStrB) {
+          return timeStrB.localeCompare(timeStrA)  // 倒序：新的在前
+        }
+        
+        // 时间完全相同时（极少见），按事件类型排序（Warning > Normal）
+        const typeA = a.type || 'Normal'
+        const typeB = b.type || 'Normal'
+        if (typeA !== typeB) {
+          if (typeA === 'Warning') return -1
+          if (typeB === 'Warning') return 1
+        }
+        
+        // 然后按事件发生次数降序排序
+        const countA = a.count || 1
+        const countB = b.count || 1
+        if (countA !== countB) {
+          return countB - countA
+        }
+        
+        // 最后按 reason 字母顺序排序，保证完全稳定
+        const reasonA = a.reason || ''
+        const reasonB = b.reason || ''
+        return reasonA.localeCompare(reasonB)
       })
 
       // 限制返回数量
@@ -1742,7 +1768,8 @@ class K8sService {
           type: event.type || 'Normal',
           reason: event.reason || '',
           message: event.message || '',
-          timestamp: event.lastTimestamp || event.firstTimestamp,
+          // 使用最精确的时间戳
+          timestamp: event.eventTime || event.lastTimestamp || event.firstTimestamp || event.metadata?.creationTimestamp,
           count: event.count || 1,
           involvedObject: {
             kind: event.involvedObject?.kind || '',
