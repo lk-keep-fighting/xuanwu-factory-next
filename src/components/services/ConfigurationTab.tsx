@@ -8,7 +8,6 @@ import type { ConfigurationTabProps } from '@/types/service-tabs'
 import { GeneralSection } from './configuration/GeneralSection'
 import { VolumesSection } from './configuration/VolumesSection'
 import { DatabaseConfigSection } from './configuration/DatabaseConfigSection'
-import { DebugToolsSection } from './configuration/DebugToolsSection'
 import { ServiceType, DatabaseType, type DatabaseService } from '@/types/project'
 
 /**
@@ -55,8 +54,6 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
     }
     return undefined
   }, [service.type, service])
-
-
 
   return (
     <div className="space-y-6" role="region" aria-label="服务配置">
@@ -144,22 +141,6 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
         </CardHeader>
         <CardContent role="region" aria-label="资源限制">
           <p className="text-sm text-gray-500">资源限制配置将在后续任务中实现</p>
-        </CardContent>
-      </Card>
-
-      {/* Debug Tools Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>调试工具</CardTitle>
-        </CardHeader>
-        <CardContent role="region" aria-label="调试工具">
-          <DebugToolsSection
-            isEditing={isEditing}
-            debugConfig={editedService?.debug_config ?? undefined}
-            onUpdateDebugConfig={(config) => {
-              onUpdateService({ debug_config: config })
-            }}
-          />
         </CardContent>
       </Card>
     </div>

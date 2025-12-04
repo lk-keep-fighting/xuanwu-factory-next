@@ -13,6 +13,7 @@ export const TAB_VALUES = {
   CONFIGURATION: 'configuration',
   ENVIRONMENT: 'environment',
   NETWORK: 'network',
+  DEBUG_TOOLS: 'debug-tools',
   DEPLOYMENTS: 'deployments',
   LOGS: 'logs',
   FILES: 'files',
@@ -252,6 +253,19 @@ export interface YAMLTabProps {
   yamlLoading: boolean
   yamlError: string | null
   onRefresh: () => Promise<void>
+}
+
+/**
+ * Props for Debug Tools Tab component
+ */
+export interface DebugToolsTabProps {
+  service: Service
+  isEditing: boolean
+  editedService: Partial<Service>
+  onStartEdit: () => void
+  onSave: () => Promise<void>
+  onCancel: () => void
+  onUpdateService: (updates: Partial<Service>) => void
 }
 
 /**

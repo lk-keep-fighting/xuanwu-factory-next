@@ -14,8 +14,14 @@ import {
   type NetworkConfigV2,
   DATABASE_TYPE_METADATA,
   type SupportedDatabaseType,
-  type DebugConfig
+  type DebugConfig,
+  type MultiDebugConfig
 } from '@/types/project'
+import {
+  normalizeDebugConfig,
+  generateDebugInitContainers,
+  generateDebugVolumes
+} from '@/lib/debug-tools-utils'
 import type {
   K8sImportCandidate,
   K8sWorkloadKind,
@@ -315,26 +321,29 @@ class K8sService {
       await this.deployDatabaseStatefulSet(service as DatabaseService, targetNamespace, effectiveNetwork)
     } else {
       const commandConfig = this.parseCommand((service as ApplicationService | ImageService).command)
-      const debugConfig = service.debug_config as DebugConfig | null | undefined
+      
+      // 规范化调试配置（支持旧格式自动转换）
+      const normalizedDebugConfig = normalizeDebugConfig(service.debug_config)
       
       // 构建基础卷和卷挂载
       const baseVolumes = this.buildVolumes(service.volumes) || []
       const baseVolumeMounts = this.buildVolumeMounts(service.volumes, service.name) || []
       
-      // 如果启用了调试工具，添加调试工具卷和挂载
-      const volumes = debugConfig?.enabled
-        ? [...baseVolumes, { name: 'debug-tools', emptyDir: {} }]
-        : baseVolumes
+      // 生成调试工具的 Init Containers 和 Volumes
+      const debugInitContainers = generateDebugInitContainers(normalizedDebugConfig)
+      const debugVolumes = generateDebugVolumes(normalizedDebugConfig)
       
-      const volumeMounts = debugConfig?.enabled
-        ? [
-            ...baseVolumeMounts,
-            {
-              name: 'debug-tools',
-              mountPath: debugConfig.mountPath || '/debug-tools'
-            }
-          ]
-        : baseVolumeMounts
+      // 为每个调试工具添加卷挂载到主容器
+      const debugVolumeMounts = normalizedDebugConfig?.enabled && normalizedDebugConfig.tools
+        ? normalizedDebugConfig.tools.map(tool => ({
+            name: `debug-tools-${tool.toolset}`,
+            mountPath: tool.mountPath
+          }))
+        : []
+      
+      // 合并所有卷和卷挂载
+      const volumes = [...baseVolumes, ...debugVolumes]
+      const volumeMounts = [...baseVolumeMounts, ...debugVolumeMounts]
       
       const deployment: k8s.V1Deployment = {
         metadata: {
@@ -352,14 +361,9 @@ class K8sService {
               labels: { app: service.name }
             },
             spec: {
-              // 添加 Init Container（如果启用了调试工具）
-              ...(debugConfig?.enabled && {
-                initContainers: [
-                  this.buildDebugInitContainer(
-                    debugConfig,
-                    debugConfig.mountPath || '/debug-tools'
-                  )
-                ]
+              // 添加 Init Containers（如果有调试工具）
+              ...(debugInitContainers.length > 0 && {
+                initContainers: debugInitContainers
               }),
               containers: [{
                 name: service.name,
@@ -662,19 +666,24 @@ class K8sService {
       })
     }
 
-    // 如果启用了调试工具，添加调试工具卷和挂载
-    const debugConfig = service.debug_config as DebugConfig | null | undefined
-    if (debugConfig?.enabled) {
-      volumes.push({
-        name: 'debug-tools',
-        emptyDir: {}
-      })
-      
-      volumeMounts.push({
-        name: 'debug-tools',
-        mountPath: debugConfig.mountPath || '/debug-tools'
-      })
-    }
+    // 规范化调试配置（支持旧格式自动转换）
+    const normalizedDebugConfig = normalizeDebugConfig(service.debug_config)
+    
+    // 生成调试工具的 Init Containers 和 Volumes
+    const debugInitContainers = generateDebugInitContainers(normalizedDebugConfig)
+    const debugVolumes = generateDebugVolumes(normalizedDebugConfig)
+    
+    // 为每个调试工具添加卷挂载到主容器
+    const debugVolumeMounts = normalizedDebugConfig?.enabled && normalizedDebugConfig.tools
+      ? normalizedDebugConfig.tools.map(tool => ({
+          name: `debug-tools-${tool.toolset}`,
+          mountPath: tool.mountPath
+        }))
+      : []
+    
+    // 合并调试工具卷和卷挂载
+    volumes.push(...debugVolumes)
+    volumeMounts.push(...debugVolumeMounts)
 
     const statefulSet: k8s.V1StatefulSet = {
       metadata: {
@@ -696,14 +705,9 @@ class K8sService {
             labels: { app: serviceName }
           },
           spec: {
-            // 添加 Init Container（如果启用了调试工具）
-            ...(debugConfig?.enabled && {
-              initContainers: [
-                this.buildDebugInitContainer(
-                  debugConfig,
-                  debugConfig.mountPath || '/debug-tools'
-                )
-              ]
+            // 添加 Init Containers（如果有调试工具）
+            ...(debugInitContainers.length > 0 && {
+              initContainers: debugInitContainers
             }),
             containers: [
               {

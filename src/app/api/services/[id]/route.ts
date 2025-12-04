@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { k8sService } from '@/lib/k8s'
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
+import { normalizeDebugConfig, validateDebugConfig } from '@/lib/debug-tools-utils'
 
 type ServiceWithProject = Prisma.ServiceGetPayload<{
   include: {
@@ -278,6 +279,12 @@ export async function GET(
       return NextResponse.json({ error: '服务不存在' }, { status: 404 })
     }
 
+    // Normalize debug_config for backward compatibility
+    if (service.debug_config) {
+      const normalizedDebugConfig = normalizeDebugConfig(service.debug_config)
+      service.debug_config = normalizedDebugConfig as Prisma.JsonValue
+    }
+
     return NextResponse.json(service)
   } catch (error: unknown) {
     console.error('[Services][GET] 获取服务失败:', error)
@@ -304,6 +311,31 @@ export async function PUT(
   }
 
   const body = rawBody as ServicePayload
+  
+  // Handle debug_config validation and normalization
+  if (Object.prototype.hasOwnProperty.call(body, 'debug_config')) {
+    const rawDebugConfig = body.debug_config
+    
+    // Normalize the config (handles legacy format conversion)
+    const normalizedConfig = normalizeDebugConfig(rawDebugConfig)
+    
+    // Validate the normalized config
+    const validation = validateDebugConfig(normalizedConfig)
+    if (!validation.valid) {
+      return NextResponse.json(
+        { 
+          error: '调试工具配置验证失败', 
+          details: validation.errors 
+        },
+        { status: 400 }
+      )
+    }
+    
+    // Replace the raw config with the normalized version
+    // Cast to Prisma.JsonValue for type compatibility
+    body.debug_config = normalizedConfig as Prisma.JsonValue | null
+  }
+  
   const updateData = sanitizeServiceData(body)
   let renameRequested = false
   let requestedName: string | null = null

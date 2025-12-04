@@ -85,12 +85,46 @@ export interface LegacyNetworkConfig {
 
 export type NetworkConfig = NetworkConfigV2 | LegacyNetworkConfig
 
-// 调试工具配置
-export interface DebugConfig {
+// 调试工具配置 - 新的多工具配置
+export interface MultiDebugConfig {
+  enabled: boolean
+  tools: DebugToolConfig[]
+}
+
+export interface DebugToolConfig {
+  toolset: 'busybox' | 'netshoot' | 'ubuntu' | 'custom'
+  mountPath: string
+  customImage?: string  // 仅当 toolset === 'custom' 时需要
+}
+
+// 调试工具配置 - 旧的单工具配置（向后兼容）
+export interface LegacyDebugConfig {
   enabled: boolean
   toolset: 'busybox' | 'netshoot' | 'ubuntu' | 'custom'
   customImage?: string
   mountPath: string
+}
+
+// 保留 DebugConfig 作为旧配置的别名，用于向后兼容
+export type DebugConfig = LegacyDebugConfig
+
+// 前端工具定义
+export interface DebugToolDefinition {
+  toolset: 'busybox' | 'netshoot' | 'ubuntu' | 'custom'
+  label: string
+  description: string
+  image: string | null  // null for custom
+  size: string
+  tools: string
+  defaultMountPath: string
+}
+
+// 快速配置预设
+export interface DebugToolPreset {
+  id: string
+  label: string
+  description: string
+  toolsets: Array<'busybox' | 'netshoot' | 'ubuntu'>
 }
 
 // 服务基础接口
@@ -120,8 +154,8 @@ export interface BaseService {
   }>
   // 网络配置（Kubernetes Service）
   network_config?: NetworkConfig
-  // 调试工具配置
-  debug_config?: DebugConfig
+  // 调试工具配置（支持新旧格式）
+  debug_config?: MultiDebugConfig | LegacyDebugConfig
 }
 
 // Application 服务 - 基于源码构建

@@ -64,11 +64,20 @@ export const LazyNetworkTab = dynamic(
   }
 )
 
+export const LazyDebugToolsTab = dynamic(
+  () => import('./DebugToolsTab').then(mod => ({ default: mod.DebugToolsTab })),
+  {
+    loading: () => <TabLoadingFallback />,
+    ssr: false
+  }
+)
+
 /**
  * Re-export types for convenience
  */
 export type { OverviewTabProps } from '@/types/service-tabs'
 export type { ConfigurationTabProps } from '@/types/service-tabs'
 export type { DeploymentsTabProps } from '@/types/service-tabs'
+export type { DebugToolsTabProps } from '@/types/service-tabs'
 export type { EnvironmentTabProps } from './EnvironmentTab'
 export type { NetworkTabProps } from './NetworkTab'

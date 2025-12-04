@@ -27,7 +27,7 @@ import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { ServiceFileManager } from '@/components/services/ServiceFileManager'
 import { ResourceUsageChart } from '@/components/services/ResourceUsageChart'
-import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyNetworkTab } from '@/components/services/LazyTabComponents'
+import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyNetworkTab, LazyDebugToolsTab } from '@/components/services/LazyTabComponents'
 import { useMetricsHistory } from '@/hooks/useMetricsHistory'
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
@@ -2596,6 +2596,22 @@ export default function ServiceDetailPage() {
                 })))
                 setHeadlessServiceEnabled(config.headlessServiceEnabled)
               }}
+            />
+          </TabsContent>
+
+          {/* 调试工具 */}
+          <TabsContent value="debug-tools" className="space-y-6">
+            <LazyDebugToolsTab
+              service={service}
+              isEditing={isEditing}
+              editedService={editedService}
+              onStartEdit={() => setIsEditing(true)}
+              onSave={handleSave}
+              onCancel={() => {
+                setIsEditing(false)
+                setEditedService(service)
+              }}
+              onUpdateService={(updates) => setEditedService({ ...editedService, ...updates })}
             />
           </TabsContent>
 

@@ -9,6 +9,7 @@ import {
   normalizeUnknownError
 } from './helpers'
 import { INVALID_SERVICE_TYPE_MESSAGE, isAllServiceTypeFilter, normalizeServiceType } from './service-type'
+import { normalizeDebugConfig, validateDebugConfig } from '@/lib/debug-tools-utils'
 
 const DEFAULT_CREATE_ERROR_MESSAGE = '服务创建失败，请稍后重试。'
 
@@ -42,7 +43,19 @@ export async function GET(request: NextRequest) {
       orderBy: { created_at: 'desc' }
     })
 
-    return NextResponse.json(services)
+    // Normalize debug_config for backward compatibility
+    const normalizedServices = services.map(service => {
+      if (service.debug_config) {
+        const normalizedDebugConfig = normalizeDebugConfig(service.debug_config)
+        return {
+          ...service,
+          debug_config: normalizedDebugConfig as Prisma.JsonValue
+        }
+      }
+      return service
+    })
+
+    return NextResponse.json(normalizedServices)
   } catch (error: unknown) {
     console.error('[Services][GET] Failed to fetch services:', error)
     const message = error instanceof Error ? error.message : '获取服务失败'
@@ -82,6 +95,29 @@ export async function POST(request: NextRequest) {
 
   if (!name) {
     return NextResponse.json({ error: '服务名称不能为空' }, { status: 400 })
+  }
+
+  // Handle debug_config validation and normalization
+  if (Object.prototype.hasOwnProperty.call(body, 'debug_config')) {
+    const rawDebugConfig = body.debug_config
+    
+    // Normalize the config (handles legacy format conversion)
+    const normalizedConfig = normalizeDebugConfig(rawDebugConfig)
+    
+    // Validate the normalized config
+    const validation = validateDebugConfig(normalizedConfig)
+    if (!validation.valid) {
+      return NextResponse.json(
+        { 
+          error: '调试工具配置验证失败', 
+          details: validation.errors 
+        },
+        { status: 400 }
+      )
+    }
+    
+    // Replace the raw config with the normalized version
+    body.debug_config = normalizedConfig as Prisma.JsonValue | null
   }
 
   const payload = sanitizeServiceData(body)

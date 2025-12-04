@@ -1,63 +1,170 @@
 'use client'
 
+import { useMemo, useCallback } from 'react'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Input } from '@/components/ui/input'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Info } from 'lucide-react'
-import type { DebugConfig } from '@/types/project'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { AlertCircle } from 'lucide-react'
+import type { MultiDebugConfig, DebugToolConfig, DebugToolPreset } from '@/types/project'
+import { DebugToolCard } from '@/components/services/debug-tools/DebugToolCard'
+import { QuickPresetSelector } from '@/components/services/debug-tools/QuickPresetSelector'
+import { UsageInstructions } from '@/components/services/debug-tools/UsageInstructions'
+import { TOOL_DEFINITIONS } from '@/components/services/debug-tools/constants'
+import { 
+  normalizeDebugConfig, 
+  validateDebugConfig,
+  type ValidationResult 
+} from '@/lib/debug-tools-utils'
 
 interface DebugToolsSectionProps {
   isEditing: boolean
-  debugConfig: DebugConfig | null | undefined
-  onUpdateDebugConfig: (config: DebugConfig | null) => void
+  debugConfig: MultiDebugConfig | null | undefined
+  onUpdateDebugConfig: (config: MultiDebugConfig | null) => void
 }
-
-const TOOLSETS = [
-  {
-    value: 'busybox' as const,
-    label: 'BusyBox',
-    description: '轻量级工具集（~5MB），包含基础 Unix 命令',
-    image: 'busybox:latest',
-    tools: 'ls, ps, netstat, wget, nc, vi, top 等'
-  },
-  {
-    value: 'netshoot' as const,
-    label: 'Netshoot',
-    description: '网络调试专用（~300MB），包含完整网络工具',
-    image: 'nicolaka/netshoot:latest',
-    tools: 'tcpdump, nmap, curl, dig, iperf3, mtr, traceroute 等'
-  },
-  {
-    value: 'ubuntu' as const,
-    label: 'Ubuntu',
-    description: '完整 Linux 环境（~80MB），可使用 apt-get 安装任何工具',
-    image: 'ubuntu:22.04',
-    tools: 'bash, curl, wget, ps, apt-get 等'
-  },
-  {
-    value: 'custom' as const,
-    label: '自定义镜像',
-    description: '使用自定义的调试工具镜像',
-    image: null,
-    tools: '取决于您的镜像'
-  }
-]
 
 export function DebugToolsSection({
   isEditing,
   debugConfig,
   onUpdateDebugConfig
 }: DebugToolsSectionProps) {
-  const enabled = debugConfig?.enabled ?? false
-  const toolset = debugConfig?.toolset ?? 'busybox'
-  const mountPath = debugConfig?.mountPath ?? '/debug-tools'
-  const customImage = debugConfig?.customImage ?? ''
+  // Normalize config (handles backward compatibility)
+  const normalizedConfig = useMemo(() => {
+    return normalizeDebugConfig(debugConfig)
+  }, [debugConfig])
+
+  // Derive state from props (controlled component pattern)
+  const selectedTools = useMemo(() => {
+    if (normalizedConfig && normalizedConfig.enabled && normalizedConfig.tools) {
+      return new Set(normalizedConfig.tools.map(t => t.toolset))
+    }
+    return new Set<string>()
+  }, [normalizedConfig])
+  
+  const toolConfigs = useMemo(() => {
+    if (normalizedConfig && normalizedConfig.enabled && normalizedConfig.tools) {
+      return new Map(normalizedConfig.tools.map(t => [t.toolset, t]))
+    }
+    return new Map<string, DebugToolConfig>()
+  }, [normalizedConfig])
+
+  // Build current config from derived state
+  const currentConfig: MultiDebugConfig | null = useMemo(() => {
+    if (selectedTools.size === 0) {
+      return null
+    }
+
+    const tools: DebugToolConfig[] = Array.from(selectedTools).map(toolset => {
+      const config = toolConfigs.get(toolset)
+      const definition = TOOL_DEFINITIONS.find(t => t.toolset === toolset)
+      
+      return {
+        toolset: toolset as DebugToolConfig['toolset'],
+        mountPath: config?.mountPath ?? definition?.defaultMountPath ?? '/debug-tools',
+        customImage: config?.customImage
+      }
+    })
+
+    return {
+      enabled: true,
+      tools
+    }
+  }, [selectedTools, toolConfigs])
+
+  // Validate config
+  const validationResult = useMemo(() => {
+    return validateDebugConfig(currentConfig)
+  }, [currentConfig])
+
+  const enabled = normalizedConfig?.enabled ?? false
+
+  // Handle enable/disable toggle
+  const handleEnableToggle = useCallback((checked: boolean) => {
+    if (checked) {
+      // Enable with no tools selected initially
+      onUpdateDebugConfig({ enabled: true, tools: [] })
+    } else {
+      // Disable completely
+      onUpdateDebugConfig(null)
+    }
+  }, [onUpdateDebugConfig])
+
+  // Handle tool selection toggle
+  const handleToolToggle = useCallback((toolset: string, selected: boolean) => {
+    const newSelected = new Set(selectedTools)
+    const newConfigs = new Map(toolConfigs)
+    
+    if (selected) {
+      newSelected.add(toolset)
+      
+      // Initialize config with default values if not exists
+      if (!newConfigs.has(toolset)) {
+        const definition = TOOL_DEFINITIONS.find(t => t.toolset === toolset)
+        newConfigs.set(toolset, {
+          toolset: toolset as DebugToolConfig['toolset'],
+          mountPath: definition?.defaultMountPath ?? '/debug-tools'
+        })
+      }
+    } else {
+      newSelected.delete(toolset)
+      newConfigs.delete(toolset)
+    }
+    
+    // Build and update config
+    const tools: DebugToolConfig[] = Array.from(newSelected).map(ts => {
+      const config = newConfigs.get(ts)
+      const definition = TOOL_DEFINITIONS.find(t => t.toolset === ts)
+      return {
+        toolset: ts as DebugToolConfig['toolset'],
+        mountPath: config?.mountPath ?? definition?.defaultMountPath ?? '/debug-tools',
+        customImage: config?.customImage
+      }
+    })
+    
+    onUpdateDebugConfig(tools.length > 0 ? { enabled: true, tools } : null)
+  }, [selectedTools, toolConfigs, onUpdateDebugConfig])
+
+  // Handle tool config update
+  const handleToolConfigUpdate = useCallback((toolset: string, updates: Partial<DebugToolConfig>) => {
+    const newConfigs = new Map(toolConfigs)
+    const currentToolConfig = newConfigs.get(toolset)
+    
+    if (currentToolConfig) {
+      newConfigs.set(toolset, {
+        ...currentToolConfig,
+        ...updates
+      })
+      
+      // Build and update config
+      const tools: DebugToolConfig[] = Array.from(selectedTools).map(ts => {
+        const config = newConfigs.get(ts)
+        const definition = TOOL_DEFINITIONS.find(t => t.toolset === ts)
+        return {
+          toolset: ts as DebugToolConfig['toolset'],
+          mountPath: config?.mountPath ?? definition?.defaultMountPath ?? '/debug-tools',
+          customImage: config?.customImage
+        }
+      })
+      
+      onUpdateDebugConfig({ enabled: true, tools })
+    }
+  }, [toolConfigs, selectedTools, onUpdateDebugConfig])
+
+  // Handle preset selection
+  const handlePresetSelect = useCallback((preset: DebugToolPreset) => {
+    const tools: DebugToolConfig[] = preset.toolsets.map(toolset => {
+      const definition = TOOL_DEFINITIONS.find(t => t.toolset === toolset)
+      return {
+        toolset,
+        mountPath: definition?.defaultMountPath ?? '/debug-tools'
+      }
+    })
+    
+    onUpdateDebugConfig({ enabled: true, tools })
+  }, [onUpdateDebugConfig])
 
   return (
     <div className="space-y-4">
-      {/* 启用开关 */}
+      {/* Enable Switch */}
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <Label className="text-base">启用调试工具</Label>
@@ -67,153 +174,61 @@ export function DebugToolsSection({
         </div>
         <Switch
           checked={enabled}
-          onCheckedChange={(checked: boolean) => {
-            if (checked) {
-              onUpdateDebugConfig({
-                enabled: true,
-                toolset: 'busybox',
-                mountPath: '/debug-tools'
-              })
-            } else {
-              onUpdateDebugConfig(null)
-            }
-          }}
+          onCheckedChange={handleEnableToggle}
           disabled={!isEditing}
         />
       </div>
 
-      {/* 工具集选择 */}
+      {/* Tool Selection and Configuration */}
       {enabled && (
         <>
+          {/* Quick Preset Selector */}
+          <QuickPresetSelector
+            onSelectPreset={handlePresetSelect}
+            disabled={!isEditing}
+          />
+
+          {/* Tool Cards */}
           <div className="space-y-3">
-            <Label className="text-base">工具集类型</Label>
-            <RadioGroup
-              value={toolset}
-              onValueChange={(value: string) => {
-                onUpdateDebugConfig({
-                  ...debugConfig,
-                  enabled: true,
-                  toolset: value as DebugConfig['toolset'],
-                  mountPath
-                })
-              }}
-              disabled={!isEditing}
-              className="space-y-3"
-            >
-              {TOOLSETS.map((ts) => (
-                <div
-                  key={ts.value}
-                  className={`flex items-start space-x-3 p-4 border rounded-lg transition-colors ${
-                    toolset === ts.value
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  } ${!isEditing ? 'opacity-60' : ''}`}
-                >
-                  <RadioGroupItem
-                    value={ts.value}
-                    id={ts.value}
-                    className="mt-1"
-                  />
-                  <div className="flex-1 space-y-1">
-                    <Label
-                      htmlFor={ts.value}
-                      className="font-medium cursor-pointer"
-                    >
-                      {ts.label}
-                    </Label>
-                    <p className="text-sm text-gray-600">{ts.description}</p>
-                    {ts.image && (
-                      <code className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                        {ts.image}
-                      </code>
-                    )}
-                    <p className="text-xs text-gray-500">
-                      <span className="font-medium">包含工具：</span> {ts.tools}
-                    </p>
-                  </div>
-                </div>
+            <Label className="text-base">选择调试工具</Label>
+            <p className="text-sm text-gray-500">
+              可以同时选择多个工具，每个工具将安装到独立的路径
+            </p>
+            
+            <div className="space-y-3">
+              {TOOL_DEFINITIONS.map((tool) => (
+                <DebugToolCard
+                  key={tool.toolset}
+                  tool={tool}
+                  selected={selectedTools.has(tool.toolset)}
+                  config={toolConfigs.get(tool.toolset)}
+                  onToggle={(selected) => handleToolToggle(tool.toolset, selected)}
+                  onUpdateConfig={(updates) => handleToolConfigUpdate(tool.toolset, updates)}
+                  disabled={!isEditing}
+                />
               ))}
-            </RadioGroup>
+            </div>
           </div>
 
-          {/* 自定义镜像输入 */}
-          {toolset === 'custom' && (
-            <div className="space-y-2">
-              <Label>自定义镜像</Label>
-              <Input
-                value={customImage}
-                onChange={(e) => {
-                  onUpdateDebugConfig({
-                    ...debugConfig,
-                    enabled: true,
-                    toolset: 'custom',
-                    customImage: e.target.value,
-                    mountPath
-                  })
-                }}
-                placeholder="例如: myregistry.com/debug-tools:latest"
-                disabled={!isEditing}
-              />
-              <p className="text-xs text-gray-500">
-                请确保镜像中包含需要的调试工具，并在 Init Container 中将工具复制到挂载路径
-              </p>
-            </div>
+          {/* Validation Errors */}
+          {!validationResult.valid && validationResult.errors.length > 0 && (
+            <Alert className="bg-red-50 border-red-200 text-red-900">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="space-y-1">
+                  <p className="font-medium">配置错误：</p>
+                  <ul className="list-disc list-inside space-y-1">
+                    {validationResult.errors.map((error, index) => (
+                      <li key={index} className="text-sm">{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              </AlertDescription>
+            </Alert>
           )}
 
-          {/* 挂载路径 */}
-          <div className="space-y-2">
-            <Label>工具挂载路径</Label>
-            <Input
-              value={mountPath}
-              onChange={(e) => {
-                onUpdateDebugConfig({
-                  ...debugConfig,
-                  enabled: true,
-                  toolset,
-                  mountPath: e.target.value,
-                  ...(toolset === 'custom' && customImage ? { customImage } : {})
-                })
-              }}
-              placeholder="/debug-tools"
-              disabled={!isEditing}
-            />
-            <p className="text-xs text-gray-500">
-              工具将被复制到此路径，建议使用默认值 <code>/debug-tools</code>
-            </p>
-          </div>
-
-          {/* 使用说明 */}
-          <Alert>
-            <Info className="h-4 w-4" />
-            <AlertTitle>使用方法</AlertTitle>
-            <AlertDescription>
-              <div className="space-y-2 text-sm mt-2">
-                <p>部署后，可通过以下方式使用调试工具：</p>
-                <pre className="bg-gray-900 text-gray-100 p-3 rounded text-xs overflow-x-auto">
-{`# 1. 进入容器
-kubectl exec -it <pod-name> -n <namespace> -- sh
-
-# 2. 使用调试工具（方式一：完整路径）
-${mountPath}/ls -la
-${mountPath}/netstat -tulpn
-${mountPath}/curl http://example.com
-
-# 3. 使用调试工具（方式二：添加到 PATH，推荐）
-export PATH=${mountPath}:$PATH
-ls -la
-netstat -tulpn
-curl http://example.com`}
-                </pre>
-                <div className="flex items-start gap-2 mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                  <Info className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-                  <p className="text-xs text-yellow-800">
-                    <strong>提示：</strong>调试工具仅在容器内部可用，不会修改原始镜像。
-                    建议在开发/测试环境使用，生产环境按需启用。
-                  </p>
-                </div>
-              </div>
-            </AlertDescription>
-          </Alert>
+          {/* Usage Instructions */}
+          <UsageInstructions config={currentConfig} />
         </>
       )}
     </div>
