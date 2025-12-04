@@ -458,16 +458,6 @@ export const DeploymentsTab = memo(function DeploymentsTab({
         />
       </div>
 
-      {/* Deployment History */}
-      <div role="region" aria-label="部署历史">
-        <DeploymentHistory
-          deployments={deployments}
-          deploymentsLoading={deploymentsLoading}
-          deploymentsError={deploymentsError}
-          onRefresh={onRefreshDeployments}
-        />
-      </div>
-
       {/* Build History - Only for Application services */}
       {isApplicationService && (
         <div role="region" aria-label="构建历史">
@@ -484,6 +474,16 @@ export const DeploymentsTab = memo(function DeploymentsTab({
           />
         </div>
       )}
+
+      {/* Deployment History */}
+      <div role="region" aria-label="部署历史">
+        <DeploymentHistory
+          deployments={deployments}
+          deploymentsLoading={deploymentsLoading}
+          deploymentsError={deploymentsError}
+          onRefresh={onRefreshDeployments}
+        />
+      </div>
     </div>
   )
 })
