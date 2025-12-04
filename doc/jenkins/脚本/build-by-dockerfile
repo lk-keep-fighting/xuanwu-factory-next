@@ -174,9 +174,9 @@ pipeline {
 
           // run docker build inside subpath if provided to limit filesystem scanning
           def subpath = env.BUILD_SUBPATH?.trim()
-          echo "Running docker build with legacy mode"
+          echo "Running docker build with traditional mode (BuildKit disabled for compatibility)"
           
-          // 使用传统 Docker 构建，禁用 BuildKit
+          // 使用传统 Docker 构建模式（兼容没有 buildx 的环境）
           def dockerBuildCmd = "set -eu; DOCKER_BUILDKIT=0 docker build -f ${params.DOCKERFILE_PATH} ${buildArgFlags} -t ${image} ."
           
           if (subpath) {

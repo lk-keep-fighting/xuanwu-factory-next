@@ -19,8 +19,8 @@ COPY scripts ./scripts
 
 # ============ 阶段 2: 安装全部依赖 ============
 FROM base AS deps
-# 使用 pnpm 缓存加速安装
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+# 安装全部依赖（包括 devDependencies，用于构建）
+RUN pnpm install --frozen-lockfile
 
 # ============ 阶段 3: 构建应用 ============
 FROM deps AS builder
