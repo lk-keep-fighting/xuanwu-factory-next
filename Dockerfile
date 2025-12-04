@@ -19,7 +19,8 @@ COPY scripts ./scripts
 
 # ============ 阶段 2: 安装全部依赖 ============
 FROM base AS deps
-RUN pnpm install --frozen-lockfile
+# 使用 pnpm 缓存加速安装
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 # ============ 阶段 3: 构建应用 ============
 FROM deps AS builder
@@ -35,27 +36,13 @@ ENV NODE_ENV=production
 RUN pnpm build
 
 # ============ 阶段 4: 运行时镜像 ============
-FROM node:20-alpine AS runner
+# 使用预构建的基础镜像（已包含 kubectl 和系统工具）
+FROM nexus.aimstek.cn/xuanwu-factory/xuanwu-factory-next-baseimage:dev-251204-220037-2041671 AS runner
 
-# 安装必要的系统依赖（包括 kubectl 和调试工具）
-RUN apk add --no-cache \
-    ca-certificates \
-    curl \
-    wget \
-    tzdata \
-    kubectl \
-    busybox-extras \
-    bind-tools \
-    netcat-openbsd \
-    tcpdump \
-    strace \
-    procps \
-    htop \
-    vim && \
-    kubectl version --client || echo "kubectl installed"
-
-# 设置时区
-ENV TZ=Asia/Shanghai
+# 启用 pnpm（基础镜像继承自 node:20-alpine）
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
 
 WORKDIR /app
 
