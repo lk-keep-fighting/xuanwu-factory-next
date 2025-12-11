@@ -70,7 +70,16 @@ export interface K8sServiceStatus {
   podStatus?: {
     imagePullFailed?: boolean
     imagePullError?: string
-    containerStatuses?: Array<Record<string, unknown>>
+    pods?: Array<{
+      name: string
+      phase: string
+      containers: Array<{
+        name: string
+        ready: boolean
+        restartCount: number
+        state?: Record<string, unknown>
+      }>
+    }>
   } | null
   metrics?: {
     cpu: {

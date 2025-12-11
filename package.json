@@ -12,6 +12,7 @@
     "ws:start": "NODE_ENV=production node websocket-server.js"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^1.0.0",
     "@hookform/resolvers": "^5.2.2",
     "@kubernetes/client-node": "^1.4.0",
     "@prisma/client": "^6.18.0",
@@ -29,6 +30,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@types/ws": "^8.18.1",
+    "ai": "^4.0.0",
     "axios": "^1.13.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -38,9 +40,11 @@
     "mysql2": "^3.11.3",
     "next": "16.0.1",
     "next-themes": "^0.4.6",
+    "openai": "^4.73.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-hook-form": "^7.65.0",
+    "react-markdown": "^9.0.1",
     "recharts": "^3.5.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
@@ -48,7 +52,7 @@
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0",
     "xterm-addon-web-links": "^0.9.0",
-    "zod": "^4.1.12"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
@@ -58,10 +62,12 @@
     "autoprefixer": "^10.4.21",
     "eslint": "^9",
     "eslint-config-next": "16.0.1",
+    "fast-check": "^3.22.0",
     "postcss": "^8.5.6",
     "prisma": "^6.18.0",
     "tailwindcss": "^3.4.18",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.0"
   }
 }

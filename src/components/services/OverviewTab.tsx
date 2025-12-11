@@ -1,14 +1,263 @@
 'use client'
 
-import { memo, useCallback } from 'react'
-import { RefreshCw, Activity, AlertCircle, TrendingUp, Box, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { memo, useCallback, useState, useEffect, useRef } from 'react'
+import { RefreshCw, Activity, AlertCircle, TrendingUp, Box, CheckCircle, XCircle, Clock, Monitor, Eye, Copy } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ResourceUsageChart } from './ResourceUsageChart'
 import { formatDateTime } from '@/lib/date-utils'
 import { STATUS_COLORS, STATUS_LABELS } from '@/lib/service-constants'
 import type { OverviewTabProps, MetricsDataPoint } from '@/types/service-tabs'
+
+/**
+ * PodMonitorDialog - Real-time Pod monitoring dialog
+ */
+const PodMonitorDialog = memo(function PodMonitorDialog({
+  open,
+  onClose,
+  serviceId,
+  serviceName
+}: {
+  open: boolean
+  onClose: () => void
+  serviceId: string
+  serviceName: string
+}) {
+  const [podStatus, setPodStatus] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isMonitoring, setIsMonitoring] = useState(false)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const fetchPodStatus = useCallback(async () => {
+    if (!serviceId) return
+
+    try {
+      setLoading(true)
+      setError(null)
+      const response = await fetch(`/api/services/${serviceId}/status`)
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '获取 Pod 状态失败')
+      }
+
+      // 处理不同的 podStatus 结构
+      const podStatus = data.podStatus
+      if (podStatus) {
+        // 如果有 pods 数组（Deployment），直接使用
+        if (podStatus.pods && Array.isArray(podStatus.pods)) {
+          setPodStatus({ pods: podStatus.pods })
+        }
+        // 如果有 containerStatuses（StatefulSet），转换为 pods 格式
+        else if (podStatus.containerStatuses && Array.isArray(podStatus.containerStatuses)) {
+          setPodStatus({
+            pods: [{
+              name: `${serviceName}-pod`,
+              phase: 'Running', // StatefulSet 通常是运行状态
+              containers: podStatus.containerStatuses.map((c: any) => ({
+                name: c.name,
+                ready: c.ready || false,
+                restartCount: c.restartCount || 0,
+                state: c.state
+              }))
+            }]
+          })
+        }
+        // 其他情况设为空
+        else {
+          setPodStatus({ pods: [] })
+        }
+      } else {
+        setPodStatus({ pods: [] })
+      }
+    } catch (err: any) {
+      setError(err.message || '获取 Pod 状态失败')
+      setPodStatus(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [serviceId])
+
+  const startMonitoring = useCallback(() => {
+    setIsMonitoring(true)
+    fetchPodStatus()
+    
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+    }
+    
+    intervalRef.current = setInterval(() => {
+      fetchPodStatus()
+    }, 3000) // Refresh every 3 seconds
+  }, [fetchPodStatus])
+
+  const stopMonitoring = useCallback(() => {
+    setIsMonitoring(false)
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+  }, [])
+
+  // Handle dialog open/close
+  useEffect(() => {
+    if (open) {
+      startMonitoring()
+    } else {
+      stopMonitoring()
+      setPodStatus(null)
+      setError(null)
+    }
+
+    return () => {
+      stopMonitoring()
+    }
+  }, [open, startMonitoring, stopMonitoring])
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Monitor className="h-5 w-5" />
+            Pod 实时监控 - {serviceName}
+          </DialogTitle>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${isMonitoring ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+              <span className="text-sm text-gray-600">
+                {isMonitoring ? '实时监控中 (每3秒刷新)' : '监控已停止'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchPodStatus}
+                disabled={loading}
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                手动刷新
+              </Button>
+              <Button
+                variant={isMonitoring ? 'destructive' : 'default'}
+                size="sm"
+                onClick={isMonitoring ? stopMonitoring : startMonitoring}
+              >
+                {isMonitoring ? '停止监控' : '开始监控'}
+              </Button>
+            </div>
+          </div>
+
+          {error ? (
+            <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 p-4 rounded">
+              <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          ) : !podStatus?.pods || podStatus.pods.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              {loading ? (
+                <div className="flex items-center justify-center gap-2">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  加载 Pod 状态中...
+                </div>
+              ) : (
+                '暂无 Pod 信息'
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {podStatus.pods.map((pod: any, podIdx: number) => (
+                <Card key={podIdx} className="border-l-4 border-l-blue-500">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Box className="h-4 w-4 text-blue-600" />
+                        <span className="font-mono text-sm font-medium">{pod.name}</span>
+                      </div>
+                      <Badge variant="outline" className={
+                        pod.phase === 'Running' ? 'border-green-500 text-green-700' :
+                        pod.phase === 'Pending' ? 'border-yellow-500 text-yellow-700' :
+                        pod.phase === 'Failed' ? 'border-red-500 text-red-700' :
+                        'border-gray-500 text-gray-700'
+                      }>
+                        {pod.phase}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {pod.containers && pod.containers.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="text-sm font-medium text-gray-700">容器状态:</div>
+                        {pod.containers.map((container: any, containerIdx: number) => (
+                          <div key={containerIdx} className="bg-gray-50 rounded-lg p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                {container.ready ? (
+                                  <CheckCircle className="h-4 w-4 text-green-600" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-red-600" />
+                                )}
+                                <span className="font-mono text-sm font-medium">{container.name}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {container.restartCount > 0 && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    重启 {container.restartCount}次
+                                  </Badge>
+                                )}
+                                <Badge variant={container.ready ? 'default' : 'destructive'} className="text-xs">
+                                  {container.ready ? '就绪' : '未就绪'}
+                                </Badge>
+                              </div>
+                            </div>
+                            {container.state && (
+                              <div className="text-xs text-gray-600">
+                                <div className="grid grid-cols-2 gap-2">
+                                  {container.state.running && (
+                                    <div>
+                                      <span className="font-medium">运行开始:</span>
+                                      <div className="font-mono">
+                                        {formatDateTime(container.state.running.startedAt)}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {container.state.waiting && (
+                                    <div>
+                                      <span className="font-medium">等待原因:</span>
+                                      <div>{container.state.waiting.reason}</div>
+                                    </div>
+                                  )}
+                                  {container.state.terminated && (
+                                    <div>
+                                      <span className="font-medium">终止原因:</span>
+                                      <div>{container.state.terminated.reason}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+})
 
 /**
  * StatusCard - Shows service status, replicas, and errors
@@ -18,13 +267,19 @@ const StatusCard = memo(function StatusCard({
   k8sStatus,
   k8sStatusLoading,
   k8sStatusError,
-  onRefresh
+  onRefresh,
+  serviceId,
+  serviceName
 }: {
   k8sStatus: OverviewTabProps['k8sStatus']
   k8sStatusLoading: boolean
   k8sStatusError: string | null
   onRefresh: () => Promise<void>
+  serviceId: string
+  serviceName: string
 }) {
+  const [podMonitorOpen, setPodMonitorOpen] = useState(false)
+  
   const status = k8sStatus?.status?.toLowerCase() || 'unknown'
   const statusColor = STATUS_COLORS[status as keyof typeof STATUS_COLORS] || 'bg-gray-100 text-gray-800'
   const statusLabel = STATUS_LABELS[status as keyof typeof STATUS_LABELS] || '未知'
@@ -33,63 +288,86 @@ const StatusCard = memo(function StatusCard({
   const readyReplicas = k8sStatus?.readyReplicas ?? 0
   const totalReplicas = k8sStatus?.replicas ?? 0
   const hasReplicaInfo = totalReplicas > 0
+  const hasPods = k8sStatus?.podStatus?.pods && k8sStatus.podStatus.pods.length > 0
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">服务状态</CardTitle>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onRefresh}
-          disabled={k8sStatusLoading}
-        >
-          <RefreshCw className={`h-4 w-4 ${k8sStatusLoading ? 'animate-spin' : ''}`} />
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {k8sStatusError ? (
-          <div className="flex items-start gap-2 text-sm text-red-600">
-            <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-            <span>{k8sStatusError}</span>
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">服务状态</CardTitle>
+          <div className="flex gap-1">
+            {hasPods && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPodMonitorOpen(true)}
+                className="gap-1"
+                title="Pod 实时监控"
+              >
+                <Eye className="h-4 w-4" />
+                监控
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onRefresh}
+              disabled={k8sStatusLoading}
+            >
+              <RefreshCw className={`h-4 w-4 ${k8sStatusLoading ? 'animate-spin' : ''}`} />
+            </Button>
           </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Badge className={statusColor}>{statusLabel}</Badge>
-              {hasReplicaInfo && (
-                <span className="text-sm text-gray-600">
-                  副本: {readyReplicas}/{totalReplicas}
-                </span>
+        </CardHeader>
+        <CardContent>
+          {k8sStatusError ? (
+            <div className="flex items-start gap-2 text-sm text-red-600">
+              <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>{k8sStatusError}</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Badge className={statusColor}>{statusLabel}</Badge>
+                {hasReplicaInfo && (
+                  <span className="text-sm text-gray-600">
+                    副本: {readyReplicas}/{totalReplicas}
+                  </span>
+                )}
+              </div>
+              
+              {k8sStatus?.error && (
+                <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-50 p-2 rounded">
+                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>{k8sStatus.error}</span>
+                </div>
+              )}
+              
+              {hasPods && (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <Box className="h-3 w-3 text-blue-600" />
+                  <span>{k8sStatus?.podStatus?.pods?.length || 0} 个 Pod</span>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    onClick={() => setPodMonitorOpen(true)}
+                    className="h-auto p-0 text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    查看详情
+                  </Button>
+                </div>
               )}
             </div>
-            
-            {k8sStatus?.error && (
-              <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-50 p-2 rounded">
-                <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                <span>{k8sStatus.error}</span>
-              </div>
-            )}
-            
-            {k8sStatus?.podStatus?.containerStatuses && Array.isArray(k8sStatus.podStatus.containerStatuses) && (
-              <div className="text-xs text-gray-500">
-                <div className="font-medium mb-1">容器状态:</div>
-                {k8sStatus.podStatus.containerStatuses.map((container: any, idx: number) => (
-                  <div key={idx} className="flex items-center gap-2 py-1">
-                    {container.ready ? (
-                      <CheckCircle className="h-3 w-3 text-green-600" />
-                    ) : (
-                      <XCircle className="h-3 w-3 text-red-600" />
-                    )}
-                    <span className="font-mono">{container.name || `容器 ${idx + 1}`}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          )}
+        </CardContent>
+      </Card>
+
+      <PodMonitorDialog
+        open={podMonitorOpen}
+        onClose={() => setPodMonitorOpen(false)}
+        serviceId={serviceId}
+        serviceName={serviceName}
+      />
+    </>
   )
 })
 
@@ -104,6 +382,64 @@ const DeploymentInfoCard = memo(function DeploymentInfoCard({
   currentDeployment: OverviewTabProps['currentDeployment']
   ongoingDeployment: OverviewTabProps['ongoingDeployment']
 }) {
+  const handleCopyImage = useCallback(async (imageText: string) => {
+    try {
+      await navigator.clipboard.writeText(imageText)
+      toast.success('镜像地址已复制到剪贴板')
+    } catch (error) {
+      toast.error('复制失败')
+    }
+  }, [])
+
+  // 解析镜像地址，分离镜像名称和标签
+  const parseImageDisplay = useCallback((imageDisplay: string) => {
+    const lastColonIndex = imageDisplay.lastIndexOf(':')
+    if (lastColonIndex === -1) {
+      return { imageName: imageDisplay, tag: 'latest' }
+    }
+    
+    const imageName = imageDisplay.substring(0, lastColonIndex)
+    const tag = imageDisplay.substring(lastColonIndex + 1)
+    
+    // 如果标签包含 '/' 或者看起来像是镜像名称的一部分，则认为没有标签
+    if (tag.includes('/') || tag.includes('.')) {
+      return { imageName: imageDisplay, tag: 'latest' }
+    }
+    
+    return { imageName, tag }
+  }, [])
+
+  // 渲染镜像信息的组件
+  const ImageDisplay = useCallback(({ 
+    imageDisplay, 
+    textColor = 'text-gray-700',
+    isOngoing = false
+  }: { 
+    imageDisplay: string
+    textColor?: string
+    isOngoing?: boolean
+  }) => {
+    const { imageName, tag } = parseImageDisplay(imageDisplay)
+    
+    return (
+      <div className="flex-1 min-w-0">
+        <div className={`text-sm font-mono ${textColor} break-all leading-relaxed`}>
+          {imageName}
+        </div>
+        <div className="flex items-center gap-1 mt-2">
+          <span className="text-xs text-gray-500 font-medium">TAG</span>
+          <div className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-mono ${
+            isOngoing 
+              ? 'bg-blue-100 text-blue-800 border border-blue-200' 
+              : 'bg-gray-100 text-gray-700 border border-gray-200'
+          }`}>
+            {tag}
+          </div>
+        </div>
+      </div>
+    )
+  }, [parseImageDisplay])
+
   return (
     <Card>
       <CardHeader>
@@ -122,18 +458,44 @@ const DeploymentInfoCard = memo(function DeploymentInfoCard({
                   <Clock className="h-4 w-4 text-blue-600 animate-pulse" />
                   <span className="text-sm font-medium text-blue-900">部署进行中</span>
                 </div>
-                <div className="text-xs text-blue-700 font-mono">
-                  {ongoingDeployment.display}
+                <div className="flex items-start gap-2">
+                  <ImageDisplay 
+                    imageDisplay={ongoingDeployment.display}
+                    textColor="text-blue-700"
+                    isOngoing={true}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCopyImage(ongoingDeployment.display)}
+                    className="h-6 w-6 p-0 text-blue-600 hover:text-blue-800 flex-shrink-0 mt-1"
+                    title="复制镜像地址"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </Button>
                 </div>
               </div>
             )}
             
             {currentDeployment && (
               <div>
-                <div className="text-xs text-gray-600 mb-1">当前部署</div>
-                <div className="flex items-center gap-2">
-                  <Box className="h-4 w-4 text-gray-600" />
-                  <span className="text-sm font-mono">{currentDeployment.display}</span>
+                <div className="text-xs text-gray-600 mb-2">当前镜像</div>
+                <div className="flex items-start gap-2">
+                  <Box className="h-4 w-4 text-gray-600 flex-shrink-0 mt-1" />
+                  <ImageDisplay 
+                    imageDisplay={currentDeployment.display}
+                    textColor="text-gray-700"
+                    isOngoing={false}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCopyImage(currentDeployment.display)}
+                    className="h-6 w-6 p-0 text-gray-600 hover:text-gray-800 flex-shrink-0 mt-1"
+                    title="复制镜像地址"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </Button>
                 </div>
                 {currentDeployment.record?.metadata && 
                  typeof currentDeployment.record.metadata === 'object' && 
@@ -361,6 +723,8 @@ export const OverviewTab = memo(function OverviewTab({
           k8sStatusLoading={k8sStatusLoading}
           k8sStatusError={k8sStatusError}
           onRefresh={onRefreshStatus}
+          serviceId={service.id || ''}
+          serviceName={service.name || ''}
         />
         <DeploymentInfoCard
           currentDeployment={currentDeployment}

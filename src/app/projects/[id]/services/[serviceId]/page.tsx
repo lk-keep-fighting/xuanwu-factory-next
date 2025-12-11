@@ -28,6 +28,8 @@ import { ImageReferencePicker, type ImageReferenceValue } from '@/components/ser
 import { ServiceFileManager } from '@/components/services/ServiceFileManager'
 import { ResourceUsageChart } from '@/components/services/ResourceUsageChart'
 import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyNetworkTab, LazyDebugToolsTab } from '@/components/services/LazyTabComponents'
+import { LogViewer } from '@/components/shared/LogViewer'
+// import { AIDiagnosticPanel } from '@/components/ai-diagnostic/AIDiagnosticPanel' // 暂时屏蔽
 import { useMetricsHistory } from '@/hooks/useMetricsHistory'
 import { serviceSvc } from '@/service/serviceSvc'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
@@ -246,6 +248,8 @@ export default function ServiceDetailPage() {
     return initialTab === 'overview'
   })
   const [metricsTimeRange, setMetricsTimeRange] = useState('1h')
+  // AI 诊断面板状态 - 暂时屏蔽
+  // const [aiDiagnosticOpen, setAiDiagnosticOpen] = useState(false)
 
   // 使用 Prometheus 历史数据 hook
   const { dataPoints: metricsHistory, isLoading: metricsLoading, error: metricsError, refresh: refreshMetrics } = useMetricsHistory({
@@ -1301,7 +1305,7 @@ export default function ServiceDetailPage() {
     }
   }, [serviceId])
 
-  const logsContainerRef = useRef<HTMLDivElement>(null)
+
 
   const loadLogs = useCallback(async (showToast = false) => {
     if (!serviceId) return
@@ -1331,12 +1335,6 @@ export default function ServiceDetailPage() {
     } finally {
       setLogsLoading(false)
       setHasLoadedLogs(true)
-      // 日志加载完成后自动滚动到底部
-      setTimeout(() => {
-        if (logsContainerRef.current) {
-          logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight
-        }
-      }, 100)
     }
   }, [serviceId])
 
@@ -2351,9 +2349,12 @@ export default function ServiceDetailPage() {
                 返回
               </Button>
 
-              <div className="flex flex-wrap items-start gap-3">
+              <div className="flex items-center gap-4">
+                {/* 服务名称和操作 */}
                 <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-bold text-gray-900">{service.name}</h1>
+                  <h1 className="text-2xl font-bold text-gray-900">
+                    {service.name}
+                  </h1>
                   {canRenameService && (
                     <Button
                       type="button"
@@ -2367,11 +2368,15 @@ export default function ServiceDetailPage() {
                     </Button>
                   )}
                 </div>
+                
+                {/* 服务类型 */}
                 <Badge variant="outline">
                   {service.type === ServiceType.APPLICATION && 'Application'}
                   {service.type === ServiceType.DATABASE && 'Database'}
                   {service.type === ServiceType.IMAGE && 'Image'}
                 </Badge>
+                
+                {/* 服务状态 */}
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${statusColor}`} />
                   <span className="text-sm text-gray-700">{statusLabel}</span>
@@ -2429,6 +2434,15 @@ export default function ServiceDetailPage() {
                   命令行
                 </Button>
               )}
+              {/* AI 诊断功能暂时屏蔽 */}
+              {/* <Button
+                onClick={() => setAiDiagnosticOpen(true)}
+                variant="outline"
+                className="gap-2"
+              >
+                <Activity className="w-4 h-4" />
+                AI 诊断
+              </Button> */}
               <Button
                 onClick={() => setDeleteDialogOpen(true)}
                 variant="destructive"
@@ -2521,8 +2535,8 @@ export default function ServiceDetailPage() {
               onUpdateVolumes={setVolumes}
               onUpdateNetwork={(config) => {
                 setNetworkServiceType(config.serviceType)
-                setNetworkPorts(config.ports.map(p => ({
-                  id: generatePortId(),
+                setNetworkPorts(config.ports.map((p, index) => ({
+                  id: networkPorts[index]?.id ?? generatePortId(),
                   containerPort: String(p.containerPort),
                   servicePort: String(p.servicePort ?? p.containerPort),
                   protocol: p.protocol ?? 'TCP',
@@ -2576,6 +2590,7 @@ export default function ServiceDetailPage() {
               networkPorts={networkPorts}
               headlessServiceEnabled={headlessServiceEnabled}
               project={project}
+              serviceName={service.name}
               hasPendingNetworkDeploy={hasPendingNetworkDeploy}
               onStartEdit={() => setIsEditing(true)}
               onSave={handleSave}
@@ -2585,8 +2600,8 @@ export default function ServiceDetailPage() {
               }}
               onUpdateNetwork={(config) => {
                 setNetworkServiceType(config.serviceType)
-                setNetworkPorts(config.ports.map(p => ({
-                  id: generatePortId(),
+                setNetworkPorts(config.ports.map((p, index) => ({
+                  id: networkPorts[index]?.id ?? generatePortId(),
                   containerPort: String(p.containerPort),
                   servicePort: String(p.servicePort ?? p.containerPort),
                   protocol: p.protocol ?? 'TCP',
@@ -2732,37 +2747,20 @@ export default function ServiceDetailPage() {
 
           {/* 日志 */}
           <TabsContent value="logs" className="space-y-6">
-            <Card>
-              <CardHeader className="flex flex-row items-start justify-between gap-4">
-                <div>
-                  <CardTitle>服务日志</CardTitle>
-                  <CardDescription>查看服务最近的运行日志</CardDescription>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => loadLogs(true)}
-                  disabled={logsLoading}
-                >
-                  <RefreshCw className={`w-4 h-4 ${logsLoading ? 'animate-spin' : ''}`} />
-                  刷新
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <div ref={logsContainerRef} className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm min-h-[400px] max-h-[500px] overflow-y-auto">
-                  {logsLoading ? (
-                    <p className="text-gray-400">日志加载中...</p>
-                  ) : logsError ? (
-                    <p className="text-red-400 whitespace-pre-wrap">加载日志失败：{logsError}</p>
-                  ) : logs ? (
-                    <pre className="whitespace-pre-wrap">{logs}</pre>
-                  ) : (
-                    <p className="text-gray-400">暂无日志</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <LogViewer
+              serviceId={serviceId}
+              title="服务日志"
+              description="查看服务最近的运行日志"
+              logs={logs}
+              loading={logsLoading}
+              error={logsError}
+              onRefresh={() => loadLogs(true)}
+              showStreaming={false}
+              showSearch={true}
+              showLevelFilter={true}
+              showExport={true}
+              initialTailLines={100}
+            />
           </TabsContent>
 
           {/* 文件管理 */}
@@ -3117,6 +3115,16 @@ export default function ServiceDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* AI 诊断面板 - 暂时屏蔽 */}
+      {/* {aiDiagnosticOpen && (
+        <AIDiagnosticPanel
+          serviceId={serviceId}
+          serviceName={service.name}
+          k8sStatus={k8sStatusInfo}
+          onClose={() => setAiDiagnosticOpen(false)}
+        />
+      )} */}
     </div>
   )
 }

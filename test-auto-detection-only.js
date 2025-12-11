@@ -1,0 +1,184 @@
+#!/usr/bin/env node
+
+/**
+ * 测试自动检测功能（不使用AI模型）
+ */
+
+const WebSocket = require('ws')
+
+async function testAutoDetectionOnly() {
+  console.log('🧪 测试自动检测功能（不使用AI模型）...\n')
+  
+  // 临时禁用AI模型来测试fallback逻辑
+  process.env.AI_PROVIDER = 'disabled'
+  process.env.OLLAMA_BASE_URL = 'http://invalid-url:99999'
+  
+  const podName = 'test-pod'
+  const namespace = 'default'
+  const container = 'main'
+  
+  const wsUrl = `ws://localhost:3001/api/debug/claude/${podName}?namespace=${namespace}&container=${container}`
+  
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl)
+    let messageCount = 0
+    let commandExecutions = []
+    let claudeResponses = []
+    let startTime = null
+    
+    ws.on('open', () => {
+      console.log('✅ WebSocket 连接已建立')
+      
+      // 等待欢迎消息后发送测试消息
+      setTimeout(() => {
+        console.log('📤 发送测试消息: "查看Pod的日志"')
+        startTime = Date.now()
+        ws.send(JSON.stringify({
+          type: 'claude_request',
+          message: '查看Pod的日志',
+          context: {}
+        }))
+      }, 1000)
+    })
+    
+    ws.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString())
+        messageCount++
+        
+        const timestamp = Date.now()
+        const timeSinceStart = startTime ? timestamp - startTime : 0
+        
+        console.log(`📨 [${timeSinceStart}ms] 消息 ${messageCount}: ${message.type}`)
+        
+        switch (message.type) {
+          case 'claude_response':
+            claudeResponses.push({
+              content: message.content,
+              timestamp: timestamp,
+              length: message.content.length
+            })
+            console.log(`💬 Claude 响应 (${message.content.length} 字符):`)
+            console.log(`   "${message.content.substring(0, 150)}${message.content.length > 150 ? '...' : ''}"`)
+            
+            // 检查是否包含执行提示
+            if (message.content.includes('🔄') || message.content.includes('正在执行命令')) {
+              console.log('✅ 发现执行提示!')
+            }
+            break
+            
+          case 'command_start':
+            console.log(`🔄 开始执行命令: ${message.command}`)
+            commandExecutions.push({
+              command: message.command,
+              description: message.description,
+              startTime: timestamp
+            })
+            break
+            
+          case 'command_output':
+            console.log(`✅ 命令执行完成: ${message.command}`)
+            console.log(`📊 退出码: ${message.exitCode}, 耗时: ${message.duration}ms`)
+            
+            // 更新命令执行记录
+            const lastExecution = commandExecutions[commandExecutions.length - 1]
+            if (lastExecution) {
+              lastExecution.completed = true
+              lastExecution.exitCode = message.exitCode
+              lastExecution.duration = message.duration
+            }
+            break
+            
+          case 'error':
+            console.log('❌ 错误:', message.message)
+            break
+        }
+        
+        // 收到足够消息后关闭连接
+        if (messageCount >= 5 || (startTime && timeSinceStart > 5000)) {
+          setTimeout(() => ws.close(), 1000)
+        }
+      } catch (error) {
+        console.error('解析消息失败:', error)
+      }
+    })
+    
+    ws.on('close', () => {
+      console.log('\n🔌 连接已关闭')
+      
+      console.log('\n📊 测试结果分析:')
+      console.log(`- 总消息数: ${messageCount}`)
+      console.log(`- Claude 响应数: ${claudeResponses.length}`)
+      console.log(`- 命令执行数: ${commandExecutions.length}`)
+      
+      if (commandExecutions.length > 0) {
+        console.log('\n🔧 执行的命令:')
+        commandExecutions.forEach((cmd, index) => {
+          console.log(`  ${index + 1}. ${cmd.command}`)
+          console.log(`     描述: ${cmd.description}`)
+          if (cmd.completed) {
+            console.log(`     结果: 退出码 ${cmd.exitCode}, 耗时 ${cmd.duration}ms`)
+          } else {
+            console.log(`     状态: 未完成`)
+          }
+        })
+      }
+      
+      if (claudeResponses.length > 0) {
+        console.log('\n💬 Claude 响应内容:')
+        const fullResponse = claudeResponses.map(r => r.content).join('')
+        console.log(`完整响应 (${fullResponse.length} 字符):`)
+        console.log(`"${fullResponse}"`)
+        
+        // 检查是否包含执行提示
+        const hasExecutionHints = fullResponse.includes('正在执行命令') || fullResponse.includes('🔄')
+        console.log(`包含执行提示: ${hasExecutionHints ? '✅ 是' : '❌ 否'}`)
+      }
+      
+      resolve({
+        totalMessages: messageCount,
+        claudeResponses: claudeResponses.length,
+        commandExecutions: commandExecutions.length,
+        autoExecutionWorking: commandExecutions.length > 0
+      })
+    })
+    
+    ws.on('error', (error) => {
+      console.error('❌ WebSocket 错误:', error.message)
+      reject(error)
+    })
+    
+    // 超时保护
+    setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close()
+      }
+    }, 8000)
+  })
+}
+
+async function main() {
+  console.log('🚀 开始测试自动检测功能（不使用AI模型）\n')
+  
+  try {
+    const result = await testAutoDetectionOnly()
+    
+    console.log('\n🎯 测试总结:')
+    if (result.autoExecutionWorking) {
+      console.log('✅ 自动检测和执行功能正常工作')
+      console.log(`📈 成功执行了 ${result.commandExecutions} 个命令`)
+    } else {
+      console.log('⚠️ 自动检测功能可能有问题')
+      console.log('💡 这意味着fallback逻辑没有正确触发')
+    }
+    
+  } catch (error) {
+    console.error('❌ 测试失败:', error)
+    process.exit(1)
+  }
+}
+
+// 运行测试
+if (require.main === module) {
+  main()
+}

@@ -1126,24 +1126,18 @@ class K8sService {
       })
 
       // 获取 Pod 信息以检查镜像拉取状态
-      let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; containerStatuses?: any[] } | null = null
+      let podStatusInfo: { imagePullFailed?: boolean; imagePullError?: string; pods?: any[] } | null = null
       try {
-        const pods = await this.coreApi.listNamespacedPod({
+        const podsResponse = await this.coreApi.listNamespacedPod({
           namespace: targetNamespace,
           labelSelector: `app=${serviceName}`
         })
 
-        // 检查 Pod 中的容器状态（只取第一个 Pod 的主容器状态，避免重复显示）
-        const containerStatuses: any[] = []
-        let imagePullFailed = false
-        let imagePullError = ''
-        
-        // 只取第一个 Pod 的容器状态用于显示
-        const firstPod = pods.items[0]
-        if (firstPod) {
-          const podContainerStatuses = firstPod.status?.containerStatuses || []
-          console.log(`[K8s][Deployment] Service ${serviceName} has ${podContainerStatuses.length} containers:`, 
-            podContainerStatuses.map((c: any) => c.name))
+        // 收集所有 Pod 及其容器状态
+        const podsWithStatus = podsResponse.items.map((pod: any) => {
+          const podName = pod.metadata?.name || 'unknown'
+          const podPhase = pod.status?.phase || 'Unknown'
+          const podContainerStatuses = pod.status?.containerStatuses || []
           
           // 过滤掉调试工具容器和其他辅助容器，只保留主应用容器
           const mainContainers = podContainerStatuses.filter((status: any) => {
@@ -1158,11 +1152,26 @@ class K8sService {
           
           // 如果过滤后没有容器，则显示所有容器
           const containersToShow = mainContainers.length > 0 ? mainContainers : podContainerStatuses
-          containerStatuses.push(...containersToShow)
-        }
+          
+          return {
+            name: podName,
+            phase: podPhase,
+            containers: containersToShow.map((c: any) => ({
+              name: c.name,
+              ready: c.ready || false,
+              restartCount: c.restartCount || 0,
+              state: c.state
+            }))
+          }
+        })
+        
+        console.log(`[K8s][Deployment] Service ${serviceName} has ${podsWithStatus.length} pods`)
         
         // 检查所有 Pod 是否有镜像拉取失败
-        for (const pod of pods.items) {
+        let imagePullFailed = false
+        let imagePullError = ''
+        
+        for (const pod of podsResponse.items) {
           const podContainerStatuses = pod.status?.containerStatuses || []
           
           // 检查是否有镜像拉取失败
@@ -1194,7 +1203,7 @@ class K8sService {
         podStatusInfo = {
           imagePullFailed,
           imagePullError: imagePullError || undefined,
-          containerStatuses
+          pods: podsWithStatus
         }
       } catch (podError) {
         console.warn('Failed to get pod status:', podError)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState, useEffect } from 'react'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -29,7 +29,9 @@ export function DebugToolsSection({
 }: DebugToolsSectionProps) {
   // Normalize config (handles backward compatibility)
   const normalizedConfig = useMemo(() => {
-    return normalizeDebugConfig(debugConfig)
+    const result = normalizeDebugConfig(debugConfig)
+    console.log('[DebugToolsSection] debugConfig:', debugConfig, 'normalized:', result)
+    return result
   }, [debugConfig])
 
   // Derive state from props (controlled component pattern)
@@ -75,10 +77,25 @@ export function DebugToolsSection({
     return validateDebugConfig(currentConfig)
   }, [currentConfig])
 
-  const enabled = normalizedConfig?.enabled ?? false
+  // Use local state to ensure immediate UI response
+  const [localEnabled, setLocalEnabled] = useState(Boolean(normalizedConfig?.enabled))
+  
+  // Sync local state with props when they change
+  useEffect(() => {
+    const propEnabled = Boolean(normalizedConfig?.enabled)
+    console.log('[DebugToolsSection] Syncing localEnabled:', propEnabled, 'from normalizedConfig:', normalizedConfig)
+    setLocalEnabled(propEnabled)
+  }, [normalizedConfig])
+  
+  console.log('[DebugToolsSection] localEnabled:', localEnabled, 'normalizedConfig:', normalizedConfig)
 
   // Handle enable/disable toggle
   const handleEnableToggle = useCallback((checked: boolean) => {
+    console.log('[DebugToolsSection] handleEnableToggle:', checked)
+    
+    // Update local state immediately for responsive UI
+    setLocalEnabled(checked)
+    
     if (checked) {
       // Enable with no tools selected initially
       onUpdateDebugConfig({ enabled: true, tools: [] })
@@ -173,14 +190,14 @@ export function DebugToolsSection({
           </p>
         </div>
         <Switch
-          checked={enabled}
+          checked={localEnabled}
           onCheckedChange={handleEnableToggle}
           disabled={!isEditing}
         />
       </div>
 
       {/* Tool Selection and Configuration */}
-      {enabled && (
+      {localEnabled && (
         <>
           {/* Quick Preset Selector */}
           <QuickPresetSelector

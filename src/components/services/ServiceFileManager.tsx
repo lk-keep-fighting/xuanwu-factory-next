@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Edit,
   File as FileIcon,
   Folder,
   Loader2,
@@ -27,6 +28,7 @@ import {
 import { serviceSvc } from '@/service/serviceSvc'
 import type { K8sFileEntry } from '@/types/k8s'
 import { cn } from '@/lib/utils'
+import { FileEditDialog } from './FileEditDialog'
 
 type ServiceFileManagerProps = {
   serviceId?: string
@@ -71,6 +73,8 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
   const [pathInputValue, setPathInputValue] = useState('/')
   const [directoryCache, setDirectoryCache] = useState<Record<string, K8sFileEntry[]>>({})
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({ '/': true })
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [selectedFileForEdit, setSelectedFileForEdit] = useState<K8sFileEntry | null>(null)
   
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const currentPathRef = useRef('/')
@@ -86,6 +90,8 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
     setPathInputValue('/')
     setDirectoryCache({})
     setExpandedPaths({ '/': true })
+    setEditDialogOpen(false)
+    setSelectedFileForEdit(null)
     currentPathRef.current = '/'
     pendingPathRef.current = null
     inflightRequests.current.clear()
@@ -375,6 +381,22 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
     [serviceId]
   )
 
+  const handleEditFile = useCallback(
+    (entry: K8sFileEntry) => {
+      if (!serviceId || entry.type === 'directory') {
+        return
+      }
+      setSelectedFileForEdit(entry)
+      setEditDialogOpen(true)
+    },
+    [serviceId]
+  )
+
+  const handleEditSaveSuccess = useCallback(() => {
+    // 文件保存成功后刷新当前目录
+    void loadAndActivateDirectory(currentPathRef.current)
+  }, [loadAndActivateDirectory])
+
   const prefetchDirectory = useCallback(
     async (targetPath: string) => {
       if (!serviceId || !active) {
@@ -643,17 +665,32 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
                         {entry.type === 'directory' ? (
                           <span className="text-xs text-gray-400">--</span>
                         ) : (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="gap-2"
-                            onClick={() => handleDownload(entry)}
-                            disabled={!active}
-                          >
-                            <Download className="h-4 w-4" />
-                            下载
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1 px-2"
+                              onClick={() => handleEditFile(entry)}
+                              disabled={!active}
+                              title="编辑文件"
+                            >
+                              <Edit className="h-4 w-4" />
+                              编辑
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1 px-2"
+                              onClick={() => handleDownload(entry)}
+                              disabled={!active}
+                              title="下载文件"
+                            >
+                              <Download className="h-4 w-4" />
+                              下载
+                            </Button>
+                          </div>
                         )}
                       </TableCell>
                     </TableRow>
@@ -665,6 +702,15 @@ export function ServiceFileManager({ serviceId, active = true }: ServiceFileMana
           </div>
         </div>
       </div>
+
+      {/* 文件编辑对话框 */}
+      <FileEditDialog
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        serviceId={serviceId || ''}
+        file={selectedFileForEdit}
+        onSaveSuccess={handleEditSaveSuccess}
+      />
     </div>
   )
 }

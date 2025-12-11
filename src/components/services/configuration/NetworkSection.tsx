@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Plus, X, Globe, AlertCircle } from 'lucide-react'
+import { Plus, X, Globe, AlertCircle, ExternalLink } from 'lucide-react'
 import { 
   generatePortId, 
   isValidPortNumber, 
@@ -23,6 +23,7 @@ interface NetworkSectionProps {
   headlessServiceEnabled: boolean
   project: Project | null
   domainRoot: string
+  serviceName?: string
   onUpdateServiceType: (type: ServiceNetworkType) => void
   onUpdatePorts: (ports: NetworkPortFormState[]) => void
   onUpdateHeadlessService: (enabled: boolean) => void
@@ -46,6 +47,7 @@ export const NetworkSection = memo(function NetworkSection({
   headlessServiceEnabled,
   project,
   domainRoot,
+  serviceName,
   onUpdateServiceType,
   onUpdatePorts,
   onUpdateHeadlessService
@@ -69,9 +71,10 @@ export const NetworkSection = memo(function NetworkSection({
     onUpdatePorts(ports.filter((_, i) => i !== index))
   }, [ports, onUpdatePorts])
 
-  const updatePort = useCallback((index: number, updates: Partial<NetworkPortFormState>) => {
-    const newPorts = [...ports]
-    newPorts[index] = { ...newPorts[index], ...updates }
+  const updatePort = useCallback((id: string, updates: Partial<NetworkPortFormState>) => {
+    const newPorts = ports.map(port => 
+      port.id === id ? { ...port, ...updates } : port
+    )
     onUpdatePorts(newPorts)
   }, [ports, onUpdatePorts])
 
@@ -84,6 +87,62 @@ export const NetworkSection = memo(function NetworkSection({
     }
     const sanitizedPrefix = sanitizeDomainLabelInput(prefix)
     return `${sanitizedPrefix}.${project.identifier}.${domainRoot}`
+  }
+
+  /**
+   * Generate full URL for domain access
+   */
+  const generateDomainUrl = (prefix: string): string => {
+    const domainName = generateDomainName(prefix)
+    return domainName ? `http://${domainName}` : ''
+  }
+
+  /**
+   * Handle domain link click
+   */
+  const handleDomainClick = useCallback((prefix: string) => {
+    const url = generateDomainUrl(prefix)
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }, [project, domainRoot])
+
+  /**
+   * Clickable domain link component
+   */
+  const DomainLink = useCallback(({ 
+    prefix, 
+    className = "text-sm font-mono text-blue-600 break-all",
+    showIcon = true 
+  }: { 
+    prefix: string
+    className?: string
+    showIcon?: boolean 
+  }) => {
+    const domainName = generateDomainName(prefix)
+    if (!domainName) return null
+
+    return (
+      <button
+        onClick={() => handleDomainClick(prefix)}
+        className={`${className} hover:text-blue-800 hover:underline cursor-pointer inline-flex items-center gap-1 transition-colors`}
+        title={`点击访问 ${domainName}`}
+      >
+        <span>{domainName}</span>
+        {showIcon && <ExternalLink className="w-3 h-3 flex-shrink-0" />}
+      </button>
+    )
+  }, [generateDomainName, handleDomainClick])
+
+  /**
+   * Generate default domain prefix based on service name
+   */
+  const generateDefaultDomainPrefix = (): string => {
+    if (!serviceName) {
+      return ''
+    }
+    // Convert service name to valid domain prefix
+    return sanitizeDomainLabelInput(serviceName)
   }
 
   /**
@@ -161,9 +220,7 @@ export const NetworkSection = memo(function NetworkSection({
                       <Globe className="w-4 h-4 text-blue-600" />
                       <span className="text-xs text-gray-500">域名访问</span>
                     </div>
-                    <span className="text-sm font-mono text-blue-600 break-all">
-                      {generateDomainName(port.domainPrefix)}
-                    </span>
+                    <DomainLink prefix={port.domainPrefix} />
                   </div>
                 )}
               </div>
@@ -247,14 +304,14 @@ export const NetworkSection = memo(function NetworkSection({
                       {/* Container Port and Service Port */}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <Label htmlFor={`port-container-${index}`} className="text-xs">
+                          <Label htmlFor={`port-container-${port.id}`} className="text-xs">
                             容器端口 *
                           </Label>
                           <Input
-                            id={`port-container-${index}`}
+                            id={`port-container-${port.id}`}
                             type="number"
                             value={port.containerPort}
-                            onChange={(e) => updatePort(index, { containerPort: e.target.value })}
+                            onChange={(e) => updatePort(port.id, { containerPort: e.target.value })}
                             placeholder="8080"
                             className={containerPortInvalid ? 'border-red-500' : ''}
                           />
@@ -265,14 +322,14 @@ export const NetworkSection = memo(function NetworkSection({
                           )}
                         </div>
                         <div>
-                          <Label htmlFor={`port-service-${index}`} className="text-xs">
+                          <Label htmlFor={`port-service-${port.id}`} className="text-xs">
                             服务端口 *
                           </Label>
                           <Input
-                            id={`port-service-${index}`}
+                            id={`port-service-${port.id}`}
                             type="number"
                             value={port.servicePort}
-                            onChange={(e) => updatePort(index, { servicePort: e.target.value })}
+                            onChange={(e) => updatePort(port.id, { servicePort: e.target.value })}
                             placeholder="80"
                             className={servicePortInvalid ? 'border-red-500' : ''}
                           />
@@ -287,14 +344,14 @@ export const NetworkSection = memo(function NetworkSection({
                       {/* Protocol and NodePort */}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <Label htmlFor={`port-protocol-${index}`} className="text-xs">
+                          <Label htmlFor={`port-protocol-${port.id}`} className="text-xs">
                             协议
                           </Label>
                           <Select
                             value={port.protocol}
-                            onValueChange={(value) => updatePort(index, { protocol: value as 'TCP' | 'UDP' })}
+                            onValueChange={(value) => updatePort(port.id, { protocol: value as 'TCP' | 'UDP' })}
                           >
-                            <SelectTrigger id={`port-protocol-${index}`}>
+                            <SelectTrigger id={`port-protocol-${port.id}`}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -305,14 +362,14 @@ export const NetworkSection = memo(function NetworkSection({
                         </div>
                         {serviceType === 'NodePort' && (
                           <div>
-                            <Label htmlFor={`port-nodeport-${index}`} className="text-xs">
+                            <Label htmlFor={`port-nodeport-${port.id}`} className="text-xs">
                               NodePort（可选）
                             </Label>
                             <Input
-                              id={`port-nodeport-${index}`}
+                              id={`port-nodeport-${port.id}`}
                               type="number"
                               value={port.nodePort}
-                              onChange={(e) => updatePort(index, { nodePort: e.target.value })}
+                              onChange={(e) => updatePort(port.id, { nodePort: e.target.value })}
                               placeholder="30000-32767"
                               className={nodePortInvalid ? 'border-red-500' : ''}
                             />
@@ -335,27 +392,40 @@ export const NetworkSection = memo(function NetworkSection({
                         <div className="flex items-center gap-2 mb-2">
                           <input
                             type="checkbox"
-                            id={`port-domain-enable-${index}`}
+                            id={`port-domain-enable-${port.id}`}
                             checked={port.enableDomain}
-                            onChange={(e) => updatePort(index, { enableDomain: e.target.checked })}
+                            onChange={(e) => {
+                              const enabled = e.target.checked
+                              const updates: Partial<NetworkPortFormState> = { enableDomain: enabled }
+                              
+                              // 如果启用域名访问且当前没有域名前缀，则设置默认前缀为服务名
+                              if (enabled && !port.domainPrefix) {
+                                const defaultPrefix = generateDefaultDomainPrefix()
+                                if (defaultPrefix) {
+                                  updates.domainPrefix = defaultPrefix
+                                }
+                              }
+                              
+                              updatePort(port.id, updates)
+                            }}
                             className="rounded"
                           />
-                          <Label htmlFor={`port-domain-enable-${index}`} className="text-xs cursor-pointer">
+                          <Label htmlFor={`port-domain-enable-${port.id}`} className="text-xs cursor-pointer">
                             启用域名访问
                           </Label>
                         </div>
 
                         {port.enableDomain && (
                           <div>
-                            <Label htmlFor={`port-domain-prefix-${index}`} className="text-xs">
+                            <Label htmlFor={`port-domain-prefix-${port.id}`} className="text-xs">
                               域名前缀 *
                             </Label>
                             <Input
-                              id={`port-domain-prefix-${index}`}
+                              id={`port-domain-prefix-${port.id}`}
                               value={port.domainPrefix}
                               onChange={(e) => {
                                 const sanitized = sanitizeDomainLabelInput(e.target.value)
-                                updatePort(index, { domainPrefix: sanitized })
+                                updatePort(port.id, { domainPrefix: sanitized })
                               }}
                               placeholder="api"
                               className={domainPrefixInvalid ? 'border-red-500' : ''}
@@ -369,9 +439,10 @@ export const NetworkSection = memo(function NetworkSection({
                               <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-200">
                                 <div className="flex items-center gap-2">
                                   <Globe className="w-4 h-4 text-blue-600 flex-shrink-0" />
-                                  <span className="text-xs font-mono text-blue-700 break-all">
-                                    {generateDomainName(port.domainPrefix)}
-                                  </span>
+                                  <DomainLink 
+                                    prefix={port.domainPrefix} 
+                                    className="text-xs font-mono text-blue-700 break-all"
+                                  />
                                 </div>
                               </div>
                             )}

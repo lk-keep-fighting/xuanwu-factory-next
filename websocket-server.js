@@ -1,10 +1,23 @@
+// 手动设置环境变量（如果没有 dotenv）
+if (!process.env.OLLAMA_BASE_URL) {
+  process.env.OLLAMA_BASE_URL = 'http://192.168.44.151:11434'
+  process.env.OLLAMA_MODEL = 'qwen3-coder:30b'
+  process.env.AI_PROVIDER = 'ollama'
+}
+
 const { createServer } = require('http')
 const { WebSocketServer } = require('ws')
 const { PrismaClient } = require('@prisma/client')
 const k8s = require('@kubernetes/client-node')
+const { handleClaudeDebugConnection } = require('./websocket-claude-debug-tools')
 
 const port = parseInt(process.env.WS_PORT || '3001', 10)
 const prisma = new PrismaClient()
+
+// 连接管理 (简化版，主要用于终端连接)
+const connections = new Map()
+
+console.log('[WebSocket] Initializing debug tools server...')
 
 // 初始化 Kubernetes 客户端
 function initK8sClient() {
@@ -43,19 +56,63 @@ const wss = new WebSocketServer({ server })
 console.log('[WebSocket] Server starting...')
 
 wss.on('connection', (ws, request) => {
-  // 解析 URL 获取 serviceId
-  // 期望路径: /api/services/:serviceId/terminal
-  const urlMatch = request.url?.match(/^\/api\/services\/([^/]+)\/terminal/)
+  // 解析 URL 获取路径和 serviceId
+  const url = request.url || ''
   
-  if (!urlMatch) {
-    console.log('[WebSocket] Invalid connection path:', request.url)
-    ws.close(1008, 'Invalid path')
+  // 终端连接: /api/services/:serviceId/terminal
+  const terminalMatch = url.match(/^\/api\/services\/([^/]+)\/terminal/)
+  if (terminalMatch) {
+    const serviceId = terminalMatch[1]
+    handleTerminalConnection(ws, serviceId)
     return
   }
   
-  const serviceId = urlMatch[1]
-  handleTerminalConnection(ws, serviceId)
+  // 保留原有诊断连接以兼容旧功能 (已废弃，建议使用新的调试工具)
+  const diagnosticMatch = url.match(/^\/api\/services\/([^/]+)\/diagnostic/)
+  if (diagnosticMatch) {
+    console.log('[WebSocket] Legacy diagnostic connection detected, closing...')
+    ws.close(1000, 'Legacy endpoint deprecated, use /debug instead')
+    return
+  }
+  
+  // Claude 调试连接: /api/debug/claude/:podName?namespace=:namespace&container=:container
+  const claudeMatch = url.match(/^\/api\/debug\/claude\/([^/?]+)/)
+  if (claudeMatch) {
+    const podName = claudeMatch[1]
+    const urlParams = new URLSearchParams(url.split('?')[1] || '')
+    const namespace = urlParams.get('namespace') || 'default'
+    const container = urlParams.get('container') || 'main'
+    
+    handleClaudeDebugConnection(ws, null, podName, namespace, container)
+    return
+  }
+  
+  // 日志流连接: /api/k8s/logs/stream?namespace=:namespace&podName=:podName&container=:container
+  const logStreamMatch = url.match(/^\/api\/k8s\/logs\/stream/)
+  if (logStreamMatch) {
+    const urlParams = new URLSearchParams(url.split('?')[1] || '')
+    const namespace = urlParams.get('namespace') || 'default'
+    const podName = urlParams.get('podName')
+    const container = urlParams.get('container')
+    
+    if (!podName) {
+      console.log('[WebSocket] Missing pod name in log stream connection')
+      ws.close(1008, 'Pod name required')
+      return
+    }
+    
+    handleLogStreamConnection(ws, podName, namespace, container)
+    return
+  }
+  
+  // 无效路径
+  console.log('[WebSocket] Invalid connection path:', url)
+  ws.close(1008, 'Invalid path')
 })
+
+// 旧的诊断连接处理已移除，请使用新的调试工具
+
+
 
 // 处理终端 WebSocket 连接
 async function handleTerminalConnection(ws, serviceId) {
@@ -246,8 +303,9 @@ async function handleTerminalConnection(ws, serviceId) {
 }
 
 server.listen(port, () => {
-  console.log(`> WebSocket Terminal Server ready on http://localhost:${port}`)
-  console.log(`> Accepting connections at: ws://localhost:${port}/api/services/:id/terminal`)
+  console.log(`> WebSocket Server ready on http://localhost:${port}`)
+  console.log(`> Terminal connections: ws://localhost:${port}/api/services/:id/terminal`)
+  console.log(`> Diagnostic connections: ws://localhost:${port}/api/services/:id/diagnostic`)
 })
 
 // 优雅关闭
@@ -262,3 +320,73 @@ process.on('SIGINT', async () => {
   await prisma.$disconnect()
   process.exit(0)
 })
+
+// 处理Claude调试连接 - 使用导入的函数
+// handleClaudeDebugConnection 已从 websocket-claude-debug.js 导入
+
+// 处理日志流连接
+function handleLogStreamConnection(ws, podName, namespace, container) {
+  console.log(`[Log Stream] Starting log stream for pod: ${podName} in namespace: ${namespace}`)
+  
+  const { spawn } = require('child_process')
+  
+  // 使用kubectl logs -f 来流式获取日志
+  const kubectlArgs = [
+    'logs',
+    '-f',
+    '-n', namespace,
+    podName
+  ]
+  
+  if (container) {
+    kubectlArgs.push('-c', container)
+  }
+  
+  const kubectl = spawn('kubectl', kubectlArgs)
+  
+  kubectl.stdout.on('data', (data) => {
+    const line = data.toString()
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'log_line',
+        line: line.trim(),
+        timestamp: new Date().toISOString()
+      }))
+    }
+  })
+  
+  kubectl.stderr.on('data', (data) => {
+    console.error('[Log Stream] kubectl stderr:', data.toString())
+  })
+  
+  kubectl.on('close', (code) => {
+    console.log(`[Log Stream] kubectl process closed with code: ${code}`)
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'stream_ended',
+        code: code
+      }))
+    }
+  })
+  
+  kubectl.on('error', (error) => {
+    console.error('[Log Stream] kubectl error:', error)
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: error.message
+      }))
+    }
+  })
+  
+  // 清理资源
+  ws.on('close', () => {
+    console.log(`[Log Stream] WebSocket closed, killing kubectl process`)
+    kubectl.kill()
+  })
+  
+  ws.on('error', (error) => {
+    console.error('[Log Stream] WebSocket error:', error)
+    kubectl.kill()
+  })
+}

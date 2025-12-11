@@ -14,6 +14,7 @@ export interface NetworkTabProps {
   networkPorts: NetworkPortFormState[]
   headlessServiceEnabled: boolean
   project: Project | null
+  serviceName?: string
   hasPendingNetworkDeploy: boolean
   onStartEdit: () => void
   onSave: () => Promise<void>
@@ -48,6 +49,7 @@ export const NetworkTab = memo(function NetworkTab(props: NetworkTabProps) {
     networkPorts,
     headlessServiceEnabled,
     project,
+    serviceName,
     hasPendingNetworkDeploy,
     onStartEdit,
     onSave,
@@ -178,6 +180,7 @@ export const NetworkTab = memo(function NetworkTab(props: NetworkTabProps) {
             headlessServiceEnabled={headlessServiceEnabled}
             project={project}
             domainRoot={domainRoot}
+            serviceName={serviceName}
             onUpdateServiceType={handleUpdateServiceType}
             onUpdatePorts={handleUpdatePorts}
             onUpdateHeadlessService={handleUpdateHeadlessService}

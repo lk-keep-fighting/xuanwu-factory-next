@@ -72,6 +72,7 @@ const defaultNavigationLinks: Navbar01NavLink[] = [
   { href: '/dashboard', label: '工作台', active: false },
   { href: '/apps', label: '应用管理', active: false },
   { href: '/projects', label: '项目管理', active: false },
+  { href: '/debug', label: '调试工具', active: false },
   // { href: '#features', label: 'Features' },
   // { href: '#pricing', label: 'Pricing' },
   // { href: '#about', label: 'About' },

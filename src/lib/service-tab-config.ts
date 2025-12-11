@@ -56,31 +56,31 @@ export const TAB_CONFIGS: TabConfig[] = [
   },
   {
     value: TAB_VALUES.NETWORK,
-    label: '网络',
+    label: '网络配置',
     icon: Globe,
     visible: () => true // Always visible for all service types
   },
-  {
-    value: TAB_VALUES.DEBUG_TOOLS,
-    label: '调试工具',
-    icon: Wrench,
-    visible: () => true // Always visible for all service types
-  },
+  // {
+  //   value: TAB_VALUES.DEBUG_TOOLS,
+  //   label: '调试工具',
+  //   icon: Wrench,
+  //   visible: () => true // Always visible for all service types
+  // },
   {
     value: TAB_VALUES.DEPLOYMENTS,
-    label: '部署',
+    label: '构建与部署',
     icon: Rocket,
     visible: () => true // Always visible for all service types
   },
   {
     value: TAB_VALUES.LOGS,
-    label: '日志',
+    label: '实时日志',
     icon: Terminal,
     visible: () => true // Always visible for all service types
   },
   {
     value: TAB_VALUES.FILES,
-    label: '文件',
+    label: '文件管理',
     icon: Folder,
     visible: () => true // Always visible for all service types
   },
