@@ -65,8 +65,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # 复制Prisma schema（用于运行时读取）
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
-# 复制WebSocket服务器
+# 复制WebSocket服务器和相关文件
 COPY --from=builder --chown=nextjs:nodejs /app/websocket-server.js ./
+COPY --from=builder --chown=nextjs:nodejs /app/websocket-claude-debug-tools.js ./
 
 # 复制WebSocket依赖（standalone不会追踪外部.js文件的依赖）
 # 直接复制整个.pnpm store 保证依赖完整
@@ -78,7 +79,9 @@ RUN chmod +x start-servers.sh
 
 # 为WebSocket服务器创建符号链接（pnpm需要）
 RUN ln -s .pnpm/ws@8.18.3/node_modules/ws ./node_modules/ws && \
-    ln -s .pnpm/@kubernetes+client-node@1.4.0/node_modules/@kubernetes ./node_modules/@kubernetes
+    ln -s .pnpm/@kubernetes+client-node@1.4.0/node_modules/@kubernetes ./node_modules/@kubernetes && \
+    ln -s .pnpm/@ai-sdk+openai@1.3.24_zod@3.25.76/node_modules/@ai-sdk ./node_modules/@ai-sdk && \
+    ln -s .pnpm/ai@4.3.19_react@19.2.0_zod@3.25.76/node_modules/ai ./node_modules/ai
 
 # 配置 kubectl 使用 in-cluster 认证
 # 创建 .kube 目录并设置权限
