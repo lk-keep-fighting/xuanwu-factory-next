@@ -13,20 +13,30 @@ export const parseImageReference = (value?: string | null): ImageReference => {
     return { image: '', tag: undefined }
   }
 
+  // 处理 digest 格式 (image@sha256:...)
   const digestIndex = trimmed.indexOf('@')
   const workable = digestIndex === -1 ? trimmed : trimmed.slice(0, digestIndex)
+  
+  // 查找最后一个 '/' 和 ':' 的位置
   const lastSlash = workable.lastIndexOf('/')
   const lastColon = workable.lastIndexOf(':')
 
-  if (lastColon > lastSlash) {
+  // 只有当冒号在最后一个斜杠之后时，才认为是 tag 分隔符
+  // 这样可以正确处理包含端口号的镜像地址，如 registry.example.com:5000/image:tag
+  if (lastColon > lastSlash && lastColon !== -1) {
     const image = workable.slice(0, lastColon)
     const tag = workable.slice(lastColon + 1)
-    return {
-      image,
-      tag: tag || undefined
+    
+    // 验证 tag 是否有效（不包含路径分隔符）
+    if (tag && !tag.includes('/') && !tag.includes('@')) {
+      return {
+        image,
+        tag: tag || undefined
+      }
     }
   }
 
+  // 如果没有找到有效的 tag，返回完整的镜像名称，tag 为 undefined
   return { image: workable, tag: undefined }
 }
 

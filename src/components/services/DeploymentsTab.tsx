@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { formatDateTime, formatDuration } from '@/lib/date-utils'
 import { DEPLOYMENT_STATUS_META, IMAGE_STATUS_META } from '@/lib/service-constants'
+import { parseImageReference, formatImageReference } from '@/lib/service-image'
 import { ServiceType } from '@/types/project'
 import type { DeploymentsTabProps } from '@/types/service-tabs'
 
@@ -176,9 +177,28 @@ const DeploymentHistory = memo(function DeploymentHistory({
                   </div>
                   
                   <div className="space-y-1">
-                    <div className="text-sm font-mono text-gray-900">
-                      {deployment.image_tag || deployment.service_image?.full_image || '未知镜像'}
-                    </div>
+                    {(() => {
+                      const imageDisplay = deployment.image_tag || deployment.service_image?.full_image || '未知镜像'
+                      const parsed = parseImageReference(imageDisplay)
+                      const imageName = parsed.image || imageDisplay
+                      const tag = parsed.tag || 'latest'
+                      
+                      return (
+                        <div className="space-y-2">
+                          <div className="text-sm font-mono text-gray-900 break-all">
+                            {imageName}
+                          </div>
+                          {parsed.image && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-gray-500 font-medium">TAG</span>
+                              <div className="inline-flex items-center px-2 py-1 rounded-md text-xs font-mono bg-gray-100 text-gray-700 border border-gray-200">
+                                {tag}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
                     
                     {branch && (
                       <div className="text-xs text-gray-600 flex items-center gap-1">
@@ -365,9 +385,26 @@ const BuildHistory = memo(function BuildHistory({
                     </div>
                     
                     <div className="space-y-1">
-                      <div className="text-sm font-mono text-gray-900">
-                        {image.full_image || `${image.image}:${image.tag}`}
-                      </div>
+                      {(() => {
+                        const imageDisplay = image.full_image || formatImageReference(image.image, image.tag)
+                        const parsed = parseImageReference(imageDisplay)
+                        const imageName = parsed.image || imageDisplay
+                        const tag = parsed.tag || image.tag || 'latest'
+                        
+                        return (
+                          <div className="space-y-2">
+                            <div className="text-sm font-mono text-gray-900 break-all">
+                              {imageName}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-gray-500 font-medium">TAG</span>
+                              <div className="inline-flex items-center px-2 py-1 rounded-md text-xs font-mono bg-gray-100 text-gray-700 border border-gray-200">
+                                {tag}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })()}
                       
                       {branch && (
                         <div className="text-xs text-gray-600 flex items-center gap-1">

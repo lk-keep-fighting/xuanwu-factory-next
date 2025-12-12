@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { ResourceUsageChart } from './ResourceUsageChart'
 import { formatDateTime } from '@/lib/date-utils'
 import { STATUS_COLORS, STATUS_LABELS } from '@/lib/service-constants'
+import { parseImageReference } from '@/lib/service-image'
 import type { OverviewTabProps, MetricsDataPoint } from '@/types/service-tabs'
 
 /**
@@ -393,20 +394,13 @@ const DeploymentInfoCard = memo(function DeploymentInfoCard({
 
   // 解析镜像地址，分离镜像名称和标签
   const parseImageDisplay = useCallback((imageDisplay: string) => {
-    const lastColonIndex = imageDisplay.lastIndexOf(':')
-    if (lastColonIndex === -1) {
-      return { imageName: imageDisplay, tag: 'latest' }
+    // 使用统一的镜像解析函数
+    const parsed = parseImageReference(imageDisplay)
+    
+    return {
+      imageName: parsed.image || imageDisplay,
+      tag: parsed.tag || 'latest'
     }
-    
-    const imageName = imageDisplay.substring(0, lastColonIndex)
-    const tag = imageDisplay.substring(lastColonIndex + 1)
-    
-    // 如果标签包含 '/' 或者看起来像是镜像名称的一部分，则认为没有标签
-    if (tag.includes('/') || tag.includes('.')) {
-      return { imageName: imageDisplay, tag: 'latest' }
-    }
-    
-    return { imageName, tag }
   }, [])
 
   // 渲染镜像信息的组件
