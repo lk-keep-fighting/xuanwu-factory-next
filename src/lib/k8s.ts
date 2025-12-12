@@ -3166,12 +3166,16 @@ class K8sService {
   }
 
   private buildDefaultEnvVars(service: Service): Record<string, string> {
+    // 为所有服务类型添加默认时区环境变量
+    const env: Record<string, string> = {
+      TZ: 'Asia/Shanghai'
+    }
+
     if (service.type !== 'database') {
-      return {}
+      return env
     }
 
     const dbService = service as DatabaseService
-    const env: Record<string, string> = {}
 
     switch (dbService.database_type) {
       case 'mysql':

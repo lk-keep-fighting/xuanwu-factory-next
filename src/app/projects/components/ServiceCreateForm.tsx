@@ -162,7 +162,10 @@ export default function ServiceCreateForm({
   })
   
   // 环境变量管理
-  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
+  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([
+    { key: 'TZ', value: 'Asia/Shanghai' },
+    { key: '', value: '' }
+  ])
   
   // 网络配置（镜像服务）
   const [networkServiceType] = useState<ServiceNetworkType>('ClusterIP')
