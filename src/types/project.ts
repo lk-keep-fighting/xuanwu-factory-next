@@ -48,10 +48,6 @@ export enum GitProvider {
 // 构建类型
 export enum BuildType {
   DOCKERFILE = 'dockerfile',
-  NIXPACKS = 'nixpacks',
-  BUILDPACKS = 'buildpacks',
-  JAVA_JAR = 'java_jar',      // Java JAR包构建
-  FRONTEND = 'frontend',      // 前端构建（Node.js/静态文件）
   TEMPLATE = 'template'       // 模板构建（基于语言类型的Dockerfile模板）
 }
 

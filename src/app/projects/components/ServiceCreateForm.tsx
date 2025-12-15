@@ -713,19 +713,7 @@ export default function ServiceCreateForm({
         })
         
         // 添加构建类型特定的参数
-        if (data.build_type === BuildType.JAVA_JAR) {
-          if (data.build_tool) buildArgsObj.build_tool = data.build_tool
-          if (data.java_version) buildArgsObj.java_version = data.java_version
-          if (data.runtime_image) buildArgsObj.runtime_image = data.runtime_image
-          if (data.java_options) buildArgsObj.java_options = data.java_options
-        } else if (data.build_type === BuildType.FRONTEND) {
-          if (data.frontend_framework) buildArgsObj.frontend_framework = data.frontend_framework
-          if (data.node_version) buildArgsObj.node_version = data.node_version
-          if (data.build_command) buildArgsObj.build_command = data.build_command
-          if (data.output_dir) buildArgsObj.output_dir = data.output_dir
-          if (data.nginx_image) buildArgsObj.nginx_image = data.nginx_image
-          if (data.install_command) buildArgsObj.install_command = data.install_command
-        } else if (data.build_type === BuildType.TEMPLATE) {
+        if (data.build_type === BuildType.TEMPLATE) {
           if (data.template_id) buildArgsObj.template_id = data.template_id
           if (data.custom_dockerfile) buildArgsObj.custom_dockerfile = data.custom_dockerfile
         }
@@ -1265,19 +1253,11 @@ export default function ServiceCreateForm({
                 <SelectContent>
                   <SelectItem value={BuildType.DOCKERFILE}>Dockerfile</SelectItem>
                   <SelectItem value={BuildType.TEMPLATE}>模板构建</SelectItem>
-                  <SelectItem value={BuildType.JAVA_JAR}>Java JAR包</SelectItem>
-                  <SelectItem value={BuildType.FRONTEND}>前端构建</SelectItem>
-                  {/* <SelectItem value={BuildType.NIXPACKS}>Nixpacks</SelectItem> */}
-                  {/* <SelectItem value={BuildType.BUILDPACKS}>Buildpacks</SelectItem> */}
                 </SelectContent>
               </Select>
               <p className="text-xs text-gray-500">
-                {watch('build_type') === BuildType.JAVA_JAR 
-                  ? 'Java项目将构建为JAR包，通过运行时镜像部署'
-                  : watch('build_type') === BuildType.FRONTEND
-                  ? '前端项目将构建为静态文件，通过Nginx镜像部署'
-                  : watch('build_type') === BuildType.TEMPLATE
-                  ? '基于语言类型选择Dockerfile模板，支持自定义修改'
+                {watch('build_type') === BuildType.TEMPLATE
+                  ? '基于公司模板选择Dockerfile模板，支持自定义修改'
                   : 'Docker镜像构建，包含完整的运行环境'
                 }
               </p>
@@ -1294,154 +1274,7 @@ export default function ServiceCreateForm({
               </div>
             )}
 
-            {watch('build_type') === BuildType.JAVA_JAR && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>构建工具</Label>
-                    <Select onValueChange={(value) => setValue('build_tool', value)} defaultValue="maven">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="maven">Maven</SelectItem>
-                        <SelectItem value="gradle">Gradle</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Java版本</Label>
-                    <Select onValueChange={(value) => setValue('java_version', value)} defaultValue="17">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="8">Java 8</SelectItem>
-                        <SelectItem value="11">Java 11</SelectItem>
-                        <SelectItem value="17">Java 17</SelectItem>
-                        <SelectItem value="21">Java 21</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="runtime_image">运行时镜像</Label>
-                  <Select onValueChange={(value) => setValue('runtime_image', value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择运行时镜像" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="openjdk:8-jre-slim">OpenJDK 8 JRE Slim</SelectItem>
-                      <SelectItem value="openjdk:11-jre-slim">OpenJDK 11 JRE Slim</SelectItem>
-                      <SelectItem value="nexus.aimstek.cn/aims-common/openjdk:17">OpenJDK 17</SelectItem>
-                      <SelectItem value="openjdk:21-jre-slim">OpenJDK 21 JRE Slim</SelectItem>
-                      <SelectItem value="eclipse-temurin:8-jre">Eclipse Temurin 8 JRE</SelectItem>
-                      <SelectItem value="eclipse-temurin:11-jre">Eclipse Temurin 11 JRE</SelectItem>
-                      <SelectItem value="eclipse-temurin:17-jre">Eclipse Temurin 17 JRE</SelectItem>
-                      <SelectItem value="eclipse-temurin:21-jre">Eclipse Temurin 21 JRE</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-gray-500">JAR包将在此镜像中运行</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="java_options">JVM参数（可选）</Label>
-                  <Input
-                    id="java_options"
-                    {...register('java_options')}
-                    placeholder="-Xms512m -Xmx1024m -Dspring.profiles.active=prod"
-                  />
-                  <p className="text-xs text-gray-500">JVM启动参数和系统属性</p>
-                </div>
-              </div>
-            )}
-
-            {watch('build_type') === BuildType.FRONTEND && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>前端框架</Label>
-                    <Select onValueChange={(value) => setValue('frontend_framework', value)} defaultValue="react">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="react">React</SelectItem>
-                        <SelectItem value="vue">Vue.js</SelectItem>
-                        <SelectItem value="angular">Angular</SelectItem>
-                        <SelectItem value="nextjs">Next.js</SelectItem>
-                        <SelectItem value="nuxtjs">Nuxt.js</SelectItem>
-                        <SelectItem value="static">静态HTML</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Node.js版本</Label>
-                    <Select onValueChange={(value) => setValue('node_version', value)} defaultValue="18">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="16">Node.js 16</SelectItem>
-                        <SelectItem value="18">Node.js 18</SelectItem>
-                        <SelectItem value="20">Node.js 20</SelectItem>
-                        <SelectItem value="21">Node.js 21</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="build_command">构建命令</Label>
-                    <Input
-                      id="build_command"
-                      {...register('build_command')}
-                      placeholder="npm run build"
-                      defaultValue="npm run build"
-                    />
-                    <p className="text-xs text-gray-500">用于构建前端项目的命令</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="output_dir">输出目录</Label>
-                    <Input
-                      id="output_dir"
-                      {...register('output_dir')}
-                      placeholder="dist"
-                      defaultValue="dist"
-                    />
-                    <p className="text-xs text-gray-500">构建后的静态文件目录</p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="nginx_image">Nginx镜像</Label>
-                  <Select onValueChange={(value) => setValue('nginx_image', value)} defaultValue="nginx:alpine">
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="nginx:alpine">Nginx Alpine</SelectItem>
-                      <SelectItem value="nginx:stable-alpine">Nginx Stable Alpine</SelectItem>
-                      <SelectItem value="registry.cn-hangzhou.aliyuncs.com/library/nginx:alpine">Nginx Alpine (阿里云)</SelectItem>
-                      <SelectItem value="registry.cn-hangzhou.aliyuncs.com/library/nginx:stable-alpine">Nginx Stable Alpine (阿里云)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-gray-500">静态文件将在此Nginx镜像中运行</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="install_command">安装命令（可选）</Label>
-                  <Input
-                    id="install_command"
-                    {...register('install_command')}
-                    placeholder="npm install"
-                  />
-                  <p className="text-xs text-gray-500">依赖安装命令，留空则自动检测</p>
-                </div>
-              </div>
-            )}
 
             {watch('build_type') === BuildType.TEMPLATE && (
               <div className="space-y-4">

@@ -88,116 +88,9 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
         return 'Dockerfile'
       case BuildType.TEMPLATE:
         return '模板构建'
-      case BuildType.JAVA_JAR:
-        return 'Java JAR包'
-      case BuildType.FRONTEND:
-        return '前端构建'
-      case BuildType.NIXPACKS:
-        return 'Nixpacks'
-      case BuildType.BUILDPACKS:
-        return 'Buildpacks'
       default:
         return buildType
     }
-  }
-
-  const renderJavaJarConfig = () => {
-    const buildTool = editingBuildArgs.build_tool || 'maven'
-    const javaVersion = editingBuildArgs.java_version || '17'
-    const runtimeImage = editingBuildArgs.runtime_image || ''
-    const javaOptions = editingBuildArgs.java_options || ''
-
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>构建工具</Label>
-            {isEditing ? (
-              <Select
-                value={buildTool}
-                onValueChange={(value) => updateBuildArg('build_tool', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="maven">Maven</SelectItem>
-                  <SelectItem value="gradle">Gradle</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <div className="text-sm text-gray-900 capitalize">{buildTool}</div>
-            )}
-          </div>
-          
-          <div className="space-y-2">
-            <Label>Java版本</Label>
-            {isEditing ? (
-              <Select
-                value={javaVersion}
-                onValueChange={(value) => updateBuildArg('java_version', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="8">Java 8</SelectItem>
-                  <SelectItem value="11">Java 11</SelectItem>
-                  <SelectItem value="17">Java 17</SelectItem>
-                  <SelectItem value="21">Java 21</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <div className="text-sm text-gray-900">Java {javaVersion}</div>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>运行时镜像</Label>
-          {isEditing ? (
-            <Select
-              value={runtimeImage}
-              onValueChange={(value) => updateBuildArg('runtime_image', value)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="选择运行时镜像" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openjdk:8-jre-slim">OpenJDK 8 JRE Slim</SelectItem>
-                <SelectItem value="openjdk:11-jre-slim">OpenJDK 11 JRE Slim</SelectItem>
-                <SelectItem value="nexus.aimstek.cn/aims-common/openjdk:17">OpenJDK 17</SelectItem>
-                <SelectItem value="openjdk:21-jre-slim">OpenJDK 21 JRE Slim</SelectItem>
-                <SelectItem value="eclipse-temurin:8-jre">Eclipse Temurin 8 JRE</SelectItem>
-                <SelectItem value="eclipse-temurin:11-jre">Eclipse Temurin 11 JRE</SelectItem>
-                <SelectItem value="eclipse-temurin:17-jre">Eclipse Temurin 17 JRE</SelectItem>
-                <SelectItem value="eclipse-temurin:21-jre">Eclipse Temurin 21 JRE</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : (
-            <div className="text-sm text-gray-900 font-mono">
-              {runtimeImage || '未配置'}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label>JVM参数</Label>
-          {isEditing ? (
-            <Input
-              value={javaOptions}
-              onChange={(e) => updateBuildArg('java_options', e.target.value)}
-              placeholder="-Xms512m -Xmx1024m -Dspring.profiles.active=prod"
-            />
-          ) : (
-            <div className="text-sm text-gray-900 font-mono">
-              {javaOptions || '无'}
-            </div>
-          )}
-          <p className="text-xs text-gray-500">JVM启动参数和系统属性</p>
-        </div>
-      </div>
-    )
   }
 
   const renderDockerfileConfig = () => {
@@ -216,133 +109,6 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
           ) : (
             <div className="text-sm text-gray-900 font-mono">{dockerfilePath}</div>
           )}
-        </div>
-      </div>
-    )
-  }
-
-  const renderFrontendConfig = () => {
-    const frontendFramework = editingBuildArgs.frontend_framework || 'react'
-    const nodeVersion = editingBuildArgs.node_version || '18'
-    const buildCommand = editingBuildArgs.build_command || 'npm run build'
-    const outputDir = editingBuildArgs.output_dir || 'dist'
-    const nginxImage = editingBuildArgs.nginx_image || 'nginx:alpine'
-    const installCommand = editingBuildArgs.install_command || ''
-
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>前端框架</Label>
-            {isEditing ? (
-              <Select
-                value={frontendFramework}
-                onValueChange={(value) => updateBuildArg('frontend_framework', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="react">React</SelectItem>
-                  <SelectItem value="vue">Vue.js</SelectItem>
-                  <SelectItem value="angular">Angular</SelectItem>
-                  <SelectItem value="nextjs">Next.js</SelectItem>
-                  <SelectItem value="nuxtjs">Nuxt.js</SelectItem>
-                  <SelectItem value="static">静态HTML</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <div className="text-sm text-gray-900 capitalize">{frontendFramework}</div>
-            )}
-          </div>
-          
-          <div className="space-y-2">
-            <Label>Node.js版本</Label>
-            {isEditing ? (
-              <Select
-                value={nodeVersion}
-                onValueChange={(value) => updateBuildArg('node_version', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="16">Node.js 16</SelectItem>
-                  <SelectItem value="18">Node.js 18</SelectItem>
-                  <SelectItem value="20">Node.js 20</SelectItem>
-                  <SelectItem value="21">Node.js 21</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <div className="text-sm text-gray-900">Node.js {nodeVersion}</div>
-            )}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>构建命令</Label>
-            {isEditing ? (
-              <Input
-                value={buildCommand}
-                onChange={(e) => updateBuildArg('build_command', e.target.value)}
-                placeholder="npm run build"
-              />
-            ) : (
-              <div className="text-sm text-gray-900 font-mono">{buildCommand}</div>
-            )}
-          </div>
-          
-          <div className="space-y-2">
-            <Label>输出目录</Label>
-            {isEditing ? (
-              <Input
-                value={outputDir}
-                onChange={(e) => updateBuildArg('output_dir', e.target.value)}
-                placeholder="dist"
-              />
-            ) : (
-              <div className="text-sm text-gray-900 font-mono">{outputDir}</div>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>Nginx镜像</Label>
-          {isEditing ? (
-            <Select
-              value={nginxImage}
-              onValueChange={(value) => updateBuildArg('nginx_image', value)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="nginx:alpine">Nginx Alpine</SelectItem>
-                <SelectItem value="nginx:stable-alpine">Nginx Stable Alpine</SelectItem>
-                <SelectItem value="registry.cn-hangzhou.aliyuncs.com/library/nginx:alpine">Nginx Alpine (阿里云)</SelectItem>
-                <SelectItem value="registry.cn-hangzhou.aliyuncs.com/library/nginx:stable-alpine">Nginx Stable Alpine (阿里云)</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : (
-            <div className="text-sm text-gray-900 font-mono">{nginxImage}</div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label>安装命令</Label>
-          {isEditing ? (
-            <Input
-              value={installCommand}
-              onChange={(e) => updateBuildArg('install_command', e.target.value)}
-              placeholder="npm install (自动检测)"
-            />
-          ) : (
-            <div className="text-sm text-gray-900 font-mono">
-              {installCommand || '自动检测'}
-            </div>
-          )}
-          <p className="text-xs text-gray-500">依赖安装命令，留空则自动检测包管理器</p>
         </div>
       </div>
     )
@@ -511,8 +277,6 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
                 <SelectContent>
                   <SelectItem value={BuildType.DOCKERFILE}>Dockerfile</SelectItem>
                   <SelectItem value={BuildType.TEMPLATE}>模板构建</SelectItem>
-                  <SelectItem value={BuildType.JAVA_JAR}>Java JAR包</SelectItem>
-                  <SelectItem value={BuildType.FRONTEND}>前端构建</SelectItem>
                 </SelectContent>
               </Select>
             ) : (
@@ -523,20 +287,14 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
             )}
           </div>
           <p className="text-xs text-gray-500">
-            {editingBuildType === BuildType.JAVA_JAR 
-              ? 'Java项目将构建为JAR包，通过运行时镜像部署'
-              : editingBuildType === BuildType.FRONTEND
-              ? '前端项目将构建为静态文件，通过Nginx镜像部署'
-              : editingBuildType === BuildType.TEMPLATE
-              ? '基于语言类型选择Dockerfile模板，支持自定义修改'
+            {editingBuildType === BuildType.TEMPLATE
+              ? '基于公司模板选择Dockerfile模板，支持自定义修改'
               : 'Docker镜像构建，包含完整的运行环境'
             }
           </p>
         </div>
 
         {/* Build Type Specific Configuration */}
-        {(isEditing ? editingBuildType : currentBuildType) === BuildType.JAVA_JAR && renderJavaJarConfig()}
-        {(isEditing ? editingBuildType : currentBuildType) === BuildType.FRONTEND && renderFrontendConfig()}
         {(isEditing ? editingBuildType : currentBuildType) === BuildType.TEMPLATE && renderTemplateConfig()}
         {(isEditing ? editingBuildType : currentBuildType) === BuildType.DOCKERFILE && renderDockerfileConfig()}
 

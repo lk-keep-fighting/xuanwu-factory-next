@@ -216,28 +216,6 @@ export async function POST(
     try {
       parameters.BUILD_ARGS = JSON.stringify(serviceRecord.build_args)
       
-      // 为 Java JAR 构建添加特定参数
-      if (serviceRecord.build_type === BuildType.JAVA_JAR) {
-        const buildArgs = serviceRecord.build_args as Record<string, string>
-        parameters.BUILD_TOOL = buildArgs.build_tool || 'maven'
-        parameters.JAVA_VERSION = buildArgs.java_version || '17'
-        parameters.RUNTIME_IMAGE = buildArgs.runtime_image || 'openjdk:17-jre-slim'
-        parameters.JAVA_OPTIONS = buildArgs.java_options || ''
-        parameters.MAVEN_PROFILES = buildArgs.maven_profiles || ''
-        parameters.GRADLE_TASKS = buildArgs.gradle_tasks || ''
-      }
-      
-      // 为前端构建添加特定参数
-      if (serviceRecord.build_type === BuildType.FRONTEND) {
-        const buildArgs = serviceRecord.build_args as Record<string, string>
-        parameters.FRONTEND_FRAMEWORK = buildArgs.frontend_framework || 'react'
-        parameters.NODE_VERSION = buildArgs.node_version || '18'
-        parameters.BUILD_COMMAND = buildArgs.build_command || 'npm run build'
-        parameters.OUTPUT_DIR = buildArgs.output_dir || 'dist'
-        parameters.NGINX_IMAGE = buildArgs.nginx_image || 'nginx:alpine'
-        parameters.INSTALL_COMMAND = buildArgs.install_command || ''
-      }
-      
       // 为模板构建添加特定参数
       if (serviceRecord.build_type === BuildType.TEMPLATE) {
         const buildArgs = serviceRecord.build_args as Record<string, string>
@@ -255,14 +233,7 @@ export async function POST(
     // 根据构建类型选择不同的 Jenkins Job
     let jobName: string | undefined
     
-    if (serviceRecord.build_type === BuildType.JAVA_JAR) {
-      // 使用专用的 Java JAR 构建 Job
-      // 使用完整的 Job 路径，包含文件夹前缀
-      jobName = 'CICD-STD/build-java-jar'
-    } else if (serviceRecord.build_type === BuildType.FRONTEND) {
-      // 使用专用的前端构建 Job
-      jobName = 'CICD-STD/build-frontend'
-    } else if (serviceRecord.build_type === BuildType.TEMPLATE) {
+    if (serviceRecord.build_type === BuildType.TEMPLATE) {
       // 使用专用的模板构建 Job
       jobName = 'CICD-STD/build-template'
     } else {
