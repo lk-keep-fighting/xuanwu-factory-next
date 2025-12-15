@@ -124,7 +124,6 @@ pipeline {
   agent any
   options {
     timestamps()
-    ansiColor('xterm')
   }
   environment {
     REGISTRY = params.IMAGE_REPOSITORY.split('/')[0]

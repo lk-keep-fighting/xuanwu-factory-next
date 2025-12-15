@@ -226,6 +226,7 @@ export default function ServiceDetailPage() {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [renameLoading, setRenameLoading] = useState(false)
+  const [isEditingBuildConfig, setIsEditingBuildConfig] = useState(false)
   const DEPLOY_IMAGE_PAGE_SIZE = 5
   const [k8sStatusInfo, setK8sStatusInfo] = useState<K8sServiceStatus | null>(null)
   const [k8sStatusLoading, setK8sStatusLoading] = useState(false)
@@ -563,7 +564,7 @@ export default function ServiceDetailPage() {
       keyword?: string,
       options: { useDefaultBranch?: boolean } = {}
     ) => {
-      if (!branchSelectorAvailable || !repositoryIdentifier) {
+      if (!serviceId || !service?.git_repository) {
         if (options.useDefaultBranch) {
           branchInitialLoadRef.current = false
         }
@@ -574,7 +575,7 @@ export default function ServiceDetailPage() {
       setBranchError(null)
 
       try {
-        const result = await systemConfigSvc.getGitRepositoryBranches(repositoryIdentifier, {
+        const result = await serviceSvc.getServiceBranches(serviceId, {
           search: keyword?.trim() || undefined,
           perPage: 100
         })
@@ -632,11 +633,11 @@ export default function ServiceDetailPage() {
         setBranchLoading(false)
       }
     },
-    [branchSelectorAvailable, repositoryIdentifier, setEditedService]
+    [serviceId, service?.git_repository, setEditedService]
   )
 
   useEffect(() => {
-    if (!branchSelectorAvailable) {
+    if (!serviceId || !service?.git_repository) {
       setBranchPickerOpen(false)
       setBranchOptions([])
       setBranchError(null)
@@ -648,10 +649,10 @@ export default function ServiceDetailPage() {
 
     branchInitialLoadRef.current = false
     void fetchBranches(undefined, { useDefaultBranch: true })
-  }, [branchSelectorAvailable, fetchBranches])
+  }, [serviceId, service?.git_repository, fetchBranches])
 
   useEffect(() => {
-    if (!branchSelectorAvailable || !branchPickerOpen) {
+    if (!serviceId || !service?.git_repository || !branchPickerOpen) {
       return
     }
 
@@ -667,13 +668,13 @@ export default function ServiceDetailPage() {
     return () => {
       window.clearTimeout(handler)
     }
-  }, [branchPickerOpen, branchSearch, branchSelectorAvailable, fetchBranches])
+  }, [branchPickerOpen, branchSearch, serviceId, service?.git_repository, fetchBranches])
 
   useEffect(() => {
-    if (branchSelectorDisabled && branchPickerOpen) {
+    if ((!serviceId || !service?.git_repository) && branchPickerOpen) {
       setBranchPickerOpen(false)
     }
-  }, [branchPickerOpen, branchSelectorDisabled])
+  }, [branchPickerOpen, serviceId, service?.git_repository])
 
   const serviceImageLookup = useMemo(() => {
     const byId = new Map<string, ServiceImageRecord>()
@@ -1822,7 +1823,9 @@ export default function ServiceDetailPage() {
     if (!serviceId) return
 
     const payload: { branch?: string; tag?: string } = {}
-    const branchValue = (service?.type === 'application' ? (service as any)?.git_branch?.trim() : '') || 'main'
+    const customBranchValue = buildBranch.trim()
+    const defaultBranchValue = (service?.type === 'application' ? (service as any)?.git_branch?.trim() : '') || 'main'
+    const branchValue = customBranchValue || defaultBranchValue
     const tagValue = customBuildTag.trim()
 
     payload.branch = branchValue
@@ -1843,6 +1846,7 @@ export default function ServiceDetailPage() {
       }
       setCustomBuildTag('')
       setBuildTagType('dev')
+      setBuildBranch('')
       await loadServiceImages({ showToast: true, page: 1 })
       setActiveTab((prev) => (prev === 'deployments' ? prev : 'deployments'))
     } catch (error: any) {
@@ -1858,7 +1862,15 @@ export default function ServiceDetailPage() {
     }
     const generated = generateImageTag()
     setCustomBuildTag(generated)
+    // 初始化分支为服务配置的默认分支
+    const defaultBranch = (service?.type === 'application' ? (service as any)?.git_branch?.trim() : '') || 'main'
+    setBuildBranch(defaultBranch)
     setBuildDialogOpen(true)
+    
+    // 加载分支列表
+    if (serviceId && service?.git_repository) {
+      void fetchBranches(undefined, { useDefaultBranch: false })
+    }
   }
 
   useEffect(() => {
@@ -2290,6 +2302,33 @@ export default function ServiceDetailPage() {
       ; (newVolumes[index] as any)[field] = value
     setVolumes(newVolumes)
   }
+
+  // Build configuration handlers
+  const handleStartEditBuildConfig = useCallback(() => {
+    setIsEditingBuildConfig(true)
+  }, [])
+
+  const handleSaveBuildConfig = useCallback(async (buildConfig: { build_type: string; build_args: Record<string, string> }) => {
+    if (!serviceId) return
+
+    try {
+      const updateData: Record<string, unknown> = {
+        build_type: buildConfig.build_type,
+        build_args: buildConfig.build_args
+      }
+
+      await serviceSvc.updateService(serviceId, updateData)
+      toast.success('构建配置保存成功')
+      setIsEditingBuildConfig(false)
+      await loadService()
+    } catch (error: any) {
+      toast.error('保存构建配置失败：' + error.message)
+    }
+  }, [serviceId, loadService])
+
+  const handleCancelEditBuildConfig = useCallback(() => {
+    setIsEditingBuildConfig(false)
+  }, [])
 
   if (loading || !service) {
     return (
@@ -2742,6 +2781,10 @@ export default function ServiceDetailPage() {
                 await handleActivateImage()
               }}
               onPageChange={(page) => loadServiceImages({ page })}
+              isEditingBuildConfig={isEditingBuildConfig}
+              onStartEditBuildConfig={handleStartEditBuildConfig}
+              onSaveBuildConfig={handleSaveBuildConfig}
+              onCancelEditBuildConfig={handleCancelEditBuildConfig}
             />
           </TabsContent>
 
@@ -2832,12 +2875,60 @@ export default function ServiceDetailPage() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-gray-700">构建分支</Label>
-                <Input
-                  value={(service?.type === 'application' ? (service as any)?.git_branch : '') || 'main'}
-                  disabled
-                  className="bg-gray-50"
-                />
-                <p className="text-xs text-gray-500">使用当前配置的分支进行构建</p>
+                <Combobox
+                  open={branchPickerOpen}
+                  onOpenChange={setBranchPickerOpen}
+                  value={buildBranch || (service?.type === 'application' ? (service as any)?.git_branch : '') || 'main'}
+                  onValueChange={(value) => setBuildBranch(value)}
+                >
+                  <ComboboxTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={branchPickerOpen}
+                      className="w-full justify-between"
+                      disabled={branchLoading}
+                    >
+                      {buildBranch || (service?.type === 'application' ? (service as any)?.git_branch : '') || 'main'}
+                      <RefreshCw className={`ml-2 h-4 w-4 shrink-0 opacity-50 ${branchLoading ? 'animate-spin' : ''}`} />
+                    </Button>
+                  </ComboboxTrigger>
+                  <ComboboxContent className="w-full p-0">
+                    <ComboboxInput
+                      placeholder="搜索分支..."
+                      value={branchSearch}
+                      onValueChange={setBranchSearch}
+                    />
+                    <ComboboxList>
+                      <ComboboxEmpty>
+                        {branchLoading ? '加载中...' : branchError ? branchError : '未找到分支'}
+                      </ComboboxEmpty>
+                      <ComboboxGroup>
+                        {branchOptions.map((branch) => (
+                          <ComboboxItem key={branch.value} value={branch.value}>
+                            <div className="flex items-center justify-between w-full">
+                              <span className="flex-1">{branch.label}</span>
+                              {branch.isDefault && (
+                                <Badge variant="secondary" className="ml-2 text-xs">
+                                  默认
+                                </Badge>
+                              )}
+                            </div>
+                          </ComboboxItem>
+                        ))}
+                      </ComboboxGroup>
+                      <ComboboxCreateNew
+                        onCreateNew={(value) => {
+                          setBuildBranch(value)
+                          setBranchPickerOpen(false)
+                        }}
+                      >
+                        {(inputValue) => `使用自定义分支: "${inputValue}"`}
+                      </ComboboxCreateNew>
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
+                <p className="text-xs text-gray-500">选择或输入要构建的分支名称</p>
               </div>
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-gray-700">镜像版本类型</Label>

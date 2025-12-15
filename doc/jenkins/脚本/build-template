@@ -1,0 +1,472 @@
+pipeline {
+  agent any
+  options { timestamps() }
+
+  // 严格使用 Jenkins配置.md 中的字段（参数名与文档一致）
+  parameters {
+    string(name: 'SERVICE_ID', defaultValue: '', description: '平台内部服务 ID（可选）')
+    string(name: 'SERVICE_NAME', defaultValue: '', description: '服务名称（可选）')
+    string(name: 'PROJECT_ID', defaultValue: '', description: '所属项目 ID（可选）')
+    string(name: 'PROJECT_IDENTIFIER', defaultValue: '', description: '项目标识（可选）')
+
+    string(name: 'GIT_REPOSITORY', defaultValue: '', description: 'Git 仓库地址（必填）')
+    string(name: 'GIT_BRANCH', defaultValue: 'main', description: '构建分支')
+    string(name: 'GIT_PATH', defaultValue: '', description: '仓库内相对子路径（可选）')
+    string(name: 'GIT_PROVIDER', defaultValue: '', description: 'Git 提供商标识（可选）')
+
+    string(name: 'BUILD_TYPE', defaultValue: 'template', description: '构建方式（template）')
+    string(name: 'TEMPLATE_ID', defaultValue: '', description: '模板ID（pnpm-frontend, maven-java21等）')
+    text(name: 'CUSTOM_DOCKERFILE', defaultValue: '', description: '自定义Dockerfile内容（可选）')
+
+    string(name: 'IMAGE_REPOSITORY', defaultValue: '', description: '镜像仓库路径（不含标签）')
+    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: '镜像标签')
+    string(name: 'FULL_IMAGE', defaultValue: '', description: '完整镜像名（{repository}:{tag}，优先）')
+    
+    string(name: 'SERVICE_IMAGE_ID', defaultValue: '', description: '平台侧镜像记录 ID（回调时使用）')
+    string(name: 'BUILD_CALLBACK_URL', defaultValue: '', description: '构建完成后回调平台的接口地址（可选）')
+    string(name: 'BUILD_CALLBACK_SECRET', defaultValue: '', description: '回调接口认证令牌（可选）')
+  }
+
+  environment {
+    GIT_CREDENTIALS = 'jenkins-gitlab'
+    // nexus 凭证与镜像仓库地址（可由运维在 Job 配置中覆盖）
+    NEXUS_CREDENTIALS = 'nexus-admin'
+    NEXUS_IMAGE_REPO = 'nexus.aimstek.cn'
+    
+    // 回调相关配置（可在环境变量中配置默认值）
+    BUILD_CALLBACK_BASE_URL = "${env.BUILD_CALLBACK_BASE_URL ?: 'http://api.xuanwu-factory.dev.aimstek.cn'}"
+    BUILD_START_TIME = "${currentBuild.startTimeInMillis}"
+  }
+
+  stages {
+    stage('Send Building Status') {
+      when { 
+        expression { 
+          return (params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()
+        } 
+      }
+      steps {
+        script {
+          SendBuildCallback('building', 'Template build started')
+        }
+      }
+    }
+    
+    stage('Checkout') {
+      steps {
+        script {
+          def repo = params.GIT_REPOSITORY?.trim()
+          def branch = params.GIT_BRANCH?.trim() ?: 'main'
+          // persist normalized subpath into env.BUILD_SUBPATH so it's visible across stages
+          env.BUILD_SUBPATH = ''
+          def rawSubpath = params.GIT_PATH?.trim()
+
+          if (!repo) {
+            error 'Missing GIT_REPOSITORY parameter'
+          }
+
+          echo "Checking out ${repo} @ ${branch}"
+          
+          // 尝试checkout分支，如果失败则尝试标签
+          try {
+            checkout([$class: 'GitSCM', 
+              branches: [[name: "*/${branch}"]], 
+              userRemoteConfigs: [[url: repo, credentialsId: env.GIT_CREDENTIALS]]
+            ])
+            echo "Successfully checked out branch: ${branch}"
+          } catch (Exception branchError) {
+            echo "Failed to checkout branch '${branch}', trying as tag..."
+            try {
+              checkout([$class: 'GitSCM', 
+                branches: [[name: "refs/tags/${branch}"]], 
+                userRemoteConfigs: [[url: repo, credentialsId: env.GIT_CREDENTIALS]]
+              ])
+              echo "Successfully checked out tag: ${branch}"
+            } catch (Exception tagError) {
+              echo "Failed to checkout both branch and tag '${branch}'"
+              echo "Branch error: ${branchError.message}"
+              echo "Tag error: ${tagError.message}"
+              error "Could not checkout '${branch}' as either branch or tag. Please verify the branch/tag name exists in the repository."
+            }
+          }
+
+          if (rawSubpath) {
+            // normalize subpath: remove leading/trailing slashes and ignore current-dir indicators
+            // so we avoid scanning the entire filesystem (which can cause OOM during archiving).
+            def normalized = rawSubpath.replaceFirst('^/','').replaceFirst('/$','').trim()
+            if (normalized == '' || normalized == '.' || normalized == './') {
+              // treat root or invalid indicators as no subpath (build repo root)
+              echo "Using repository root (ignoring subpath: ${rawSubpath})"
+              env.BUILD_SUBPATH = ''
+            } else {
+              env.BUILD_SUBPATH = normalized
+              echo "Detected subpath: ${env.BUILD_SUBPATH}"
+            }
+          }
+        }
+      }
+    }
+
+    stage('Prepare Dockerfile') {
+      steps {
+        script {
+          def subpath = env.BUILD_SUBPATH?.trim()
+          def workingDir = subpath ? subpath : '.'
+          
+          dir(workingDir) {
+            def customDockerfile = params.CUSTOM_DOCKERFILE?.trim()
+            
+            echo "=== Template Build Parameters ==="
+            echo "CUSTOM_DOCKERFILE: ${customDockerfile ? 'Provided' : 'Not provided'}"
+            echo "Working directory: ${workingDir}"
+            echo "================================="
+            
+            if (customDockerfile) {
+              // 使用传入的自定义Dockerfile内容
+              echo "Using provided custom Dockerfile content"
+              writeFile file: 'Dockerfile.template', text: customDockerfile
+            } else if (fileExists('Dockerfile')) {
+              // 使用现有的Dockerfile
+              echo "Found existing Dockerfile in repository, using it"
+              sh 'cp Dockerfile Dockerfile.template'
+            } else {
+              error 'No CUSTOM_DOCKERFILE provided and no Dockerfile found in repository'
+            }
+            
+            // 显示Dockerfile内容用于调试
+            echo "=== Dockerfile Content ==="
+            sh 'cat Dockerfile.template'
+            echo "=========================="
+          }
+        }
+      }
+    }
+
+    stage('Build Image') {
+      steps {
+        script {
+          // 打印参数用于调试
+          echo "=== Build Parameters ==="
+          echo "FULL_IMAGE: ${params.FULL_IMAGE}"
+          echo "IMAGE_REPOSITORY: ${params.IMAGE_REPOSITORY}"
+          echo "IMAGE_TAG: ${params.IMAGE_TAG}"
+          echo "NEXUS_IMAGE_REPO: ${env.NEXUS_IMAGE_REPO}"
+          echo "========================"
+          
+          def image = params.FULL_IMAGE?.trim()
+          
+          // 如果传入了 FULL_IMAGE，也要检查是否需要追加前缀
+          if (image) {
+            echo "FULL_IMAGE provided: ${image}"
+            // 解析镜像名（去掉 tag）
+            def lastColon = image.lastIndexOf(':')
+            def imageNoTag = lastColon > 0 ? image.substring(0, lastColon) : image
+            def tag = lastColon > 0 ? image.substring(lastColon + 1) : params.IMAGE_TAG.trim()
+            
+            // 检查是否需要追加 Nexus 前缀
+            if (env.NEXUS_IMAGE_REPO?.trim()) {
+              def firstSlashIdx = imageNoTag.indexOf('/')
+              def firstPart = firstSlashIdx > 0 ? imageNoTag.substring(0, firstSlashIdx) : imageNoTag
+              def hasDomain = firstPart.contains('.') || firstPart.contains(':')
+              
+              if (!hasDomain) {
+                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
+                imageNoTag = "${nexusHost}/${imageNoTag}"
+                echo "Auto-prepended Nexus registry to FULL_IMAGE: ${imageNoTag}"
+              } else {
+                echo "FULL_IMAGE already has registry prefix: ${imageNoTag}"
+              }
+            }
+            image = "${imageNoTag}:${tag}"
+            echo "Final FULL_IMAGE: ${image}"
+          } else {
+            // 如果没有 FULL_IMAGE，使用 IMAGE_REPOSITORY
+            def imageRepo = params.IMAGE_REPOSITORY?.trim()
+            if (imageRepo) {
+              echo "IMAGE_REPOSITORY provided: ${imageRepo}"
+              // 如果配置了 NEXUS_IMAGE_REPO 且 IMAGE_REPOSITORY 未以域名开头，则自动追加 Nexus 前缀
+              if (env.NEXUS_IMAGE_REPO?.trim()) {
+                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
+                // 检查 imageRepo 是否已经包含域名（含有点号或冒号，且在第一个斜杠之前）
+                def firstSlashIdx = imageRepo.indexOf('/')
+                def firstPart = firstSlashIdx > 0 ? imageRepo.substring(0, firstSlashIdx) : imageRepo
+                def hasDomain = firstPart.contains('.') || firstPart.contains(':')
+                
+                if (!hasDomain) {
+                  // 如果没有域名前缀，追加 Nexus 地址
+                  imageRepo = "${nexusHost}/${imageRepo}"
+                  echo "Auto-prepended Nexus registry: ${imageRepo}"
+                } else {
+                  echo "Registry already present in IMAGE_REPOSITORY: ${imageRepo}"
+                }
+              }
+              image = "${imageRepo}:${params.IMAGE_TAG.trim()}"
+              echo "Constructed FULL_IMAGE: ${image}"
+            } else if (env.NEXUS_IMAGE_REPO?.trim()) {
+              // try to infer image name from SERVICE_NAME, PROJECT_IDENTIFIER or git repo
+              echo "No IMAGE_REPOSITORY, trying to infer from other parameters"
+              def name = params.SERVICE_NAME?.trim() ?: params.PROJECT_IDENTIFIER?.trim()
+              if (!name) {
+                def git = params.GIT_REPOSITORY?.trim()
+                if (git) { name = git.tokenize('/').last().replace('.git','') }
+              }
+              if (!name) { error 'Cannot infer image name: set IMAGE_REPOSITORY or SERVICE_NAME/PROJECT_IDENTIFIER' }
+              image = "${env.NEXUS_IMAGE_REPO}/${name}:${params.IMAGE_TAG.trim()}"
+              echo "Constructed FULL_IMAGE from NEXUS_IMAGE_REPO: ${image}"
+            } else {
+              error 'IMAGE_REPOSITORY or FULL_IMAGE or NEXUS_IMAGE_REPO is required'
+            }
+          }
+
+          // run docker build inside subpath if provided to limit filesystem scanning
+          def subpath = env.BUILD_SUBPATH?.trim()
+          echo "Running docker build with traditional mode (BuildKit disabled for compatibility)"
+          
+          // 使用传统 Docker 构建模式（兼容没有 buildx 的环境）
+          def dockerBuildCmd = "set -eu; DOCKER_BUILDKIT=0 docker build -f Dockerfile.template -t ${image} ."
+          
+          if (subpath) {
+            dir(subpath) {
+              sh dockerBuildCmd
+            }
+          } else {
+            sh dockerBuildCmd
+          }
+          env.COMPUTED_IMAGE = image
+          echo "=== Final Image Tag ==="
+          echo "COMPUTED_IMAGE: ${env.COMPUTED_IMAGE}"
+          echo "========================"
+        }
+      }
+    }
+
+    stage('Push Image') {
+      when { expression { return env.COMPUTED_IMAGE || params.FULL_IMAGE } }
+      steps {
+        script {
+          def imageToPush = env.COMPUTED_IMAGE ?: params.FULL_IMAGE
+          if (!imageToPush) { error 'No image to push' }
+            def credsId = env.NEXUS_CREDENTIALS
+
+            // parse image into registry, repository/name and tag
+            def lastColon = imageToPush.lastIndexOf(':')
+            def lastSlash = imageToPush.lastIndexOf('/')
+            def tag = 'latest'
+            def imageNoTag = imageToPush
+            if (lastColon > -1 && lastColon > lastSlash) {
+              tag = imageToPush.substring(lastColon + 1)
+              imageNoTag = imageToPush.substring(0, lastColon)
+            }
+            
+            // 正确解析 registry 地址：registry 应该包含点号（域名）
+            def firstSlashIdx = imageNoTag.indexOf('/')
+            def registryAddr = ''
+            def dockerName = imageNoTag
+            
+            if (firstSlashIdx > 0) {
+              def firstPart = imageNoTag.substring(0, firstSlashIdx)
+              // 如果第一部分包含点号或冒号（端口），则认为是 registry 地址
+              if (firstPart.contains('.') || firstPart.contains(':')) {
+                registryAddr = firstPart
+                dockerName = imageNoTag.substring(firstSlashIdx + 1)
+                echo "Detected registry: ${registryAddr}, image: ${dockerName}:${tag}"
+              } else {
+                // 如果没有 registry 前缀，使用 Docker Hub
+                registryAddr = ''
+                dockerName = imageNoTag
+                echo "No registry detected, using Docker Hub for image: ${dockerName}:${tag}"
+              }
+            }
+
+            // use helper function to push
+            PushDockerImage(registryAddr, credsId, dockerName, tag)
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('success', 'Template build and push completed successfully')
+        }
+      }
+    }
+    failure {
+      script {
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('failed', "Template build failed: ${currentBuild.result ?: 'FAILURE'}")
+        }
+      }
+    }
+    always {
+      sh 'docker image prune -f || true'
+    }
+  }
+}
+
+def PushDockerImage(registry_addr,registry_credentials_id,docker_image_name,version){
+    withCredentials([usernamePassword(credentialsId: registry_credentials_id, passwordVariable: 'password', usernameVariable: 'username')]) {
+      // 构建完整镜像名
+      def fullImageName = registry_addr ? "${registry_addr}/${docker_image_name}" : docker_image_name
+      def fullImageTag = "${fullImageName}:${version}"
+      
+      // 如果有 registry 地址，则先登录
+      if (registry_addr) {
+        sh '''
+        set -eu
+        echo "$password" | docker login -u "$username" --password-stdin "''' + registry_addr + '''"
+        docker push "''' + fullImageTag + '''"
+        docker rmi "''' + fullImageTag + '''"
+        '''
+      } else {
+        // Docker Hub 登录不需要指定地址
+        sh '''
+        set -eu
+        echo "$password" | docker login -u "$username" --password-stdin
+        docker push "''' + fullImageTag + '''"
+        docker rmi "''' + fullImageTag + '''"
+        '''
+      }
+    }
+}
+
+// 发送构建回调到平台
+def SendBuildCallback(status, message) {
+  def callbackUrl = params.BUILD_CALLBACK_URL?.trim()
+  
+  // 如果参数中没有指定完整回调URL，则从环境变量中拼接
+  if (!callbackUrl && env.BUILD_CALLBACK_BASE_URL?.trim() && params.SERVICE_ID?.trim()) {
+    callbackUrl = "${env.BUILD_CALLBACK_BASE_URL.trim()}/api/services/${params.SERVICE_ID.trim()}/build/callback"
+  }
+  
+  if (!callbackUrl) {
+    echo "Skipping callback: no BUILD_CALLBACK_URL or BUILD_CALLBACK_BASE_URL configured"
+    return
+  }
+  
+  def serviceImageId = params.SERVICE_IMAGE_ID?.trim()
+  if (!serviceImageId) {
+    echo "Skipping callback: SERVICE_IMAGE_ID not provided"
+    return
+  }
+  
+  // 计算构建耗时
+  def durationMs = currentBuild.duration ?: (System.currentTimeMillis() - env.BUILD_START_TIME.toLong())
+  
+  // 构建回调数据
+  def queueId = resolveQueueId()
+  def queueUrl = buildQueueUrl(queueId)
+
+  def callbackData = [
+    service_image_id: serviceImageId,
+    status: status,
+    full_image: env.COMPUTED_IMAGE ?: params.FULL_IMAGE?.trim() ?: '',
+    duration_ms: durationMs,
+    build_number: env.BUILD_NUMBER,
+    build_url: env.BUILD_URL,
+    queue_url: queueUrl,
+    result: currentBuild.result ?: (status == 'success' ? 'SUCCESS' : (status == 'failed' ? 'FAILURE' : 'BUILDING')),
+    build_logs: message,
+    metadata: [
+      builder: 'jenkins',
+      node: env.NODE_NAME ?: 'unknown',
+      job_name: env.JOB_NAME,
+      git_branch: params.GIT_BRANCH,
+      git_repository: params.GIT_REPOSITORY,
+      template_id: params.TEMPLATE_ID,
+      build_type: params.BUILD_TYPE
+    ]
+  ]
+  
+  def jsonPayload = groovy.json.JsonOutput.toJson(callbackData)
+  
+  echo "=== Sending Build Callback ==="
+  echo "URL: ${callbackUrl}"
+  echo "Status: ${status}"
+  echo "Template: ${params.TEMPLATE_ID}"
+  echo "Image: ${callbackData.full_image}"
+  echo "Duration: ${durationMs}ms"
+  echo "=============================="
+  
+  try {
+    // 构建认证头
+    def authHeader = ''
+    def secret = params.BUILD_CALLBACK_SECRET?.trim()
+    if (secret) {
+      authHeader = "-H 'X-Build-Callback-Secret: ${secret}'"
+    }
+    
+    // 使用 curl 发送回调请求
+    def curlCmd = """
+      curl -X POST '${callbackUrl}' \
+        -H 'Content-Type: application/json' \
+        ${authHeader} \
+        -d '${jsonPayload.replace("'", "'\\''")}' \
+        --connect-timeout 10 \
+        --max-time 30 \
+        -w '\\nHTTP Status: %{http_code}'
+    """
+    
+    def response = sh(script: curlCmd, returnStdout: true).trim()
+    echo "Callback response: ${response}"
+    
+    // 检查HTTP状态码
+    if (response.contains('HTTP Status: 2')) {
+      echo "✓ Build callback sent successfully"
+    } else {
+      echo "⚠ Build callback may have failed, check response above"
+    }
+  } catch (Exception e) {
+    echo "✗ Failed to send build callback: ${e.message}"
+    // 不中断构建流程
+  }
+}
+
+// 尝试从当前构建上下文安全获取 queueId
+def resolveQueueId() {
+  def queueId = ''
+  try {
+    def directId = currentBuild?.queueId
+    if (directId) {
+      queueId = directId.toString()
+    }
+  } catch (MissingPropertyException ignored) {
+    // RunWrapper 在旧版本中不提供 queueId 字段
+  } catch (Exception e) {
+    echo "Unable to read queueId from RunWrapper: ${e.message}"
+  }
+
+  if (queueId) {
+    return queueId
+  }
+
+  def envQueueId = env.BUILD_QUEUE_ID?.trim()
+  if (envQueueId) {
+    return envQueueId
+  }
+
+  echo "Queue id not available from Jenkins; queue_url will be omitted. Set BUILD_QUEUE_ID to override."
+  return ''
+}
+
+// 根据 queueId 构建 Jenkins 队列链接
+def buildQueueUrl(queueId) {
+  def buildUrl = env.BUILD_URL?.trim()
+  if (!buildUrl || !queueId) {
+    return ''
+  }
+
+  try {
+    def sanitized = buildUrl.replace("/execution/node/", "/")
+    if (env.BUILD_NUMBER) {
+      sanitized = sanitized.replace("/${env.BUILD_NUMBER}/", "/queue/item/${queueId}/")
+    }
+    return sanitized
+  } catch (Exception e) {
+    echo "Unable to construct queue URL: ${e.message}"
+    return ''
+  }
+}
+

@@ -11,6 +11,7 @@ import {
   type ImageService,
   type CreateServiceRequest,
   ServiceType,
+  BuildType,
   type NetworkConfigV2,
   DATABASE_TYPE_METADATA,
   type SupportedDatabaseType,
@@ -341,9 +342,50 @@ class K8sService {
           }))
         : []
       
+      // 为 Java JAR 应用添加 JAR 下载卷
+      const isJavaJarApp = service.type === ServiceType.APPLICATION && 
+                          (service as ApplicationService).build_type === BuildType.JAVA_JAR
+      
+      let javaJarVolumes: k8s.V1Volume[] = []
+      let javaJarVolumeMounts: k8s.V1VolumeMount[] = []
+      let javaJarInitContainers: k8s.V1Container[] = []
+      
+      if (isJavaJarApp) {
+        // 添加 JAR 包存储卷
+        javaJarVolumes = [{
+          name: 'app-jar',
+          emptyDir: {}
+        }]
+        
+        // 添加 JAR 包卷挂载
+        javaJarVolumeMounts = [{
+          name: 'app-jar',
+          mountPath: '/app'
+        }]
+        
+        // 添加 JAR 下载 InitContainer
+        const jarUrl = this.buildJarDownloadUrl(service as ApplicationService)
+        if (jarUrl) {
+          javaJarInitContainers = [{
+            name: 'jar-downloader',
+            image: 'curlimages/curl:latest',
+            command: ['sh', '-c'],
+            args: [`curl -L -o /app/application.jar "${jarUrl}"`],
+            volumeMounts: [{
+              name: 'app-jar',
+              mountPath: '/app'
+            }]
+          }]
+        }
+      }
+      
       // 合并所有卷和卷挂载
-      const volumes = [...baseVolumes, ...debugVolumes]
-      const volumeMounts = [...baseVolumeMounts, ...debugVolumeMounts]
+      const volumes = [...baseVolumes, ...debugVolumes, ...javaJarVolumes]
+      const volumeMounts = [...baseVolumeMounts, ...debugVolumeMounts, ...javaJarVolumeMounts]
+      const initContainers = [...debugInitContainers, ...javaJarInitContainers]
+      
+      // 为 Java JAR 应用构建启动命令
+      const containerConfig = this.buildJavaJarContainerConfig(service, commandConfig)
       
       const deployment: k8s.V1Deployment = {
         metadata: {
@@ -361,15 +403,15 @@ class K8sService {
               labels: { app: service.name }
             },
             spec: {
-              // 添加 Init Containers（如果有调试工具）
-              ...(debugInitContainers.length > 0 && {
-                initContainers: debugInitContainers
+              // 添加 Init Containers（调试工具 + JAR 下载）
+              ...(initContainers.length > 0 && {
+                initContainers
               }),
               containers: [{
                 name: service.name,
                 image: this.getImage(service),
-                ...(commandConfig.command && { command: commandConfig.command }),
-                ...(commandConfig.args && { args: commandConfig.args }),
+                ...(containerConfig.command && { command: containerConfig.command }),
+                ...(containerConfig.args && { args: containerConfig.args }),
                 ports: effectiveNetwork
                   ? effectiveNetwork.ports.map((port, index) => ({
                       containerPort: port.containerPort,
@@ -2816,7 +2858,15 @@ class K8sService {
   
   private getImage(service: Service): string {
     if (service.type === 'application') {
-      return (service as ApplicationService).built_image || 'nginx:latest'
+      const appService = service as ApplicationService
+      
+      // 对于 Java JAR 构建，使用运行时镜像
+      if (appService.build_type === BuildType.JAVA_JAR) {
+        const buildArgs = appService.build_args as Record<string, string> || {}
+        return buildArgs.runtime_image || 'openjdk:17-jre-slim'
+      }
+      
+      return appService.built_image || 'nginx:latest'
     } else if (service.type === 'database') {
       const dbService = service as DatabaseService
       const version = dbService.version || 'latest'
@@ -4390,6 +4440,74 @@ echo "Custom tools installed at ${mountPath}/bin"
     }
 
     return null
+  }
+
+  /**
+   * 构建 JAR 包下载 URL
+   */
+  private buildJarDownloadUrl(service: ApplicationService): string | null {
+    try {
+      // 从环境变量获取 Nexus 配置
+      const nexusRawRepo = process.env.NEXUS_RAW_REPO || 'https://nexus.aimstek.cn/repository/raw-hosted'
+      
+      // 从服务信息中获取项目标识和服务名称
+      const projectIdentifier = service.project_id || 'unknown-project'
+      const serviceName = service.name
+      
+      if (!serviceName) {
+        console.error('[K8s] 服务名称为空，无法构建 JAR 下载 URL')
+        return null
+      }
+      
+      // 构建 JAR 包下载 URL，与 Jenkins 脚本中的路径结构保持一致
+      // 格式: {nexus_raw_repo}/{project_id}/{service_name}/latest/{service_name}-latest.jar
+      const jarUrl = `${nexusRawRepo}/${projectIdentifier}/${serviceName}/latest/${serviceName}-latest.jar`
+      
+      console.log(`[K8s] 构建的 JAR 下载 URL: ${jarUrl}`)
+      return jarUrl
+    } catch (error) {
+      console.error('[K8s] 构建 JAR 包 URL 失败:', error)
+      return null
+    }
+  }
+
+  /**
+   * 为 Java JAR 应用构建容器配置
+   */
+  private buildJavaJarContainerConfig(
+    service: Service, 
+    defaultCommandConfig: { command?: string[], args?: string[] }
+  ): { command?: string[], args?: string[] } {
+    if (service.type !== ServiceType.APPLICATION) {
+      return defaultCommandConfig
+    }
+
+    const appService = service as ApplicationService
+    if (appService.build_type !== BuildType.JAVA_JAR) {
+      return defaultCommandConfig
+    }
+
+    // 如果用户自定义了启动命令，使用用户的命令
+    if (defaultCommandConfig.command || defaultCommandConfig.args) {
+      return defaultCommandConfig
+    }
+
+    const buildArgs = appService.build_args as Record<string, string> || {}
+    const javaOptions = buildArgs.java_options?.trim()
+
+    // 构建 Java 启动命令
+    const command = ['java']
+    const args: string[] = []
+
+    // 添加 JVM 参数
+    if (javaOptions) {
+      args.push(...javaOptions.split(/\s+/).filter(Boolean))
+    }
+
+    // 添加 JAR 包路径
+    args.push('-jar', '/app/application.jar')
+
+    return { command, args }
   }
 }
 

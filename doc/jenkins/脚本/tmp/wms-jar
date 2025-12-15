@@ -1,0 +1,396 @@
+pipeline{
+  agent any
+    parameters{
+        // 单选服务器使用
+        choice(
+            description: '部署服务器选择',
+            name: 'SERVERS',
+            choices: ['192.168.57.92']
+        )
+        gitParameter(branch: '',
+          description: '选择分支',
+          branchFilter: 'origin/(.*)',
+          defaultValue: '3.1.0.1.test',
+          name: 'BRANCH',
+          type: 'PT_BRANCH_TAG'
+        )
+        booleanParam(
+          name: 'IS_PRO', 
+          defaultValue: false, 
+          description: '是否为生产版本?'
+        )
+        booleanParam(
+          name: 'ENFORCE_BUILD', 
+          defaultValue: false, 
+          description: '是否在部署之前强制构建项目?'
+        )
+        extendedChoice( 
+          defaultValue: 'aimstek-wms-starter', 
+          description: '部署服务', 
+          multiSelectDelimiter: ',', 
+          name: 'PROJECT_SERVICES', 
+          quoteValue: false, 
+          saveJSONParameterToFile: false, 
+          type: 'PT_CHECKBOX', 
+          value:'aimstek-wms-starter', 
+          visibleItemCount: 10
+        )
+        extendedChoice(
+          defaultValue: '部署服务', 
+          description: '', 
+          multiSelectDelimiter: ',', 
+          name: 'OPEN_THE_FUNCTION', 
+          quoteValue: false, 
+          saveJSONParameterToFile: false, 
+          type: 'PT_CHECKBOX', 
+          value:'审查代码,上传制品,部署服务', 
+          visibleItemCount: 10
+        )
+        string(
+          name: 'DEPLOY_DIR',
+          defaultValue: '/home/bssg-wms', 
+          description: '部署路径，注意末尾不加‘/’'
+        )
+    }
+    environment{
+        //nexus凭证
+        NEXUS_CREDENTIALS = "nexus-admin"
+        //nexus查询界面地址
+        NEXUS_WEB = "https://nexus.aimstek.cn"
+        //nexus二进制仓库地址
+        NEXUS_RAW_REPO = "https://nexus.aimstek.cn/repository/raw-hosted"
+
+        //源码仓库地址
+        GIT_URL = "https://gitlab.aimstek.cn/business/wms/wms-standard.git"
+        //仓库访问凭证，请将gitlab用户名jenkins添加到仓库访问者中，或开发者
+        CREDENTIALS_ID = "business-git"
+        //项目命名空间，由脚本自定义
+        PROJECT_NAMESPACE_TEST ="aims-test/business/wms"
+        PROJECT_NAMESPACE_PRO ="aims-pro/business/wms"
+        //产品名称及版本
+        PRODUCT_NAME = "wms"
+        //项目名称：
+        PROJECT_NAME = "wms-service"
+  
+        //项目中源码路径
+        SOURCE_DIR='./'
+  
+        //代码分支
+        BRANCH = "${params.BRANCH}"
+  
+        //项目版本号
+        PROJECT_VERSION = "1.0.0.0.0"
+        //构建版本号
+        BUILD_VERSION = "0"
+        
+        //是否为生产版本
+        IS_PRO = "${params.IS_PRO}"
+        //是否强制构建
+        ENFORCE_BUILD = "${params.ENFORCE_BUILD}"
+        //代码变更提交记录
+        CHANGE_LOGS = "* No new changes"
+        //部署包所在文件夹路径，注意末尾不加‘/’
+        DEPLOY_DIR = "${params.DEPLOY_DIR}"
+        //>
+    }
+
+  stages{
+    stage("拉取源码") {
+      steps{
+        //git branch: "${BRANCH}",  credentialsId: "${CREDENTIALS_ID}", url: "${GIT_URL}"
+        
+        checkout([$class: 'GitSCM', 
+                branches: [[name: "${BRANCH}"]], 
+                doGenerateSubmoduleConfigurations: false, 
+                extensions: [[$class: 'SubmoduleOption', 
+                            disableSubmodules: false, 
+                            parentCredentials: false, 
+                            recursiveSubmodules: false, 
+                            reference: '', 
+                            trackingSubmodules: false]], 
+                submoduleCfg: [], 
+                userRemoteConfigs: [[credentialsId: "${CREDENTIALS_ID}", 
+                                    url: "${GIT_URL}"]]])
+ 
+        script{
+          def passedBuilds = []
+          LastSuccessfulBuild(passedBuilds, currentBuild);
+          def logs = GetChangeLog(passedBuilds)
+          CHANGE_LOGS = "${logs}"
+          def timeStamp = Calendar.getInstance().getTime().format('yyMMdd',TimeZone.getTimeZone('Asia/Shanghai'))
+          def commitId = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+          // BUILD_VERSION = VersionNumber versionPrefix: "${timeStamp}", versionNumberString: "${BUILDS_TODAY}-${commitId}"
+          BUILD_VERSION = "${timeStamp}.${BUILD_NUMBER}-${commitId}"
+          Log("BUILD_VERSION:${BUILD_VERSION}")
+        }
+      }
+    }
+    
+    stage("准备环境") {
+      steps{
+        Log("==================================================================\n"+
+        "运行环境: BUILD_TAG[${BUILD_TAG}]  WORKSPACE[${WORKSPACE}] \n"+
+        "项目名称：${PROJECT_NAME} \n"+
+        "仓库地址：${GIT_URL} \n"+
+        "分支名称：${BRANCH} \n"+
+        "模块选择: ${params.PROJECT_SERVICES} \n"+
+        "凭证Id: ${CREDENTIALS_ID} \n"+
+        "制品库地址: ${NEXUS_RAW_REPO} \n"+
+        "部署服务器: ${params.SERVERS} \n"+
+        "是否强制构建：${ENFORCE_BUILD} \n" +
+        "构建步骤选择：${params.OPEN_THE_FUNCTION} \n"+
+        "=================================================================="
+        )
+      }
+    }
+
+    stage("构建项目") {
+      when { 
+        expression { 
+          HaveBuilt()
+        } 
+      }
+      steps {
+        BuildMavenProject()
+      }
+    }
+
+    stage("上传制品"){
+      when { 
+        expression { 
+          HaveBuilt() && params.OPEN_THE_FUNCTION.contains("上传制品") 
+        } 
+      }
+      steps{
+        PushRawJar()
+      }
+    }
+
+
+    stage('部署服务') {
+      when { 
+        expression { 
+          script{
+            return HaveBuilt() && params.OPEN_THE_FUNCTION.contains("部署服务")
+          }
+        } 
+      }
+      steps {
+        // DeployToMultipleServer()  // 多选服务器使用
+        DeployToServer(SERVERS,SOURCE_DIR,DEPLOY_DIR)   // 单选服务器使用
+      }
+    }
+  }
+  post{
+      always{
+        script{
+          def userName = GetUserName()
+          //构建名称 
+          currentBuild.displayName = "#${BUILD_NUMBER}-${BRANCH}-${userName}"
+          if(IS_PRO=='true'){
+            currentBuild.displayName = "PRO-"+currentBuild.displayName
+          }
+          //构建描述
+          currentBuild.description = "${BUILD_VERSION}"
+
+          def remark = "发布模块：${params.PROJECT_SERVICES}\\r发布步骤：${params.OPEN_THE_FUNCTION}\\r目标服务器：${params.SERVERS}"
+        }
+      }
+      success {
+        cleanWs()
+      }
+  }
+}
+
+def HaveBuilt(){
+  return ENFORCE_BUILD =='true'  || CHANGE_LOGS != "* No new changes"
+}
+
+// JAVA Begin =================================================================
+
+def BuildMavenProject(){
+  script {
+    docker.image('nexus.aimstek.cn/aims-common/maven:3.9-eclipse-temurin-21').inside('-u root -v /root/.m2:/root/.m2')
+    {
+      Log("源码编译打包 ${SOURCE_DIR}")
+      sh '''
+        pwd
+        java -version
+        mvn -version
+        cd ${SOURCE_DIR}
+        mvn clean compile  package -Dmaven.test.skip=true
+      '''
+    }
+  }
+}
+
+def PushRawJar(){
+  docker.image('curlimages/curl:latest').inside(''){
+    def jobs = [:]
+    Log("PROJECT_SERVICES: ${params.PROJECT_SERVICES}")
+    for (module in params.PROJECT_SERVICES.tokenize(',')){
+      def moduleDir="${module}"
+      jobs[moduleDir] = {
+          ParallelPushRaw(SOURCE_DIR,moduleDir)
+      }
+    }
+    parallel jobs
+  }
+}
+
+def ParallelPushRaw(sourceDir,moduleDir) {
+  script{
+    def props = readProperties  file:"${sourceDir}/${moduleDir}/target/maven-archiver/pom.properties"
+    def module_version = props['version']
+    def module_artifactId = props['artifactId']
+    def jar_filePath="${sourceDir}/${moduleDir}/target/${module_artifactId}-${module_version}.jar"
+    module_build_version = "${module_version}.${BUILD_VERSION}"
+    Log("filePath: ${jar_filePath}")
+    sh 'pwd'
+    sh "ls ${sourceDir}/${moduleDir}/target"
+    PushRawArtifactsByApi(NEXUS_RAW_REPO,NEXUS_CREDENTIALS,jar_filePath,"${PROJECT_NAMESPACE_TEST}/${module_artifactId}-${module_build_version}.jar")
+    
+    Log("IS_PRO:${IS_PRO}")
+    if(IS_PRO=='true'){
+      PushRawArtifactsByApi(NEXUS_RAW_REPO,NEXUS_CREDENTIALS,jar_filePath,"${PROJECT_NAMESPACE_PRO}/${module_artifactId}-${module_version}.jar")
+    }
+  }
+}
+
+def DeployToMultipleServer(){
+  script{
+    def jobs = [:]
+    for (ip in params.SERVERS.tokenize(',')) {
+      jobs[ip] = {
+        Log("deploy to ${ip}")
+        DeployToServer(ip,SOURCE_DIR,DEPLOY_DIR)
+      }
+    }
+    parallel jobs
+  }
+}
+def DeployToServer(ip,sourceDir,deploy_dir){
+  script{
+    def remote = GetServer(ip)
+    def modulesDeployScript = " "
+    for (module in params.PROJECT_SERVICES.tokenize(',')){
+      def moduleDir = "${module}"
+      Log("deploy1 to ${module}")	    
+      def props = readProperties  file:"${sourceDir}/${moduleDir}/target/maven-archiver/pom.properties"
+      Log("deploy1.1 to ${module},${sourceDir},${moduleDir} ")
+      Log("deploy2 to ${props}")
+      def module_version = props['version']
+      def module_artifactId = props['artifactId']
+
+      module_build_version = "${module_version}.${BUILD_VERSION}"
+      Log("deploy3 to ${module_build_version}")
+      def jar_filePath = "${sourceDir}/${moduleDir}/target/${module_artifactId}-${module_version}.jar"
+      Log("deploy4 to ${module_build_version}")
+      module_artifactId = module_artifactId.toLowerCase()
+      def jar_new_filePath = "${sourceDir}/${moduleDir}/target/${module_artifactId}-${module_build_version}.jar"
+      sh "cp ${jar_filePath} ${jar_new_filePath}"
+      // 发送jar包到远程服务器
+      sshPut remote: remote, from: jar_new_filePath, into: "${deploy_dir}"
+      // 停止服务
+      def stopService = """
+          pid=\$(ps -ef | grep java | grep bssg-wms.jar | grep -v grep | awk '{print \$2}')
+          if [ -n "\$pid" ]; then
+              echo "Stopping process with PID: \$pid"
+              kill -9 \$pid
+          fi
+      """
+      // """
+      // 删除本地jar包
+      def rmJar = """
+           cd ${deploy_dir}
+           ls -t | grep "^${module_artifactId}" | awk 'NR>30' | while read file;
+           do
+             echo "Deleting file: \${file}";
+             rm \$file;
+           done
+           rm -rf bssg-wms.jar
+        """
+      def rename="cp ${deploy_dir}/${module_artifactId}-${module_build_version}.jar ${deploy_dir}/bssg-wms.jar";
+      def restartService="BUILD_ID=dontKillMe nohup java -jar -Xms512M -Xmx1024M -Dspring.profiles.active=bssg-test ${deploy_dir}/bssg-wms.jar --syslog.enable=true > /dev/null 2>&1 &"
+
+      modulesDeployScript = modulesDeployScript + """
+        # 停止服务
+        ${stopService}
+        # 删除jar包
+        ${rmJar}
+        # 复制jar包
+        ${rename}
+        # 重启服务
+        ${restartService}
+      """
+    }
+    sshCommand remote: remote, command: modulesDeployScript
+  }
+}
+
+
+// Common begin   =================================================================
+def Log(level,message) {
+  echo "[${level}] ${message}"
+}
+
+def Log(message) {
+  Log("INFO",message)
+}
+
+def PushRawArtifactsByApi(registry_raw_addr,registry_credentials_id,source_filename,target_filename){
+      withCredentials([usernamePassword(credentialsId: registry_credentials_id, passwordVariable: 'password', usernameVariable: 'username')]) {
+      sh "curl -v -u ${username}:${password} --upload-file ${source_filename} ${registry_raw_addr}/${target_filename}"
+    }
+}
+
+def GetServer(ip){
+    def remote = [:]
+    remote.name = "server-${ip}"
+    remote.host = ip
+    remote.port = 22
+    remote.allowAnyHosts = true
+    withCredentials([usernamePassword(credentialsId: ip, passwordVariable: 'password', usernameVariable: 'username')]) {
+        remote.user = "${username}"
+        remote.password = "${password}"
+    }
+    return remote
+}
+
+
+def LastSuccessfulBuild(passedBuilds, build) {
+    if ((build != null) && (build.result != 'SUCCESS')) {
+        passedBuilds.add(build)
+        LastSuccessfulBuild(passedBuilds, build.getPreviousBuild())
+    }
+}
+
+def GetChangeLog(passedBuilds) {
+    def log = ""
+    for (int x = 0; x < passedBuilds.size(); x++) {
+        def currentBuild = passedBuilds[x];
+        def changeLogSets = currentBuild.rawBuild.changeSets
+        for (int i = 0; i < changeLogSets.size(); i++) {
+            def entries = changeLogSets[i].items
+            for (int j = 0; j < entries.length; j++) {
+                def entry = entries[j]
+                def commitTime = new Date(entry.timestamp).format("yyyy-MM-dd HH:mm:ss",TimeZone.getTimeZone('Asia/Shanghai'))
+                log += "[${commitTime} by ${entry.author}] : ${entry.msg}\\r"
+            }
+        }
+    }
+    if (!log) 
+    {        
+      log = "* No new changes"
+    }
+    return log;
+}
+
+def GetUserName(){
+  def specificCause = currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')
+  if (specificCause) {
+    return specificCause.userName
+  }
+  return "unknown"
+}
+// Common end   =================================================================

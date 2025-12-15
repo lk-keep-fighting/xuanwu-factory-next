@@ -1,0 +1,261 @@
+pipeline {
+  agent any
+  
+  options {
+    timestamps()
+    timeout(time: 30, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+  }
+  
+  // 前端构建参数
+  parameters {
+    string(name: 'SERVICE_ID', defaultValue: '', description: '平台内部服务 ID')
+    string(name: 'SERVICE_NAME', defaultValue: '', description: '服务名称')
+    string(name: 'PROJECT_ID', defaultValue: '', description: '所属项目 ID')
+    string(name: 'PROJECT_IDENTIFIER', defaultValue: '', description: '项目标识')
+
+    string(name: 'GIT_REPOSITORY', defaultValue: '', description: 'Git 仓库地址（必填）')
+    string(name: 'GIT_BRANCH', defaultValue: 'main', description: '构建分支')
+    string(name: 'GIT_PATH', defaultValue: '.', description: '仓库内相对子路径')
+    string(name: 'GIT_PROVIDER', defaultValue: 'gitlab', description: 'Git 提供商标识')
+
+    string(name: 'BUILD_TYPE', defaultValue: 'frontend', description: '构建方式（frontend）')
+    string(name: 'FRONTEND_FRAMEWORK', defaultValue: 'react', description: '前端框架')
+    string(name: 'NODE_VERSION', defaultValue: '18', description: 'Node.js版本')
+    string(name: 'BUILD_COMMAND', defaultValue: 'npm run build', description: '构建命令')
+    string(name: 'OUTPUT_DIR', defaultValue: 'dist', description: '输出目录')
+    string(name: 'NGINX_IMAGE', defaultValue: 'nginx:alpine', description: 'Nginx镜像')
+    string(name: 'INSTALL_COMMAND', defaultValue: '', description: '安装命令（可选）')
+
+    string(name: 'IMAGE_REPOSITORY', defaultValue: '', description: '镜像仓库路径（不含标签）')
+    string(name: 'IMAGE_TAG', defaultValue: '', description: '镜像标签')
+    string(name: 'FULL_IMAGE', defaultValue: '', description: '完整镜像名（repository:tag）')
+    
+    string(name: 'SERVICE_IMAGE_ID', defaultValue: '', description: '平台侧镜像记录 ID')
+    string(name: 'BUILD_CALLBACK_URL', defaultValue: '', description: '构建完成后回调平台的接口地址（可选）')
+    string(name: 'BUILD_CALLBACK_SECRET', defaultValue: '', description: '回调接口认证令牌（可选）')
+  }
+  
+  environment {
+    // 默认值
+    FRONTEND_FRAMEWORK = "${params.FRONTEND_FRAMEWORK ?: 'react'}"
+    NODE_VERSION = "${params.NODE_VERSION ?: '18'}"
+    BUILD_COMMAND = "${params.BUILD_COMMAND ?: 'npm run build'}"
+    OUTPUT_DIR = "${params.OUTPUT_DIR ?: 'dist'}"
+    NGINX_IMAGE = "${params.NGINX_IMAGE ?: 'nginx:alpine'}"
+    INSTALL_COMMAND = "${params.INSTALL_COMMAND ?: ''}"
+    
+    // 构建镜像配置
+    BUILD_IMAGE = ''
+    DOCKER_REGISTRY = "${env.DOCKER_REGISTRY ?: 'registry.cn-hangzhou.aliyuncs.com'}"
+  }
+  
+  stages {
+    stage('准备环境') {
+      steps {
+        script {
+          // 根据 Node.js 版本选择构建镜像
+          switch(env.NODE_VERSION) {
+            case '16':
+              env.BUILD_IMAGE = 'registry.cn-hangzhou.aliyuncs.com/library/node:16-alpine'
+              break
+            case '18':
+              env.BUILD_IMAGE = 'registry.cn-hangzhou.aliyuncs.com/library/node:18-alpine'
+              break
+            case '20':
+              env.BUILD_IMAGE = 'registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine'
+              break
+            case '21':
+              env.BUILD_IMAGE = 'registry.cn-hangzhou.aliyuncs.com/library/node:21-alpine'
+              break
+            default:
+              env.BUILD_IMAGE = 'registry.cn-hangzhou.aliyuncs.com/library/node:18-alpine'
+          }
+          
+          echo "前端框架: ${env.FRONTEND_FRAMEWORK}"
+          echo "Node.js版本: ${env.NODE_VERSION}"
+          echo "构建镜像: ${env.BUILD_IMAGE}"
+          echo "构建命令: ${env.BUILD_COMMAND}"
+          echo "输出目录: ${env.OUTPUT_DIR}"
+          echo "Nginx镜像: ${env.NGINX_IMAGE}"
+        }
+      }
+    }
+    
+    stage('拉取代码') {
+      steps {
+        script {
+          def gitPath = params.GIT_PATH?.trim() ?: '.'
+          
+          if (gitPath == '.' || gitPath == './') {
+            checkout([
+              $class: 'GitSCM',
+              branches: [[name: "*/${params.GIT_BRANCH}"]],
+              userRemoteConfigs: [[url: params.GIT_REPOSITORY]]
+            ])
+          } else {
+            checkout([
+              $class: 'GitSCM',
+              branches: [[name: "*/${params.GIT_BRANCH}"]],
+              userRemoteConfigs: [[url: params.GIT_REPOSITORY]],
+              extensions: [[$class: 'SparseCheckoutPaths', sparseCheckoutPaths: [[path: gitPath]]]]
+            ])
+            
+            // 切换到项目子目录
+            dir(gitPath) {
+              echo "切换到项目目录: ${gitPath}"
+            }
+          }
+        }
+      }
+    }
+    
+    stage('构建前端项目') {
+      steps {
+        script {
+          def gitPath = params.GIT_PATH?.trim() ?: '.'
+          def workDir = (gitPath == '.' || gitPath == './') ? '.' : gitPath
+          
+          dir(workDir) {
+            docker.image(env.BUILD_IMAGE).inside('-u root:root') {
+              // 检查包管理器
+              def packageManager = 'npm'
+              if (fileExists('yarn.lock')) {
+                packageManager = 'yarn'
+              } else if (fileExists('pnpm-lock.yaml')) {
+                packageManager = 'pnpm'
+                sh 'npm install -g pnpm'
+              }
+              
+              echo "检测到包管理器: ${packageManager}"
+              
+              // 安装依赖
+              def installCmd = env.INSTALL_COMMAND?.trim()
+              if (!installCmd) {
+                switch(packageManager) {
+                  case 'yarn':
+                    installCmd = 'yarn install --frozen-lockfile'
+                    break
+                  case 'pnpm':
+                    installCmd = 'pnpm install --frozen-lockfile'
+                    break
+                  default:
+                    installCmd = 'npm ci'
+                }
+              }
+              
+              echo "执行安装命令: ${installCmd}"
+              sh installCmd
+              
+              // 构建项目
+              echo "执行构建命令: ${env.BUILD_COMMAND}"
+              sh env.BUILD_COMMAND
+              
+              // 验证输出目录
+              if (!fileExists(env.OUTPUT_DIR)) {
+                error("构建输出目录不存在: ${env.OUTPUT_DIR}")
+              }
+              
+              echo "构建完成，输出目录: ${env.OUTPUT_DIR}"
+              sh "ls -la ${env.OUTPUT_DIR}"
+            }
+          }
+        }
+      }
+    }
+    
+    stage('构建Docker镜像') {
+      steps {
+        script {
+          def gitPath = params.GIT_PATH?.trim() ?: '.'
+          def workDir = (gitPath == '.' || gitPath == './') ? '.' : gitPath
+          
+          dir(workDir) {
+            // 创建临时Dockerfile
+            def dockerfileContent = """
+FROM ${env.NGINX_IMAGE}
+
+# 删除默认的nginx配置和静态文件
+RUN rm -rf /usr/share/nginx/html/*
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+# 复制构建后的静态文件
+COPY ${env.OUTPUT_DIR}/ /usr/share/nginx/html/
+
+# 创建nginx配置文件
+RUN echo 'server {' > /etc/nginx/conf.d/default.conf && \\
+    echo '    listen 80;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    server_name localhost;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    root /usr/share/nginx/html;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    index index.html index.htm;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    location / {' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        try_files \\$uri \\$uri/ /index.html;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    }' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    location /health {' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        access_log off;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        return 200 "healthy\\n";' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        add_header Content-Type text/plain;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    }' >> /etc/nginx/conf.d/default.conf && \\
+    echo '}' >> /etc/nginx/conf.d/default.conf
+
+# 设置正确的权限
+RUN chmod -R 755 /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+"""
+            
+            writeFile file: 'Dockerfile.frontend', text: dockerfileContent
+            
+            // 构建镜像
+            def image = docker.build(params.FULL_IMAGE, '-f Dockerfile.frontend .')
+            
+            // 推送镜像
+            docker.withRegistry("https://${env.DOCKER_REGISTRY}") {
+              image.push()
+              image.push('latest')
+            }
+            
+            echo "镜像构建并推送成功: ${params.FULL_IMAGE}"
+          }
+        }
+      }
+    }
+    
+    stage('清理') {
+      steps {
+        script {
+          def gitPath = params.GIT_PATH?.trim() ?: '.'
+          def workDir = (gitPath == '.' || gitPath == './') ? '.' : gitPath
+          
+          dir(workDir) {
+            // 清理临时文件
+            sh 'rm -f Dockerfile.frontend'
+            
+            // 清理Docker镜像（保留最新的）
+            sh """
+              docker images --format 'table {{.Repository}}:{{.Tag}}' | grep '${params.IMAGE_REPOSITORY}' | tail -n +2 | head -n -1 | xargs -r docker rmi || true
+            """
+          }
+        }
+      }
+    }
+  }
+  
+  post {
+    always {
+      // 清理工作空间
+      cleanWs()
+    }
+    
+    success {
+      echo "前端项目构建成功！"
+      echo "镜像: ${params.FULL_IMAGE}"
+    }
+    
+    failure {
+      echo "前端项目构建失败！"
+    }
+  }
+}

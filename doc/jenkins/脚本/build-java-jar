@@ -1,0 +1,735 @@
+pipeline {
+  agent any
+  options { 
+    timestamps()
+  }
+
+  // Java JAR 构建参数
+  parameters {
+    string(name: 'SERVICE_ID', defaultValue: '', description: '平台内部服务 ID（可选）')
+    string(name: 'SERVICE_NAME', defaultValue: '', description: '服务名称（可选）')
+    string(name: 'PROJECT_ID', defaultValue: '', description: '所属项目 ID（可选）')
+    string(name: 'PROJECT_IDENTIFIER', defaultValue: '', description: '项目标识（可选）')
+
+    string(name: 'GIT_REPOSITORY', defaultValue: '', description: 'Git 仓库地址（必填）')
+    string(name: 'GIT_BRANCH', defaultValue: 'main', description: '构建分支')
+    string(name: 'GIT_PATH', defaultValue: '', description: '仓库内相对子路径（可选）')
+    string(name: 'GIT_PROVIDER', defaultValue: '', description: 'Git 提供商标识（可选）')
+
+    string(name: 'BUILD_TYPE', defaultValue: 'java_jar', description: '构建方式（java_jar）')
+    string(name: 'BUILD_TOOL', defaultValue: 'maven', description: '构建工具（maven/gradle）')
+    string(name: 'JAVA_VERSION', defaultValue: '17', description: 'Java 版本（8/11/17/21）')
+    string(name: 'RUNTIME_IMAGE', defaultValue: 'openjdk:17-jre-slim', description: '运行时镜像')
+    string(name: 'JAVA_OPTIONS', defaultValue: '', description: 'JVM 参数（可选）')
+    string(name: 'MAVEN_PROFILES', defaultValue: '', description: 'Maven Profiles（可选）')
+    string(name: 'GRADLE_TASKS', defaultValue: 'build', description: 'Gradle Tasks（可选）')
+    text(name: 'BUILD_ARGS', defaultValue: '', description: 'JSON 字符串，描述额外的构建参数（可选）')
+    
+    string(name: 'SERVICE_IMAGE_ID', defaultValue: '', description: '平台侧镜像记录 ID（回调时使用）')
+    string(name: 'BUILD_CALLBACK_URL', defaultValue: '', description: '构建完成后回调平台的接口地址（可选）')
+    string(name: 'BUILD_CALLBACK_SECRET', defaultValue: '', description: '回调接口认证令牌（可选）')
+  }
+
+  environment {
+    GIT_CREDENTIALS = 'jenkins-gitlab'
+    NEXUS_CREDENTIALS = 'nexus-admin'
+    NEXUS_RAW_REPO = 'https://nexus.aimstek.cn/repository/raw-hosted'
+    
+    // Docker镜像源配置（可通过环境变量覆盖）
+    DOCKER_REGISTRY = "${env.DOCKER_REGISTRY ?: 'registry.cn-hangzhou.aliyuncs.com/library'}"
+    
+    // 回调相关配置
+    BUILD_CALLBACK_BASE_URL = "${env.BUILD_CALLBACK_BASE_URL ?: 'http://api.xuanwu-factory.dev.aimstek.cn'}"
+    BUILD_START_TIME = "${currentBuild.startTimeInMillis}"
+  }
+
+  stages {
+    stage('Send Building Status') {
+      when { 
+        expression { 
+          return (params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()
+        } 
+      }
+      steps {
+        script {
+          SendBuildCallback('building', 'Java JAR build started')
+        }
+      }
+    }
+    
+    stage('Checkout') {
+      steps {
+        script {
+          def repo = params.GIT_REPOSITORY?.trim()
+          def branch = params.GIT_BRANCH?.trim() ?: 'main'
+          env.BUILD_SUBPATH = ''
+          def rawSubpath = params.GIT_PATH?.trim()
+
+          if (!repo) {
+            error 'Missing GIT_REPOSITORY parameter'
+          }
+
+          echo "Checking out ${repo} @ ${branch}"
+          checkout([$class: 'GitSCM', branches: [[name: branch]], userRemoteConfigs: [[url: repo, credentialsId: env.GIT_CREDENTIALS]]])
+
+          if (rawSubpath) {
+            def normalized = rawSubpath.replaceFirst("^/","").replaceFirst("/\$","").trim()
+            if (normalized == '' || normalized == '.' || normalized == './') {
+              echo "Using repository root (ignoring subpath: ${rawSubpath})"
+              env.BUILD_SUBPATH = ''
+            } else {
+              env.BUILD_SUBPATH = normalized
+              echo "Detected subpath: ${env.BUILD_SUBPATH}"
+            }
+          }
+        }
+      }
+    }
+
+    stage('Prepare Build Environment') {
+      steps {
+        script {
+          def javaVersion = params.JAVA_VERSION?.trim() ?: '17'
+          def buildTool = params.BUILD_TOOL?.trim() ?: 'maven'
+          
+          echo "=== Build Environment ==="
+          echo "Java Version: ${javaVersion}"
+          echo "Build Tool: ${buildTool}"
+          echo "Runtime Image: ${params.RUNTIME_IMAGE}"
+          echo "========================="
+          
+          // 根据Java版本选择构建镜像（支持镜像源配置）
+          def dockerRegistry = env.DOCKER_REGISTRY
+          def imagePrefix = dockerRegistry ? "${dockerRegistry}/" : ''
+          
+          switch(javaVersion) {
+            case '8':
+              env.BUILD_IMAGE = "${imagePrefix}maven:3.9-eclipse-temurin-8"
+              env.GRADLE_IMAGE = "${imagePrefix}gradle:8.4-jdk8"
+              break
+            case '11':
+              env.BUILD_IMAGE = "${imagePrefix}maven:3.9-eclipse-temurin-11"
+              env.GRADLE_IMAGE = "${imagePrefix}gradle:8.4-jdk11"
+              break
+            case '17':
+              env.BUILD_IMAGE = "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/maven:3.9-eclipse-temurin-17-alpine"
+              env.GRADLE_IMAGE = "${imagePrefix}gradle:8.4-jdk17"
+              break
+            case '21':
+              env.BUILD_IMAGE = "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/maven:3.9-eclipse-temurin-21-alpine"
+              env.GRADLE_IMAGE = "${imagePrefix}gradle:8.4-jdk21"
+              break
+            default:
+              env.BUILD_IMAGE = "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/maven:3.9-eclipse-temurin-17-alpine"
+              env.GRADLE_IMAGE = "${imagePrefix}gradle:8.4-jdk17"
+          }
+          
+          // 设置curl镜像
+          env.CURL_IMAGE = "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/curlimages/curl:latest"
+          
+          echo "Selected build image: ${env.BUILD_IMAGE}"
+        }
+      }
+    }
+
+    stage('Build JAR') {
+      steps {
+        script {
+          def buildTool = params.BUILD_TOOL?.trim() ?: 'maven'
+          def subpath = env.BUILD_SUBPATH?.trim()
+          
+          echo "Building JAR with ${buildTool} using Docker"
+          
+          if (buildTool == 'maven') {
+            def profiles = params.MAVEN_PROFILES?.trim()
+            def profilesArg = profiles ? "-P${profiles}" : ''
+            
+            // 使用Maven Docker镜像构建
+            docker.image(env.BUILD_IMAGE).inside('-u root -v /root/.m2:/root/.m2') {
+              def buildScript = """
+                set -eu
+                echo "=== Maven Docker Build ==="
+                java -version
+                mvn -version
+                
+                if [ -f "pom.xml" ]; then
+                  echo "Found pom.xml, starting Maven build..."
+                  mvn clean package -DskipTests ${profilesArg}
+                  echo "Maven build completed"
+                else
+                  echo "ERROR: pom.xml not found in current directory"
+                  ls -la
+                  exit 1
+                fi
+                echo "=========================="
+              """
+              
+              if (subpath) {
+                dir(subpath) {
+                  sh buildScript
+                }
+              } else {
+                sh buildScript
+              }
+            }
+          } else if (buildTool == 'gradle') {
+            def tasks = params.GRADLE_TASKS?.trim() ?: 'build'
+            
+            // 使用Gradle Docker镜像构建
+            docker.image(env.GRADLE_IMAGE).inside('-u root') {
+              def buildScript = """
+                set -eu
+                echo "=== Gradle Docker Build ==="
+                java -version
+                gradle -version
+                
+                if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+                  echo "Found Gradle build file, starting Gradle build..."
+                  gradle ${tasks}
+                  echo "Gradle build completed"
+                else
+                  echo "ERROR: build.gradle or build.gradle.kts not found in current directory"
+                  ls -la
+                  exit 1
+                fi
+                echo "=========================="
+              """
+              
+              if (subpath) {
+                dir(subpath) {
+                  sh buildScript
+                }
+              } else {
+                sh buildScript
+              }
+            }
+          } else {
+            error "Unsupported build tool: ${buildTool}. Supported tools: maven, gradle"
+          }
+        }
+      }
+    }
+
+    stage('Find and Prepare JAR') {
+      steps {
+        script {
+          def subpath = env.BUILD_SUBPATH?.trim()
+          def buildTool = params.BUILD_TOOL?.trim() ?: 'maven'
+          
+          def findJarScript = ''
+          
+          if (buildTool == 'maven') {
+            findJarScript = '''
+              set -eu
+              echo "=== Finding Maven JAR ==="
+              
+              # 查找target目录下的JAR文件（排除sources和javadoc）
+              JAR_FILE=$(find target -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" | head -1)
+              
+              if [ -z "$JAR_FILE" ]; then
+                echo "ERROR: No JAR file found in target directory"
+                find target -name "*.jar" || echo "No JAR files found at all"
+                exit 1
+              fi
+              
+              echo "Found JAR file: $JAR_FILE"
+              
+              # 验证原始JAR文件
+              echo "Verifying original JAR file..."
+              if [ ! -f "$JAR_FILE" ]; then
+                echo "ERROR: JAR file does not exist: $JAR_FILE"
+                exit 1
+              fi
+              
+              ORIGINAL_SIZE=$(stat -c%s "$JAR_FILE")
+              if [ "$ORIGINAL_SIZE" -eq "0" ]; then
+                echo "ERROR: Original JAR file is empty: $JAR_FILE"
+                exit 1
+              fi
+              echo "Original JAR size: $ORIGINAL_SIZE bytes"
+              
+              # 验证JAR文件格式
+              if ! file "$JAR_FILE" | grep -q "Java archive\\|Zip archive"; then
+                echo "ERROR: File is not a valid JAR archive: $JAR_FILE"
+                file "$JAR_FILE"
+                exit 1
+              fi
+              
+              # 测试JAR文件完整性
+              if ! unzip -t "$JAR_FILE" >/dev/null 2>&1; then
+                echo "ERROR: Original JAR file is corrupted: $JAR_FILE"
+                exit 1
+              fi
+              echo "✓ Original JAR file integrity verified"
+              
+              # 复制JAR文件到标准位置
+              mkdir -p artifacts
+              cp "$JAR_FILE" artifacts/application.jar
+              
+              # 验证复制后的JAR文件
+              echo "Verifying copied JAR file..."
+              if [ ! -f "artifacts/application.jar" ]; then
+                echo "ERROR: JAR file copy failed"
+                exit 1
+              fi
+              
+              COPIED_SIZE=$(stat -c%s "artifacts/application.jar")
+              if [ "$COPIED_SIZE" -ne "$ORIGINAL_SIZE" ]; then
+                echo "ERROR: File size mismatch after copy (original: $ORIGINAL_SIZE, copied: $COPIED_SIZE)"
+                exit 1
+              fi
+              
+              # 再次验证复制后的JAR完整性
+              if ! unzip -t artifacts/application.jar >/dev/null 2>&1; then
+                echo "ERROR: Copied JAR file is corrupted"
+                exit 1
+              fi
+              
+              echo "JAR file prepared: artifacts/application.jar"
+              echo "Final JAR size: $COPIED_SIZE bytes"
+              ls -la artifacts/
+              echo "✓ Maven JAR preparation completed successfully"
+              echo "======================"
+            '''
+          } else if (buildTool == 'gradle') {
+            findJarScript = '''
+              set -eu
+              echo "=== Finding Gradle JAR ==="
+              
+              # 查找build/libs目录下的JAR文件（排除sources和javadoc）
+              JAR_FILE=$(find build/libs -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" | head -1)
+              
+              if [ -z "$JAR_FILE" ]; then
+                echo "ERROR: No JAR file found in build/libs directory"
+                find build/libs -name "*.jar" || echo "No JAR files found at all"
+                exit 1
+              fi
+              
+              echo "Found JAR file: $JAR_FILE"
+              
+              # 验证原始JAR文件
+              echo "Verifying original JAR file..."
+              if [ ! -f "$JAR_FILE" ]; then
+                echo "ERROR: JAR file does not exist: $JAR_FILE"
+                exit 1
+              fi
+              
+              ORIGINAL_SIZE=$(stat -c%s "$JAR_FILE")
+              if [ "$ORIGINAL_SIZE" -eq "0" ]; then
+                echo "ERROR: Original JAR file is empty: $JAR_FILE"
+                exit 1
+              fi
+              echo "Original JAR size: $ORIGINAL_SIZE bytes"
+              
+              # 验证JAR文件格式
+              if ! file "$JAR_FILE" | grep -q "Java archive\\|Zip archive"; then
+                echo "ERROR: File is not a valid JAR archive: $JAR_FILE"
+                file "$JAR_FILE"
+                exit 1
+              fi
+              
+              # 测试JAR文件完整性
+              if ! unzip -t "$JAR_FILE" >/dev/null 2>&1; then
+                echo "ERROR: Original JAR file is corrupted: $JAR_FILE"
+                exit 1
+              fi
+              echo "✓ Original JAR file integrity verified"
+              
+              # 复制JAR文件到标准位置
+              mkdir -p artifacts
+              cp "$JAR_FILE" artifacts/application.jar
+              
+              # 验证复制后的JAR文件
+              echo "Verifying copied JAR file..."
+              if [ ! -f "artifacts/application.jar" ]; then
+                echo "ERROR: JAR file copy failed"
+                exit 1
+              fi
+              
+              COPIED_SIZE=$(stat -c%s "artifacts/application.jar")
+              if [ "$COPIED_SIZE" -ne "$ORIGINAL_SIZE" ]; then
+                echo "ERROR: File size mismatch after copy (original: $ORIGINAL_SIZE, copied: $COPIED_SIZE)"
+                exit 1
+              fi
+              
+              # 再次验证复制后的JAR完整性
+              if ! unzip -t artifacts/application.jar >/dev/null 2>&1; then
+                echo "ERROR: Copied JAR file is corrupted"
+                exit 1
+              fi
+              
+              echo "JAR file prepared: artifacts/application.jar"
+              echo "Final JAR size: $COPIED_SIZE bytes"
+              ls -la artifacts/
+              echo "✓ Gradle JAR preparation completed successfully"
+              echo "======================"
+            '''
+          }
+          
+          if (subpath) {
+            dir(subpath) {
+              sh findJarScript
+            }
+          } else {
+            sh findJarScript
+          }
+        }
+      }
+    }
+
+    stage('Upload JAR to Nexus') {
+      steps {
+        script {
+          def serviceName = params.SERVICE_NAME?.trim() ?: 'unknown-service'
+          def projectId = params.PROJECT_IDENTIFIER?.trim() ?: 'unknown-project'
+          def buildNumber = env.BUILD_NUMBER
+          def gitBranch = params.GIT_BRANCH?.trim() ?: 'main'
+          def subpath = env.BUILD_SUBPATH?.trim()
+          
+          // 构建JAR文件在Nexus中的路径
+          def jarPath = "${projectId}/${serviceName}/${gitBranch}/${serviceName}-${gitBranch}-${buildNumber}.jar"
+          def latestJarPath = "${projectId}/${serviceName}/latest/${serviceName}-latest.jar"
+          
+          echo "=== Uploading JAR to Nexus ==="
+          echo "JAR Path: ${jarPath}"
+          echo "Latest Path: ${latestJarPath}"
+          echo "Nexus Repository: ${env.NEXUS_RAW_REPO}"
+          echo "==============================="
+          
+          // 使用curl Docker镜像上传文件
+          docker.image(env.CURL_IMAGE).inside('') {
+            withCredentials([usernamePassword(credentialsId: env.NEXUS_CREDENTIALS, passwordVariable: 'NEXUS_PASSWORD', usernameVariable: 'NEXUS_USERNAME')]) {
+              def uploadScript = """
+                set -eu
+                
+                # 检查JAR文件是否存在
+                if [ ! -f "artifacts/application.jar" ]; then
+                  echo "ERROR: artifacts/application.jar not found"
+                  ls -la artifacts/ || echo "artifacts directory not found"
+                  exit 1
+                fi
+                
+                echo "Uploading JAR with build number..."
+                curl -v -u "\$NEXUS_USERNAME:\$NEXUS_PASSWORD" \\
+                  --upload-file artifacts/application.jar \\
+                  "${env.NEXUS_RAW_REPO}/${jarPath}"
+                
+                echo "Uploading JAR as latest version..."
+                curl -v -u "\$NEXUS_USERNAME:\$NEXUS_PASSWORD" \\
+                  --upload-file artifacts/application.jar \\
+                  "${env.NEXUS_RAW_REPO}/${latestJarPath}"
+                
+                echo "JAR upload completed successfully"
+              """
+              
+              if (subpath) {
+                dir(subpath) {
+                  sh uploadScript
+                }
+              } else {
+                sh uploadScript
+              }
+            }
+          }
+          
+          // 保存JAR URL到环境变量，供回调使用
+          env.JAR_URL = "${env.NEXUS_RAW_REPO}/${jarPath}"
+          env.LATEST_JAR_URL = "${env.NEXUS_RAW_REPO}/${latestJarPath}"
+        }
+      }
+    }
+
+    stage('Verify Upload') {
+      steps {
+        script {
+          echo "=== Verifying JAR Upload ==="
+          echo "JAR URL: ${env.JAR_URL}"
+          echo "Latest JAR URL: ${env.LATEST_JAR_URL}"
+          
+          // 使用curl Docker镜像进行完整性验证
+          docker.image(env.CURL_IMAGE).inside('') {
+            withCredentials([usernamePassword(credentialsId: env.NEXUS_CREDENTIALS, passwordVariable: 'NEXUS_PASSWORD', usernameVariable: 'NEXUS_USERNAME')]) {
+              def verifyScript = """
+                set -eu
+                
+                echo "=== JAR Upload Verification ==="
+                
+                # 1. 检查HTTP响应状态
+                echo "1. Checking HTTP response status..."
+                HTTP_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" -u "\$NEXUS_USERNAME:\$NEXUS_PASSWORD" "${env.LATEST_JAR_URL}")
+                if [ "\$HTTP_STATUS" != "200" ]; then
+                  echo "ERROR: HTTP status \$HTTP_STATUS, expected 200"
+                  exit 1
+                fi
+                echo "✓ HTTP status: \$HTTP_STATUS"
+                
+                # 2. 下载JAR文件进行完整性检查
+                echo "2. Downloading JAR for integrity check..."
+                curl -s -u "\$NEXUS_USERNAME:\$NEXUS_PASSWORD" -o "downloaded.jar" "${env.LATEST_JAR_URL}"
+                
+                # 3. 检查文件大小
+                echo "3. Checking file size..."
+                ORIGINAL_SIZE=\$(stat -c%s "artifacts/application.jar" 2>/dev/null || echo "0")
+                DOWNLOADED_SIZE=\$(stat -c%s "downloaded.jar" 2>/dev/null || echo "0")
+                
+                echo "Original JAR size: \$ORIGINAL_SIZE bytes"
+                echo "Downloaded JAR size: \$DOWNLOADED_SIZE bytes"
+                
+                if [ "\$ORIGINAL_SIZE" -eq "0" ]; then
+                  echo "ERROR: Original JAR file not found or empty"
+                  exit 1
+                fi
+                
+                if [ "\$DOWNLOADED_SIZE" -eq "0" ]; then
+                  echo "ERROR: Downloaded JAR file is empty"
+                  exit 1
+                fi
+                
+                if [ "\$ORIGINAL_SIZE" -ne "\$DOWNLOADED_SIZE" ]; then
+                  echo "ERROR: File size mismatch - JAR may be corrupted during upload"
+                  exit 1
+                fi
+                echo "✓ File sizes match"
+                
+                # 4. 验证JAR文件格式（检查ZIP魔数）
+                echo "4. Verifying JAR file format..."
+                if ! file downloaded.jar | grep -q "Java archive\\|Zip archive"; then
+                  echo "ERROR: Downloaded file is not a valid JAR/ZIP archive"
+                  file downloaded.jar
+                  exit 1
+                fi
+                echo "✓ JAR file format is valid"
+                
+                # 5. 尝试列出JAR内容（进一步验证完整性）
+                echo "5. Verifying JAR contents..."
+                if ! unzip -t downloaded.jar >/dev/null 2>&1; then
+                  echo "ERROR: JAR file is corrupted - failed integrity test"
+                  exit 1
+                fi
+                echo "✓ JAR integrity test passed"
+                
+                # 6. 检查JAR是否包含必要的文件
+                echo "6. Checking JAR structure..."
+                JAR_CONTENTS=\$(unzip -l downloaded.jar 2>/dev/null | head -20)
+                echo "JAR contents preview:"
+                echo "\$JAR_CONTENTS"
+                
+                # 清理临时文件
+                rm -f downloaded.jar
+                
+                echo "=== JAR Upload Verification Completed Successfully ==="
+              """
+              
+              def subpath = env.BUILD_SUBPATH?.trim()
+              if (subpath) {
+                dir(subpath) {
+                  sh verifyScript
+                }
+              } else {
+                sh verifyScript
+              }
+            }
+          }
+          
+          echo "============================"
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('success', 'Java JAR build and upload completed successfully')
+        }
+      }
+    }
+    failure {
+      script {
+        def failureReason = "Java JAR build failed"
+        
+        // 尝试识别失败原因
+        if (currentBuild.rawBuild.getLog(50).join('\n').contains('mvn: not found')) {
+          failureReason = "Maven not found - please install Maven on Jenkins node"
+        } else if (currentBuild.rawBuild.getLog(50).join('\n').contains('gradle: not found')) {
+          failureReason = "Gradle not found - please install Gradle on Jenkins node"
+        } else if (currentBuild.rawBuild.getLog(50).join('\n').contains('java: not found')) {
+          failureReason = "Java not found - please install Java on Jenkins node"
+        } else if (currentBuild.rawBuild.getLog(50).join('\n').contains('pom.xml')) {
+          failureReason = "Maven build failed - check pom.xml and dependencies"
+        } else if (currentBuild.rawBuild.getLog(50).join('\n').contains('build.gradle')) {
+          failureReason = "Gradle build failed - check build.gradle and dependencies"
+        }
+        
+        if ((params.BUILD_CALLBACK_URL?.trim() || env.BUILD_CALLBACK_BASE_URL?.trim()) && params.SERVICE_IMAGE_ID?.trim()) {
+          SendBuildCallback('failed', failureReason)
+        }
+      }
+    }
+    always {
+      // 清理构建产物
+      script {
+        def subpath = env.BUILD_SUBPATH?.trim()
+        def cleanupScript = '''
+          echo "=== Cleanup ==="
+          rm -rf artifacts/ || true
+          rm -rf target/ || true
+          rm -rf build/ || true
+          echo "Cleanup completed"
+          echo "==============="
+        '''
+        
+        if (subpath) {
+          dir(subpath) {
+            sh cleanupScript
+          }
+        } else {
+          sh cleanupScript
+        }
+      }
+    }
+  }
+}
+
+// 发送构建回调到平台
+def SendBuildCallback(status, message) {
+  def callbackUrl = params.BUILD_CALLBACK_URL?.trim()
+  
+  // 如果参数中没有指定完整回调URL，则从环境变量中拼接
+  if (!callbackUrl && env.BUILD_CALLBACK_BASE_URL?.trim() && params.SERVICE_ID?.trim()) {
+    callbackUrl = "${env.BUILD_CALLBACK_BASE_URL.trim()}/api/services/${params.SERVICE_ID.trim()}/build/callback"
+  }
+  
+  if (!callbackUrl) {
+    echo "Skipping callback: no BUILD_CALLBACK_URL or BUILD_CALLBACK_BASE_URL configured"
+    return
+  }
+  
+  def serviceImageId = params.SERVICE_IMAGE_ID?.trim()
+  if (!serviceImageId) {
+    echo "Skipping callback: SERVICE_IMAGE_ID not provided"
+    return
+  }
+  
+  // 计算构建耗时
+  def durationMs = currentBuild.duration ?: (System.currentTimeMillis() - env.BUILD_START_TIME.toLong())
+  
+  // 构建回调数据
+  def queueId = resolveQueueId()
+  def queueUrl = buildQueueUrl(queueId)
+
+  def callbackData = [
+    service_image_id: serviceImageId,
+    status: status,
+    jar_url: env.JAR_URL ?: '',
+    latest_jar_url: env.LATEST_JAR_URL ?: '',
+    runtime_image: params.RUNTIME_IMAGE?.trim() ?: '',
+    duration_ms: durationMs,
+    build_number: env.BUILD_NUMBER,
+    build_url: env.BUILD_URL,
+    queue_url: queueUrl,
+    result: currentBuild.result ?: (status == 'success' ? 'SUCCESS' : (status == 'failed' ? 'FAILURE' : 'BUILDING')),
+    build_logs: message,
+    metadata: [
+      builder: 'jenkins',
+      build_type: 'java_jar',
+      build_tool: params.BUILD_TOOL?.trim() ?: 'maven',
+      java_version: params.JAVA_VERSION?.trim() ?: '17',
+      node: env.NODE_NAME ?: 'unknown',
+      job_name: env.JOB_NAME,
+      git_branch: params.GIT_BRANCH,
+      git_repository: params.GIT_REPOSITORY,
+      nexus_repository: env.NEXUS_RAW_REPO
+    ]
+  ]
+  
+  def jsonPayload = groovy.json.JsonOutput.toJson(callbackData)
+  
+  echo "=== Sending Build Callback ==="
+  echo "URL: ${callbackUrl}"
+  echo "Status: ${status}"
+  echo "JAR URL: ${callbackData.jar_url}"
+  echo "Runtime Image: ${callbackData.runtime_image}"
+  echo "Duration: ${durationMs}ms"
+  echo "=============================="
+  
+  try {
+    // 构建认证头
+    def authHeader = ''
+    def secret = params.BUILD_CALLBACK_SECRET?.trim()
+    if (secret) {
+      authHeader = "-H 'X-Build-Callback-Secret: ${secret}'"
+    }
+    
+    // 使用 curl 发送回调请求
+    def curlCmd = """
+      curl -X POST '${callbackUrl}' \
+        -H 'Content-Type: application/json' \
+        ${authHeader} \
+        -d '${jsonPayload.replace("'", "'\\''")}' \
+        --connect-timeout 10 \
+        --max-time 30 \
+        -w '\\nHTTP Status: %{http_code}'
+    """
+    
+    def response = sh(script: curlCmd, returnStdout: true).trim()
+    echo "Callback response: ${response}"
+    
+    // 检查HTTP状态码
+    if (response.contains('HTTP Status: 2')) {
+      echo "✓ Build callback sent successfully"
+    } else {
+      echo "⚠ Build callback may have failed, check response above"
+    }
+  } catch (Exception e) {
+    echo "✗ Failed to send build callback: ${e.message}"
+    // 不中断构建流程
+  }
+}
+
+// 尝试从当前构建上下文安全获取 queueId
+def resolveQueueId() {
+  def queueId = ''
+  try {
+    def directId = currentBuild?.queueId
+    if (directId) {
+      queueId = directId.toString()
+    }
+  } catch (MissingPropertyException ignored) {
+    // RunWrapper 在旧版本中不提供 queueId 字段
+  } catch (Exception e) {
+    echo "Unable to read queueId from RunWrapper: ${e.message}"
+  }
+
+  if (queueId) {
+    return queueId
+  }
+
+  def envQueueId = env.BUILD_QUEUE_ID?.trim()
+  if (envQueueId) {
+    return envQueueId
+  }
+
+  echo "Queue id not available from Jenkins; queue_url will be omitted. Set BUILD_QUEUE_ID to override."
+  return ''
+}
+
+// 根据 queueId 构建 Jenkins 队列链接
+def buildQueueUrl(queueId) {
+  def buildUrl = env.BUILD_URL?.trim()
+  if (!buildUrl || !queueId) {
+    return ''
+  }
+
+  try {
+    def sanitized = buildUrl.replace("/execution/node/", "/")
+    if (env.BUILD_NUMBER) {
+      sanitized = sanitized.replace("/${env.BUILD_NUMBER}/", "/queue/item/${queueId}/")
+    }
+    return sanitized
+  } catch (Exception e) {
+    echo "Unable to construct queue URL: ${e.message}"
+    return ''
+  }
+}

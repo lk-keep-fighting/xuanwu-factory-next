@@ -10,6 +10,7 @@ import { DEPLOYMENT_STATUS_META, IMAGE_STATUS_META } from '@/lib/service-constan
 import { parseImageReference, formatImageReference } from '@/lib/service-image'
 import { ServiceType } from '@/types/project'
 import type { DeploymentsTabProps } from '@/types/service-tabs'
+import { BuildConfigurationCard } from './BuildConfigurationCard'
 
 /**
  * CurrentDeploymentStatus - Shows the current active deployment
@@ -481,7 +482,11 @@ export const DeploymentsTab = memo(function DeploymentsTab({
   onDeploy,
   onBuild,
   onActivateImage,
-  onPageChange
+  onPageChange,
+  isEditingBuildConfig = false,
+  onStartEditBuildConfig,
+  onSaveBuildConfig,
+  onCancelEditBuildConfig
 }: DeploymentsTabProps) {
   const isApplicationService = service.type === ServiceType.APPLICATION
 
@@ -494,6 +499,19 @@ export const DeploymentsTab = memo(function DeploymentsTab({
           ongoingDeployment={ongoingDeployment}
         />
       </div>
+
+      {/* Build Configuration - Only for Application services */}
+      {isApplicationService && onStartEditBuildConfig && onSaveBuildConfig && onCancelEditBuildConfig && (
+        <div role="region" aria-label="构建配置">
+          <BuildConfigurationCard
+            service={service}
+            isEditing={isEditingBuildConfig}
+            onStartEdit={onStartEditBuildConfig}
+            onSave={onSaveBuildConfig}
+            onCancel={onCancelEditBuildConfig}
+          />
+        </div>
+      )}
 
       {/* Build History - Only for Application services */}
       {isApplicationService && (

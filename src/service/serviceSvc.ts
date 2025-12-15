@@ -7,6 +7,7 @@ import type {
   ServiceImageStatus
 } from '@/types/project'
 import type { K8sFileListResult, K8sServiceStatus } from '@/types/k8s'
+import type { GitBranchListResult } from '@/types/system'
 
 const API_BASE = '/api/services'
 
@@ -631,5 +632,32 @@ export const serviceSvc = {
     }
     
     return response.text()
+  },
+
+  /**
+   * 获取服务Git仓库的分支列表
+   */
+  async getServiceBranches(serviceId: string, options?: { search?: string; perPage?: number }): Promise<GitBranchListResult> {
+    const params = new URLSearchParams()
+    if (options?.search) {
+      params.set('search', options.search)
+    }
+    if (options?.perPage) {
+      params.set('per_page', options.perPage.toString())
+    }
+    const query = params.toString()
+
+    const response = await fetch(`${API_BASE}/${serviceId}/branches${query ? `?${query}` : ''}`)
+    const payload = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+          ? ((payload as { error?: string }).error as string)
+          : '获取分支列表失败'
+      throw new Error(message)
+    }
+
+    return payload as GitBranchListResult
   }
 }

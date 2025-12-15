@@ -14,7 +14,7 @@ export interface Project {
 
 // 服务类型枚举
 export enum ServiceType {
-  APPLICATION = 'application',  // 基于源码构建
+  APPLICATION = 'application',  // 基于源码构建（支持Docker镜像和JAR包）
   DATABASE = 'database',        // 内置数据库镜像
   IMAGE = 'image'               // 基于现有镜像部署
 }
@@ -49,7 +49,27 @@ export enum GitProvider {
 export enum BuildType {
   DOCKERFILE = 'dockerfile',
   NIXPACKS = 'nixpacks',
-  BUILDPACKS = 'buildpacks'
+  BUILDPACKS = 'buildpacks',
+  JAVA_JAR = 'java_jar',      // Java JAR包构建
+  FRONTEND = 'frontend',      // 前端构建（Node.js/静态文件）
+  TEMPLATE = 'template'       // 模板构建（基于语言类型的Dockerfile模板）
+}
+
+// Dockerfile模板配置
+export interface DockerfileTemplate {
+  id: string
+  name: string
+  description: string
+  category: string
+  baseImage: string
+  workdir: string
+  copyFiles: string[]
+  installCommands: string[]
+  buildCommands: string[]
+  runCommand: string
+  exposePorts: number[]
+  envVars: Record<string, string>
+  dockerfile: string
 }
 
 // 网络配置类型
@@ -248,6 +268,8 @@ export interface ImageService extends BaseService {
     interval?: number
   }
 }
+
+
 
 export type ServiceImageStatus = 'pending' | 'building' | 'success' | 'failed'
 

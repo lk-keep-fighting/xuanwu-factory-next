@@ -223,6 +223,11 @@ export interface DeploymentsTabProps {
   onBuild: (branch: string, tag: string) => Promise<void>
   onActivateImage: (imageId: string) => Promise<void>
   onPageChange: (page: number) => void
+  // Build configuration props
+  isEditingBuildConfig?: boolean
+  onStartEditBuildConfig?: () => void
+  onSaveBuildConfig?: (buildConfig: { build_type: string; build_args: Record<string, string> }) => Promise<void>
+  onCancelEditBuildConfig?: () => void
 }
 
 /**

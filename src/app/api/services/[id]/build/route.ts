@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { JenkinsClient, JenkinsBuildError, JenkinsConfigError, type JenkinsBuildResult } from '@/lib/jenkins'
 import { formatImageReference, limitTagLength, slugifyImageComponent } from '@/lib/service-image'
-import { ServiceType } from '@/types/project'
+import { ServiceType, BuildType } from '@/types/project'
 
 const DEFAULT_BRANCH = 'main'
 const DEFAULT_BUILD_ERROR = '镜像构建失败，请稍后重试。'
@@ -215,6 +215,35 @@ export async function POST(
   if (serviceRecord.build_args) {
     try {
       parameters.BUILD_ARGS = JSON.stringify(serviceRecord.build_args)
+      
+      // 为 Java JAR 构建添加特定参数
+      if (serviceRecord.build_type === BuildType.JAVA_JAR) {
+        const buildArgs = serviceRecord.build_args as Record<string, string>
+        parameters.BUILD_TOOL = buildArgs.build_tool || 'maven'
+        parameters.JAVA_VERSION = buildArgs.java_version || '17'
+        parameters.RUNTIME_IMAGE = buildArgs.runtime_image || 'openjdk:17-jre-slim'
+        parameters.JAVA_OPTIONS = buildArgs.java_options || ''
+        parameters.MAVEN_PROFILES = buildArgs.maven_profiles || ''
+        parameters.GRADLE_TASKS = buildArgs.gradle_tasks || ''
+      }
+      
+      // 为前端构建添加特定参数
+      if (serviceRecord.build_type === BuildType.FRONTEND) {
+        const buildArgs = serviceRecord.build_args as Record<string, string>
+        parameters.FRONTEND_FRAMEWORK = buildArgs.frontend_framework || 'react'
+        parameters.NODE_VERSION = buildArgs.node_version || '18'
+        parameters.BUILD_COMMAND = buildArgs.build_command || 'npm run build'
+        parameters.OUTPUT_DIR = buildArgs.output_dir || 'dist'
+        parameters.NGINX_IMAGE = buildArgs.nginx_image || 'nginx:alpine'
+        parameters.INSTALL_COMMAND = buildArgs.install_command || ''
+      }
+      
+      // 为模板构建添加特定参数
+      if (serviceRecord.build_type === BuildType.TEMPLATE) {
+        const buildArgs = serviceRecord.build_args as Record<string, string>
+        parameters.TEMPLATE_ID = buildArgs.template_id || ''
+        parameters.CUSTOM_DOCKERFILE = buildArgs.custom_dockerfile || ''
+      }
     } catch (error) {
       console.warn('[Services][Build] 序列化 build_args 失败:', error)
     }
@@ -223,16 +252,42 @@ export async function POST(
   let buildResult: JenkinsBuildResult | null = null
 
   try {
+    // 根据构建类型选择不同的 Jenkins Job
+    let jobName: string | undefined
+    
+    if (serviceRecord.build_type === BuildType.JAVA_JAR) {
+      // 使用专用的 Java JAR 构建 Job
+      // 使用完整的 Job 路径，包含文件夹前缀
+      jobName = 'CICD-STD/build-java-jar'
+    } else if (serviceRecord.build_type === BuildType.FRONTEND) {
+      // 使用专用的前端构建 Job
+      jobName = 'CICD-STD/build-frontend'
+    } else if (serviceRecord.build_type === BuildType.TEMPLATE) {
+      // 使用专用的模板构建 Job
+      jobName = 'CICD-STD/build-template'
+    } else {
+      // 使用默认的 Dockerfile 构建 Job
+      jobName = undefined // 使用环境变量中配置的默认 Job
+    }
+    
     buildResult = await client.triggerBuild({
+      jobName,
       parameters
     })
   } catch (error) {
-    const errorMessage =
+    let errorMessage =
       error instanceof JenkinsBuildError
         ? error.message || DEFAULT_BUILD_ERROR
         : error instanceof Error
           ? error.message
           : DEFAULT_BUILD_ERROR
+
+    // 为模板构建提供特定的错误提示
+    if (serviceRecord.build_type === BuildType.TEMPLATE && 
+        error instanceof JenkinsBuildError && 
+        (error.message.includes('500') || error.message.includes('404'))) {
+      errorMessage = `模板构建Job不存在：请在Jenkins中创建 CICD-STD/build-template Job，或联系管理员配置。当前已临时使用默认Job。`
+    }
 
     const buildLogs = error instanceof JenkinsBuildError ? truncateLog(error.consoleText) : undefined
 
