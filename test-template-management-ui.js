@@ -12,7 +12,7 @@ async function testTemplateManagementUI() {
   try {
     // 1. 测试页面是否可访问
     console.log('1. 测试模版管理页面访问')
-    const pageResponse = await fetch(`${BASE_URL}/admin/dockerfile-templates`)
+    const pageResponse = await fetch(`${BASE_URL}/settings/dockerfile-templates`)
     
     if (pageResponse.ok) {
       console.log('✅ 模版管理页面可以访问')
@@ -79,7 +79,7 @@ async function testTemplateManagementUI() {
 
     console.log('\n🎉 模版管理界面测试完成!')
     console.log('\n📋 访问方式:')
-    console.log(`   - 直接访问: ${BASE_URL}/admin/dockerfile-templates`)
+    console.log(`   - 直接访问: ${BASE_URL}/settings/dockerfile-templates`)
     console.log('   - 通过导航栏: 项目管理页面 → 模版管理')
     console.log('\n🔧 功能说明:')
     console.log('   - 查看所有模版和分类统计')

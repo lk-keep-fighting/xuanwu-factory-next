@@ -9,7 +9,7 @@
  * 
  * 测试方法:
  * 1. 启动开发服务器: npm run dev
- * 2. 访问: http://localhost:3000/admin/dockerfile-templates
+ * 2. 访问: http://localhost:3000/settings/dockerfile-templates
  * 3. 点击"新建模版"按钮，检查编辑Dialog是否:
  *    - 正确居中显示
  *    - 没有重影或模糊现象
@@ -34,7 +34,7 @@ console.log('  ✅ 清理了不必要的CSS类');
 console.log('');
 console.log('🧪 测试步骤:');
 console.log('  1. 启动开发服务器: npm run dev');
-console.log('  2. 访问: http://localhost:3000/admin/dockerfile-templates');
+console.log('  2. 访问: http://localhost:3000/settings/dockerfile-templates');
 console.log('  3. 测试新建模版Dialog');
 console.log('  4. 测试查看模版Dialog');
 console.log('');

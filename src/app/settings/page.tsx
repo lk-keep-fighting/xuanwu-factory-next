@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { systemConfigSvc } from '@/service/systemConfigSvc'
 import { GitProvider } from '@/types/project'
-import type { GitProviderConfigResponse } from '@/types/system'
+import type { GitProviderConfigResponse, UpdateGitProviderConfigPayload } from '@/types/system'
 
 interface GitProviderFormState {
   enabled: boolean
@@ -76,7 +76,7 @@ const SettingsPage = () => {
     setSaving(true)
 
     try {
-      const payload = {
+      const payload: UpdateGitProviderConfigPayload = {
         provider: GitProvider.GITLAB,
         baseUrl: form.baseUrl.trim(),
         enabled: form.enabled,
@@ -121,20 +121,17 @@ const SettingsPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="mx-auto flex max-w-5xl flex-col gap-6">
+    <div className="p-6">
+      <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">系统配置</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Git配置</h1>
             <p className="text-sm text-gray-500">管理全局 Git 提供商配置，用于应用服务创建和仓库检索。</p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={handleReload} disabled={loading} className="gap-2">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
               重新加载
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href="/projects">返回项目</Link>
             </Button>
           </div>
         </div>
