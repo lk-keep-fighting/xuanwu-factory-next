@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useState, useCallback } from 'react'
-import { Settings, Save, X, Edit, Wrench } from 'lucide-react'
+import { Settings, Save, X, Edit, Wrench, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { BuildType, ServiceType } from '@/types/project'
 import type { Service } from '@/types/project'
+import { getAllTemplates, getTemplateById, getTemplateCategories } from '@/lib/dockerfile-templates'
 
 interface BuildConfigurationCardProps {
   service: Service
@@ -117,36 +118,101 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
   const renderTemplateConfig = () => {
     const templateId = editingBuildArgs.template_id || ''
     const customDockerfile = editingBuildArgs.custom_dockerfile || ''
+    const selectedTemplate = templateId ? getTemplateById(templateId) : null
+    const allTemplates = getAllTemplates()
+    const categories = getTemplateCategories()
+
+    const handleTemplateSelect = (newTemplateId: string) => {
+      const template = getTemplateById(newTemplateId)
+      if (template) {
+        updateBuildArg('template_id', template.id)
+        updateBuildArg('custom_dockerfile', template.dockerfile)
+      }
+    }
+
+    const handleResetToTemplate = () => {
+      if (selectedTemplate) {
+        updateBuildArg('custom_dockerfile', selectedTemplate.dockerfile)
+      }
+    }
 
     return (
       <div className="space-y-4">
         <div className="space-y-2">
-          <Label>模板ID</Label>
+          <Label>选择构建模板</Label>
           {isEditing ? (
-            <Input
+            <Select
               value={templateId}
-              onChange={(e) => updateBuildArg('template_id', e.target.value)}
-              placeholder="模板ID (如: pnpm-frontend, maven-java21)"
-            />
+              onValueChange={handleTemplateSelect}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择模板" />
+              </SelectTrigger>
+              <SelectContent>
+                {categories.map((category) => (
+                  <div key={category.value}>
+                    <div className="px-2 py-1 text-xs font-medium text-gray-500 bg-gray-100">
+                      {category.label} ({category.count})
+                    </div>
+                    {allTemplates
+                      .filter(template => template.category === category.value)
+                      .map((template) => (
+                        <SelectItem key={template.id} value={template.id}>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{template.name}</span>
+                            <span className="text-xs text-gray-500">{template.description}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                  </div>
+                ))}
+              </SelectContent>
+            </Select>
           ) : (
-            <div className="text-sm text-gray-900 font-mono">{templateId || '未指定'}</div>
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-gray-900">
+                {selectedTemplate ? (
+                  <div className="flex flex-col">
+                    <span className="font-medium">{selectedTemplate.name}</span>
+                    <span className="text-xs text-gray-500">{selectedTemplate.description}</span>
+                  </div>
+                ) : (
+                  <span className="text-gray-500">未选择模板</span>
+                )}
+              </div>
+              {selectedTemplate && (
+                <Badge variant="secondary" className="text-xs">
+                  {selectedTemplate.category}
+                </Badge>
+              )}
+            </div>
           )}
-          <p className="text-xs text-gray-500">
-            可用模板: pnpm-frontend, maven-java21, nginx-static, node18-standard, python-flask
-          </p>
         </div>
 
         <div className="space-y-2">
-          <Label>自定义Dockerfile</Label>
+          <div className="flex items-center justify-between">
+            <Label>自定义Dockerfile</Label>
+            {isEditing && selectedTemplate && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleResetToTemplate}
+                className="gap-1 text-xs h-6 px-2"
+              >
+                <RefreshCw className="h-3 w-3" />
+                重置为模板
+              </Button>
+            )}
+          </div>
           {isEditing ? (
             <textarea
               value={customDockerfile}
               onChange={(e) => updateBuildArg('custom_dockerfile', e.target.value)}
-              className="w-full h-32 p-3 text-sm font-mono border border-gray-300 rounded-md resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="自定义Dockerfile内容（可选）"
+              className="w-full h-40 p-3 text-sm font-mono border border-gray-300 rounded-md resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="自定义Dockerfile内容（选择模板后自动填充）"
             />
           ) : (
-            <div className="text-sm text-gray-900 font-mono bg-gray-50 p-2 rounded border max-h-32 overflow-y-auto">
+            <div className="text-sm text-gray-900 font-mono bg-gray-50 p-2 rounded border max-h-40 overflow-y-auto">
               {customDockerfile ? (
                 <pre className="whitespace-pre-wrap">{customDockerfile}</pre>
               ) : (
@@ -155,9 +221,35 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
             </div>
           )}
           <p className="text-xs text-gray-500">
-            留空则使用基于模板ID的默认Dockerfile，或使用项目中现有的Dockerfile
+            选择模板后会自动填充Dockerfile内容，您可以根据需要进行修改
           </p>
         </div>
+
+        {selectedTemplate && (
+          <div className="space-y-2">
+            <Label>模板信息</Label>
+            <div className="bg-blue-50 p-3 rounded-md text-sm">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="font-medium text-gray-600">基础镜像:</span>
+                  <div className="font-mono text-gray-900">{selectedTemplate.baseImage}</div>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-600">工作目录:</span>
+                  <div className="font-mono text-gray-900">{selectedTemplate.workdir}</div>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-600">暴露端口:</span>
+                  <div className="font-mono text-gray-900">{selectedTemplate.exposePorts.join(', ')}</div>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-600">启动命令:</span>
+                  <div className="font-mono text-gray-900">{selectedTemplate.runCommand}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     )
   }

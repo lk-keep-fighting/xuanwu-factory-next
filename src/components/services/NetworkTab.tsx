@@ -16,6 +16,23 @@ export interface NetworkTabProps {
   project: Project | null
   serviceName?: string
   hasPendingNetworkDeploy: boolean
+  k8sServiceInfo?: {
+    type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName'
+    clusterIP?: string
+    ports?: Array<{
+      name?: string
+      port: number
+      targetPort: number | string
+      protocol: 'TCP' | 'UDP'
+      nodePort?: number
+    }>
+    externalIPs?: string[]
+    loadBalancerIP?: string
+    loadBalancerIngress?: Array<{
+      ip?: string
+      hostname?: string
+    }>
+  } | null
   onStartEdit: () => void
   onSave: () => Promise<void>
   onCancel: () => void
@@ -51,6 +68,7 @@ export const NetworkTab = memo(function NetworkTab(props: NetworkTabProps) {
     project,
     serviceName,
     hasPendingNetworkDeploy,
+    k8sServiceInfo,
     onStartEdit,
     onSave,
     onCancel,
@@ -181,6 +199,7 @@ export const NetworkTab = memo(function NetworkTab(props: NetworkTabProps) {
             project={project}
             domainRoot={domainRoot}
             serviceName={serviceName}
+            k8sServiceInfo={k8sServiceInfo}
             onUpdateServiceType={handleUpdateServiceType}
             onUpdatePorts={handleUpdatePorts}
             onUpdateHeadlessService={handleUpdateHeadlessService}

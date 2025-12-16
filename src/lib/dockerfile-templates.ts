@@ -8,34 +8,32 @@ export const COMPANY_DOCKERFILE_TEMPLATES: DockerfileTemplate[] = [
   {
     id: 'pnpm-frontend',
     name: 'PNPM前端构建',
-    description: '基于gplane/pnpm:node20-alpine的前端项目构建',
+    description: '基于公司私库PNPM镜像构建前端项目，使用Nginx提供静态文件服务',
     category: '前端',
-    baseImage: 'gplane/pnpm:node20-alpine',
+    baseImage: 'nexus.aimstek.cn/xuanwu-factory/common/pnpm:node20-alpine (linux/amd64)',
     workdir: '/app',
     copyFiles: ['package.json', 'pnpm-lock.yaml', '.'],
     installCommands: ['pnpm install --frozen-lockfile'],
     buildCommands: ['pnpm run build'],
-    runCommand: 'pnpm start',
-    exposePorts: [3000],
+    runCommand: 'nginx -g "daemon off;"',
+    exposePorts: [80],
     envVars: {
-      NODE_ENV: 'production',
-      PORT: '3000'
+      NODE_ENV: 'production'
     },
-    dockerfile: `# PNPM前端构建模板
-# 基于gplane/pnpm:node20-alpine的前端项目构建
+    dockerfile: `# PNPM前端构建模板 - 多阶段构建
+# 第一阶段：使用公司私库PNPM镜像构建前端项目
+# 第二阶段：使用Nginx提供静态文件服务
 
-FROM gplane/pnpm:node20-alpine
+# 构建阶段
+FROM nexus.aimstek.cn/xuanwu-factory/common/pnpm:node20-alpine-amd AS builder
 
 WORKDIR /app
 
 # 设置环境变量
 ENV NODE_ENV=production
-ENV PORT=3000
 
-# 复制package.json
+# 复制package.json和pnpm-lock.yaml
 COPY package.json ./
-
-# 复制pnpm-lock.yaml（如果存在）
 COPY pnpm-lock.yaml* ./
 
 # 安装依赖（兼容不同版本的lockfile）
@@ -51,11 +49,72 @@ COPY . ./
 # 构建应用
 RUN pnpm run build
 
-# 暴露端口
-EXPOSE 3000
+# 生产阶段
+FROM nexus.aimstek.cn/xuanwu-factory/common/nginx:1.27.5
 
-# 启动应用
-CMD ["pnpm", "start"]`
+# 删除默认的nginx配置和静态文件
+RUN rm -rf /usr/share/nginx/html/* && \\
+    rm -f /etc/nginx/conf.d/default.conf
+
+# 从构建阶段复制构建产物
+# 默认从dist目录复制（最常见的构建输出目录）
+# 如果项目使用其他目录（如build、out），需要在自定义Dockerfile中修改此行
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# 验证构建产物并创建默认页面（如果需要）
+RUN echo "Checking build output..." && \\
+    ls -la /usr/share/nginx/html/ && \\
+    if [ ! -f /usr/share/nginx/html/index.html ]; then \\
+      echo "Warning: index.html not found, creating default page"; \\
+      echo '<!DOCTYPE html><html><head><title>App</title></head><body><h1>Application Loading...</h1><script>console.log("No index.html found")</script></body></html>' > /usr/share/nginx/html/index.html; \\
+    fi
+
+# 创建优化的nginx配置文件
+RUN echo 'server {' > /etc/nginx/conf.d/default.conf && \\
+    echo '    listen 80;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    server_name localhost;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    root /usr/share/nginx/html;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    index index.html index.htm;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    # 错误页面配置' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    error_page 404 /index.html;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    # 主要位置块 - SPA路由支持' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    location / {' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        try_files \\$uri \\$uri/ @fallback;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    }' >> /etc/nginx/conf.d/default.conf && \\
+    echo '' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    # 回退处理' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    location @fallback {' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        rewrite ^.*\\$ /index.html last;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    }' >> /etc/nginx/conf.d/default.conf && \\
+    echo '' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    # 静态资源缓存' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\\$ {' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        expires 1y;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        add_header Cache-Control "public, immutable";' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        try_files \\$uri =404;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    }' >> /etc/nginx/conf.d/default.conf && \\
+    echo '' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    # API代理（如果需要）' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    location /api/ {' >> /etc/nginx/conf.d/default.conf && \\
+    echo '        try_files \\$uri @fallback;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    }' >> /etc/nginx/conf.d/default.conf && \\
+    echo '' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    # 安全头' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    add_header X-Frame-Options "SAMEORIGIN" always;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    add_header X-Content-Type-Options "nosniff" always;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '    add_header X-XSS-Protection "1; mode=block" always;' >> /etc/nginx/conf.d/default.conf && \\
+    echo '}' >> /etc/nginx/conf.d/default.conf
+
+# 设置权限
+RUN chmod -R 755 /usr/share/nginx/html
+
+# 暴露端口
+EXPOSE 80
+
+# 启动Nginx
+CMD ["nginx", "-g", "daemon off;"]`
   },
   
   {
@@ -109,7 +168,7 @@ CMD ["java", "-jar", "target/*.jar"]`
     name: 'Nginx静态文件',
     description: '基于Nginx的静态文件服务',
     category: '前端',
-    baseImage: 'registry.cn-hangzhou.aliyuncs.com/library/nginx:alpine',
+    baseImage: 'nexus.aimstek.cn/xuanwu-factory/common/nginx:1.27.5',
     workdir: '/usr/share/nginx/html',
     copyFiles: ['dist/', '.'],
     installCommands: [],
@@ -120,7 +179,7 @@ CMD ["java", "-jar", "target/*.jar"]`
     dockerfile: `# Nginx静态文件模板
 # 基于Nginx的静态文件服务
 
-FROM registry.cn-hangzhou.aliyuncs.com/library/nginx:alpine
+FROM nexus.aimstek.cn/xuanwu-factory/common/nginx:1.27.5
 
 # 删除默认配置
 RUN rm -rf /usr/share/nginx/html/*

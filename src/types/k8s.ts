@@ -81,6 +81,23 @@ export interface K8sServiceStatus {
       }>
     }>
   } | null
+  serviceInfo?: {
+    type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName'
+    clusterIP?: string
+    ports?: Array<{
+      name?: string
+      port: number
+      targetPort: number | string
+      protocol: 'TCP' | 'UDP'
+      nodePort?: number
+    }>
+    externalIPs?: string[]
+    loadBalancerIP?: string
+    loadBalancerIngress?: Array<{
+      ip?: string
+      hostname?: string
+    }>
+  } | null
   metrics?: {
     cpu: {
       used: string

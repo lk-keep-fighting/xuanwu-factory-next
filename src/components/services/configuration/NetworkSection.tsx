@@ -24,6 +24,23 @@ interface NetworkSectionProps {
   project: Project | null
   domainRoot: string
   serviceName?: string
+  k8sServiceInfo?: {
+    type: 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName'
+    clusterIP?: string
+    ports?: Array<{
+      name?: string
+      port: number
+      targetPort: number | string
+      protocol: 'TCP' | 'UDP'
+      nodePort?: number
+    }>
+    externalIPs?: string[]
+    loadBalancerIP?: string
+    loadBalancerIngress?: Array<{
+      ip?: string
+      hostname?: string
+    }>
+  } | null
   onUpdateServiceType: (type: ServiceNetworkType) => void
   onUpdatePorts: (ports: NetworkPortFormState[]) => void
   onUpdateHeadlessService: (enabled: boolean) => void
@@ -48,6 +65,7 @@ export const NetworkSection = memo(function NetworkSection({
   project,
   domainRoot,
   serviceName,
+  k8sServiceInfo,
   onUpdateServiceType,
   onUpdatePorts,
   onUpdateHeadlessService
@@ -72,9 +90,19 @@ export const NetworkSection = memo(function NetworkSection({
   }, [ports, onUpdatePorts])
 
   const updatePort = useCallback((id: string, updates: Partial<NetworkPortFormState>) => {
-    const newPorts = ports.map(port => 
-      port.id === id ? { ...port, ...updates } : port
-    )
+    const newPorts = ports.map(port => {
+      if (port.id === id) {
+        const updatedPort = { ...port, ...updates }
+        
+        // 如果更新了容器端口，且服务端口为空，则自动设置服务端口等于容器端口
+        if (updates.containerPort !== undefined && !port.servicePort.trim()) {
+          updatedPort.servicePort = updates.containerPort
+        }
+        
+        return updatedPort
+      }
+      return port
+    })
     onUpdatePorts(newPorts)
   }, [ports, onUpdatePorts])
 
@@ -173,6 +201,55 @@ export const NetworkSection = memo(function NetworkSection({
           <span className="font-medium text-gray-700">{serviceType}</span>
         </div>
 
+        {/* Access Information */}
+        {k8sServiceInfo && (
+          <div className="border rounded-lg p-4 bg-blue-50 border-blue-200">
+            <div className="flex items-center gap-2 mb-3">
+              <Globe className="w-4 h-4 text-blue-600" />
+              <span className="text-sm font-medium text-blue-900">访问信息</span>
+            </div>
+            <div className="space-y-2 text-sm">
+              {k8sServiceInfo.clusterIP && (
+                <div>
+                  <span className="text-xs text-blue-600 block mb-1">集群内部 IP</span>
+                  <span className="font-mono text-blue-800">{k8sServiceInfo.clusterIP}</span>
+                </div>
+              )}
+              {k8sServiceInfo.type === 'NodePort' && k8sServiceInfo.ports && (
+                <div>
+                  <span className="text-xs text-blue-600 block mb-1">外部访问端口</span>
+                  <div className="space-y-1">
+                    {k8sServiceInfo.ports.map((port, index) => (
+                      port.nodePort && (
+                        <div key={index} className="flex items-center gap-2">
+                          <span className="font-mono text-blue-800">
+                            {port.nodePort} → {port.port} ({port.protocol})
+                          </span>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-green-700">
+                            可访问
+                          </span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+              {k8sServiceInfo.type === 'LoadBalancer' && k8sServiceInfo.loadBalancerIngress && (
+                <div>
+                  <span className="text-xs text-blue-600 block mb-1">负载均衡器</span>
+                  <div className="space-y-1">
+                    {k8sServiceInfo.loadBalancerIngress.map((ingress, index) => (
+                      <span key={index} className="font-mono text-blue-800 block">
+                        {ingress.ip || ingress.hostname}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Headless Service */}
         {headlessServiceEnabled && (
           <div className="flex items-center gap-2">
@@ -190,41 +267,58 @@ export const NetworkSection = memo(function NetworkSection({
         ) : (
           <div className="space-y-3">
             <span className="text-xs text-gray-500 block">端口映射</span>
-            {ports.map((port, index) => (
-              <div key={port.id} className="border rounded-lg p-4 bg-gray-50">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-xs text-gray-500 block mb-1">容器端口</span>
-                    <span className="font-medium text-gray-700">{port.containerPort || '-'}</span>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 block mb-1">服务端口</span>
-                    <span className="font-medium text-gray-700">{port.servicePort || '-'}</span>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 block mb-1">协议</span>
-                    <span className="font-medium text-gray-700">{port.protocol}</span>
-                  </div>
-                  {port.nodePort && (
+            {ports.map((port, index) => {
+              // 从k8s服务信息中查找对应的NodePort
+              const k8sPort = k8sServiceInfo?.ports?.find(
+                k8sP => k8sP.port === parseInt(port.servicePort) && k8sP.protocol === port.protocol
+              )
+              const actualNodePort = k8sPort?.nodePort || port.nodePort
+              
+              return (
+                <div key={port.id} className="border rounded-lg p-4 bg-gray-50">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <span className="text-xs text-gray-500 block mb-1">NodePort</span>
-                      <span className="font-medium text-gray-700">{port.nodePort}</span>
+                      <span className="text-xs text-gray-500 block mb-1">容器端口</span>
+                      <span className="font-medium text-gray-700">{port.containerPort || '-'}</span>
+                    </div>
+                    <div>
+                      <span className="text-xs text-gray-500 block mb-1">服务端口</span>
+                      <span className="font-medium text-gray-700">{port.servicePort || '-'}</span>
+                    </div>
+                    <div>
+                      <span className="text-xs text-gray-500 block mb-1">协议</span>
+                      <span className="font-medium text-gray-700">{port.protocol}</span>
+                    </div>
+                    {(actualNodePort || serviceType === 'NodePort') && (
+                      <div>
+                        <span className="text-xs text-gray-500 block mb-1">NodePort</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-700">
+                            {actualNodePort || '未分配'}
+                          </span>
+                          {actualNodePort && serviceType === 'NodePort' && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-green-700">
+                              已分配
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Domain Configuration */}
+                  {port.enableDomain && port.domainPrefix && (
+                    <div className="mt-3 pt-3 border-t">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Globe className="w-4 h-4 text-blue-600" />
+                        <span className="text-xs text-gray-500">域名访问</span>
+                      </div>
+                      <DomainLink prefix={port.domainPrefix} />
                     </div>
                   )}
                 </div>
-                
-                {/* Domain Configuration */}
-                {port.enableDomain && port.domainPrefix && (
-                  <div className="mt-3 pt-3 border-t">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Globe className="w-4 h-4 text-blue-600" />
-                      <span className="text-xs text-gray-500">域名访问</span>
-                    </div>
-                    <DomainLink prefix={port.domainPrefix} />
-                  </div>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -234,51 +328,54 @@ export const NetworkSection = memo(function NetworkSection({
   // Edit mode
   return (
     <div className="space-y-4">
-      {/* Service Type Selector */}
-      <div>
-        <Label htmlFor="service-type" className="text-xs">
-          服务类型
-        </Label>
-        <Select
-          value={serviceType}
-          onValueChange={(value) => onUpdateServiceType(value as ServiceNetworkType)}
-        >
-          <SelectTrigger id="service-type">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ClusterIP">ClusterIP（集群内部访问）</SelectItem>
-            <SelectItem value="NodePort">NodePort（节点端口访问）</SelectItem>
-            <SelectItem value="LoadBalancer">LoadBalancer（负载均衡器）</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-gray-500 mt-1">
-          {serviceType === 'ClusterIP' && '仅集群内部可访问'}
-          {serviceType === 'NodePort' && '通过节点 IP 和端口访问'}
-          {serviceType === 'LoadBalancer' && '通过云提供商的负载均衡器访问'}
-        </p>
-      </div>
+      {/* Service Type and Headless Service in same row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Service Type Selector */}
+        <div>
+          <Label htmlFor="service-type" className="text-xs">
+            服务类型
+          </Label>
+          <Select
+            value={serviceType}
+            onValueChange={(value) => onUpdateServiceType(value as ServiceNetworkType)}
+          >
+            <SelectTrigger id="service-type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ClusterIP">ClusterIP（集群内部访问）</SelectItem>
+              <SelectItem value="NodePort">NodePort（节点端口访问）</SelectItem>
+              <SelectItem value="LoadBalancer">LoadBalancer（负载均衡器）</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-gray-500 mt-1">
+            {serviceType === 'ClusterIP' && '仅集群内部可访问'}
+            {serviceType === 'NodePort' && '通过节点 IP 和端口访问'}
+            {serviceType === 'LoadBalancer' && '通过云提供商的负载均衡器访问'}
+          </p>
+        </div>
 
-      {/* Headless Service Toggle */}
-      <div>
-        <Label htmlFor="headless-service" className="text-xs">
-          Headless Service
-        </Label>
-        <Select
-          value={headlessServiceEnabled ? 'true' : 'false'}
-          onValueChange={(value) => onUpdateHeadlessService(value === 'true')}
-        >
-          <SelectTrigger id="headless-service">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="false">禁用</SelectItem>
-            <SelectItem value="true">启用</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-gray-500 mt-1">
-          启用 Headless Service 用于 StatefulSet 或需要直接访问 Pod 的场景
-        </p>
+        {/* Headless Service Toggle */}
+        <div>
+          <Label htmlFor="headless-service" className="text-xs">
+            Headless Service
+          </Label>
+          <Select
+            value={headlessServiceEnabled ? 'true' : 'false'}
+            onValueChange={(value) => onUpdateHeadlessService(value === 'true')}
+          >
+            <SelectTrigger id="headless-service">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="false">禁用</SelectItem>
+              <SelectItem value="true">启用</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-gray-500 mt-1">
+            启用 Headless Service 用于 StatefulSet 或需要直接访问 Pod 的场景
+          </p>
+        </div>
       </div>
 
       {/* Port Mappings */}
@@ -323,19 +420,24 @@ export const NetworkSection = memo(function NetworkSection({
                         </div>
                         <div>
                           <Label htmlFor={`port-service-${port.id}`} className="text-xs">
-                            服务端口 *
+                            服务端口
                           </Label>
                           <Input
                             id={`port-service-${port.id}`}
                             type="number"
                             value={port.servicePort}
                             onChange={(e) => updatePort(port.id, { servicePort: e.target.value })}
-                            placeholder="80"
+                            placeholder={port.containerPort || "默认等于容器端口"}
                             className={servicePortInvalid ? 'border-red-500' : ''}
                           />
                           {servicePortInvalid && (
                             <p className="text-xs text-red-500 mt-1">
                               端口号必须在 1-65535 之间
+                            </p>
+                          )}
+                          {!port.servicePort && port.containerPort && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              留空将使用容器端口 {port.containerPort}
                             </p>
                           )}
                         </div>

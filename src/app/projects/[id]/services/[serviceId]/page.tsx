@@ -2631,6 +2631,7 @@ export default function ServiceDetailPage() {
               project={project}
               serviceName={service.name}
               hasPendingNetworkDeploy={hasPendingNetworkDeploy}
+              k8sServiceInfo={k8sStatusInfo?.serviceInfo}
               onStartEdit={() => setIsEditing(true)}
               onSave={handleSave}
               onCancel={() => {

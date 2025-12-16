@@ -1269,6 +1269,28 @@ class K8sService {
         status = 'pending'
       }
 
+      // 获取 Service 对象信息
+      let serviceInfo = null
+      try {
+        const service = await this.coreApi.readNamespacedService({ name: serviceName, namespace: targetNamespace })
+        serviceInfo = {
+          type: service.spec?.type as 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName',
+          clusterIP: service.spec?.clusterIP,
+          ports: service.spec?.ports?.map(port => ({
+            name: port.name,
+            port: port.port,
+            targetPort: port.targetPort,
+            protocol: port.protocol as 'TCP' | 'UDP',
+            nodePort: port.nodePort
+          })),
+          externalIPs: service.spec?.externalIPs,
+          loadBalancerIP: service.spec?.loadBalancerIP,
+          loadBalancerIngress: service.status?.loadBalancer?.ingress
+        }
+      } catch (serviceError) {
+        console.warn(`[K8s] 获取 Service 信息失败: ${this.getErrorMessage(serviceError)}`)
+      }
+
       return {
         status,
         replicas,
@@ -1276,7 +1298,8 @@ class K8sService {
         readyReplicas,
         updatedReplicas,
         conditions,
-        podStatus: podStatusInfo
+        podStatus: podStatusInfo,
+        serviceInfo
       }
     } catch (deploymentError: unknown) {
       if (this.getStatusCode(deploymentError) !== 404) {
@@ -1397,6 +1420,28 @@ class K8sService {
         status = 'pending'
       }
 
+      // 获取 Service 对象信息
+      let serviceInfo = null
+      try {
+        const service = await this.coreApi.readNamespacedService({ name: serviceName, namespace: targetNamespace })
+        serviceInfo = {
+          type: service.spec?.type as 'ClusterIP' | 'NodePort' | 'LoadBalancer' | 'ExternalName',
+          clusterIP: service.spec?.clusterIP,
+          ports: service.spec?.ports?.map(port => ({
+            name: port.name,
+            port: port.port,
+            targetPort: port.targetPort,
+            protocol: port.protocol as 'TCP' | 'UDP',
+            nodePort: port.nodePort
+          })),
+          externalIPs: service.spec?.externalIPs,
+          loadBalancerIP: service.spec?.loadBalancerIP,
+          loadBalancerIngress: service.status?.loadBalancer?.ingress
+        }
+      } catch (serviceError) {
+        console.warn(`[K8s] 获取 Service 信息失败: ${this.getErrorMessage(serviceError)}`)
+      }
+
       return {
         status,
         replicas,
@@ -1404,7 +1449,8 @@ class K8sService {
         readyReplicas,
         updatedReplicas,
         conditions,
-        podStatus: podStatusInfo
+        podStatus: podStatusInfo,
+        serviceInfo
       }
     } catch (statefulError: unknown) {
       if (this.getStatusCode(statefulError) === 404) {
