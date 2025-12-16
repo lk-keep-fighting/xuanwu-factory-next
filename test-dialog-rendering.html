@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dialog渲染测试</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .dialog-test {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+        
+        .dialog-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 999;
+        }
+        
+        /* 修复重影的样式 */
+        .fix-blur {
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            transform: translateZ(0);
+        }
+        
+        .fix-blur * {
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            resize: vertical;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        .secondary {
+            background: #6c757d;
+        }
+        
+        .secondary:hover {
+            background: #545b62;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>Dialog渲染测试</h1>
+        <p>这个页面用于测试Dialog的渲染问题，特别是重影现象。</p>
+        
+        <button onclick="showDialog(false)">显示普通Dialog</button>
+        <button onclick="showDialog(true)">显示修复后的Dialog</button>
+        
+        <h2>问题诊断</h2>
+        <ul>
+            <li>检查浏览器缩放级别（建议100%）</li>
+            <li>检查显示器DPI设置</li>
+            <li>尝试不同浏览器（Chrome、Firefox、Safari）</li>
+            <li>检查硬件加速设置</li>
+        </ul>
+        
+        <h2>浏览器信息</h2>
+        <div id="browser-info"></div>
+    </div>
+    
+    <script>
+        // 显示浏览器信息
+        document.getElementById('browser-info').innerHTML = `
+            <p><strong>User Agent:</strong> ${navigator.userAgent}</p>
+            <p><strong>屏幕分辨率:</strong> ${screen.width}x${screen.height}</p>
+            <p><strong>设备像素比:</strong> ${window.devicePixelRatio}</p>
+            <p><strong>视口大小:</strong> ${window.innerWidth}x${window.innerHeight}</p>
+        `;
+        
+        function showDialog(withFix) {
+            const overlay = document.createElement('div');
+            overlay.className = 'dialog-overlay';
+            
+            const dialog = document.createElement('div');
+            dialog.className = withFix ? 'dialog-test fix-blur' : 'dialog-test';
+            
+            dialog.innerHTML = \`
+                <h2>\${withFix ? '修复后的' : '普通'}Dialog测试</h2>
+                
+                <div class="form-group">
+                    <label>模版名称</label>
+                    <input type="text" value="测试模版" placeholder="输入模版名称">
+                </div>
+                
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea placeholder="输入描述信息">这是一个测试模版，用于验证Dialog的渲染效果。
+如果看到重影或模糊现象，说明需要进一步优化CSS样式。
+
+请仔细观察：
+1. 文字是否清晰
+2. 边框是否锐利
+3. 是否有重影现象
+4. 滚动时是否平滑</textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label>Dockerfile内容</label>
+                    <textarea style="font-family: 'Courier New', monospace; min-height: 300px;">FROM node:18-alpine
+
+WORKDIR /app
+
+# 复制package.json
+COPY package*.json ./
+
+# 安装依赖
+RUN npm ci --only=production
+
+# 复制应用代码
+COPY . ./
+
+# 暴露端口
+EXPOSE 3000
+
+# 启动应用
+CMD ["npm", "start"]</textarea>
+                </div>
+                
+                <div style="text-align: right;">
+                    <button class="secondary" onclick="closeDialog()">取消</button>
+                    <button onclick="closeDialog()">保存</button>
+                </div>
+            \`;
+            
+            document.body.appendChild(overlay);
+            document.body.appendChild(dialog);
+            
+            // 点击遮罩关闭
+            overlay.onclick = closeDialog;
+        }
+        
+        function closeDialog() {
+            const overlay = document.querySelector('.dialog-overlay');
+            const dialog = document.querySelector('.dialog-test');
+            if (overlay) overlay.remove();
+            if (dialog) dialog.remove();
+        }
+        
+        // ESC键关闭
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeDialog();
+            }
+        });
+    </script>
+</body>
+</html>

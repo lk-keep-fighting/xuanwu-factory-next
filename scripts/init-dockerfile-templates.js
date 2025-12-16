@@ -1,33 +1,35 @@
-import type { DockerfileTemplate } from '@/types/project'
-import { dockerfileTemplateSvc } from '@/service/dockerfileTemplateSvc'
+#!/usr/bin/env node
 
 /**
- * 公司Dockerfile模板定义
- * 基于公司具体需求和基础镜像创建的模板
- * @deprecated 使用数据库管理的模板，通过 dockerfileTemplateSvc 访问
+ * 初始化Dockerfile模板到数据库
+ * 将现有的硬编码模板迁移到数据库中
  */
-export const COMPANY_DOCKERFILE_TEMPLATES: DockerfileTemplate[] = [
+
+const { PrismaClient } = require('@prisma/client')
+
+const prisma = new PrismaClient()
+
+// 系统模板定义
+const SYSTEM_TEMPLATES = [
   {
     id: 'pnpm-frontend',
     name: 'PNPM前端构建',
     description: '基于公司私库PNPM镜像构建前端项目，使用Nginx提供静态文件服务',
     category: '前端',
-    baseImage: 'nexus.aimstek.cn/xuanwu-factory/common/pnpm:node20-alpine (linux/amd64)',
+    base_image: 'nexus.aimstek.cn/xuanwu-factory/common/pnpm:node20-alpine (linux/amd64)',
     workdir: '/app',
-    copyFiles: ['package.json', 'pnpm-lock.yaml', '.'],
-    installCommands: ['pnpm install --frozen-lockfile'],
-    buildCommands: ['pnpm run build'],
-    runCommand: 'nginx -g "daemon off;"',
-    exposePorts: [80],
-    envVars: {
-      NODE_ENV: 'production'
-    },
-    dockerfile: `# PNPM前端构建模板 - 多阶段构建
+    copy_files: ['package.json', 'pnpm-lock.yaml', '.'],
+    install_commands: ['pnpm install --frozen-lockfile'],
+    build_commands: ['pnpm run build'],
+    run_command: 'nginx -g "daemon off;"',
+    expose_ports: [80],
+    env_vars: { NODE_ENV: 'production' },
+    dockerfile_content: `# PNPM前端构建模板 - 多阶段构建
 # 第一阶段：使用公司私库PNPM镜像构建前端项目
 # 第二阶段：使用Nginx提供静态文件服务
 
 # 构建阶段
-FROM nexus.aimstek.cn/xuanwu-factory/common/pnpm:node20-alpine-amd AS builder
+FROM --platform=linux/amd64 nexus.aimstek.cn/xuanwu-factory/common/pnpm:node20-alpine AS builder
 
 WORKDIR /app
 
@@ -116,7 +118,8 @@ RUN chmod -R 755 /usr/share/nginx/html
 EXPOSE 80
 
 # 启动Nginx
-CMD ["nginx", "-g", "daemon off;"]`
+CMD ["nginx", "-g", "daemon off;"]`,
+    is_system: true
   },
   
   {
@@ -124,18 +127,18 @@ CMD ["nginx", "-g", "daemon off;"]`
     name: 'Maven Java21构建',
     description: '基于nexus.aimstek.cn/aims-common/maven:3.9-eclipse-temurin-21的Maven项目构建',
     category: 'Java',
-    baseImage: 'nexus.aimstek.cn/aims-common/maven:3.9-eclipse-temurin-21',
+    base_image: 'nexus.aimstek.cn/aims-common/maven:3.9-eclipse-temurin-21',
     workdir: '/app',
-    copyFiles: ['pom.xml', '.'],
-    installCommands: ['mvn dependency:go-offline'],
-    buildCommands: ['mvn clean package -DskipTests'],
-    runCommand: 'java -jar target/*.jar',
-    exposePorts: [8080],
-    envVars: {
+    copy_files: ['pom.xml', '.'],
+    install_commands: ['mvn dependency:go-offline'],
+    build_commands: ['mvn clean package -DskipTests'],
+    run_command: 'java -jar target/*.jar',
+    expose_ports: [8080],
+    env_vars: {
       JAVA_OPTS: '-Xms512m -Xmx1024m',
       MAVEN_OPTS: '-Dmaven.repo.local=/root/.m2/repository'
     },
-    dockerfile: `# Maven Java21构建模板
+    dockerfile_content: `# Maven Java21构建模板
 # 基于nexus.aimstek.cn/aims-common/maven:3.9-eclipse-temurin-21的Maven项目构建
 
 FROM nexus.aimstek.cn/aims-common/maven:3.9-eclipse-temurin-21
@@ -162,7 +165,8 @@ RUN mvn clean package -DskipTests
 EXPOSE 8080
 
 # 启动应用
-CMD ["java", "-jar", "target/*.jar"]`
+CMD ["java", "-jar", "target/*.jar"]`,
+    is_system: true
   },
 
   {
@@ -170,15 +174,15 @@ CMD ["java", "-jar", "target/*.jar"]`
     name: 'Nginx静态文件',
     description: '基于Nginx的静态文件服务',
     category: '前端',
-    baseImage: 'nexus.aimstek.cn/xuanwu-factory/common/nginx:1.27.5',
+    base_image: 'nexus.aimstek.cn/xuanwu-factory/common/nginx:1.27.5',
     workdir: '/usr/share/nginx/html',
-    copyFiles: ['dist/', '.'],
-    installCommands: [],
-    buildCommands: [],
-    runCommand: 'nginx -g "daemon off;"',
-    exposePorts: [80],
-    envVars: {},
-    dockerfile: `# Nginx静态文件模板
+    copy_files: ['dist/', '.'],
+    install_commands: [],
+    build_commands: [],
+    run_command: 'nginx -g "daemon off;"',
+    expose_ports: [80],
+    env_vars: {},
+    dockerfile_content: `# Nginx静态文件模板
 # 基于Nginx的静态文件服务
 
 FROM nexus.aimstek.cn/xuanwu-factory/common/nginx:1.27.5
@@ -208,7 +212,8 @@ RUN chmod -R 755 /usr/share/nginx/html
 EXPOSE 80
 
 # 启动Nginx
-CMD ["nginx", "-g", "daemon off;"]`
+CMD ["nginx", "-g", "daemon off;"]`,
+    is_system: true
   },
 
   {
@@ -216,18 +221,18 @@ CMD ["nginx", "-g", "daemon off;"]`
     name: 'Node.js 18标准应用',
     description: '基于Node.js 18的标准Web应用',
     category: 'Node.js',
-    baseImage: 'registry.cn-hangzhou.aliyuncs.com/library/node:18-alpine',
+    base_image: 'registry.cn-hangzhou.aliyuncs.com/library/node:18-alpine',
     workdir: '/app',
-    copyFiles: ['package*.json', '.'],
-    installCommands: ['npm ci --only=production'],
-    buildCommands: [],
-    runCommand: 'npm start',
-    exposePorts: [3000],
-    envVars: {
+    copy_files: ['package*.json', '.'],
+    install_commands: ['npm ci --only=production'],
+    build_commands: [],
+    run_command: 'npm start',
+    expose_ports: [3000],
+    env_vars: {
       NODE_ENV: 'production',
       PORT: '3000'
     },
-    dockerfile: `# Node.js 18标准应用模板
+    dockerfile_content: `# Node.js 18标准应用模板
 # 基于Node.js 18的标准Web应用
 
 FROM registry.cn-hangzhou.aliyuncs.com/library/node:18-alpine
@@ -251,7 +256,8 @@ COPY . ./
 EXPOSE 3000
 
 # 启动应用
-CMD ["npm", "start"]`
+CMD ["npm", "start"]`,
+    is_system: true
   },
 
   {
@@ -259,18 +265,18 @@ CMD ["npm", "start"]`
     name: 'Python Flask应用',
     description: '基于Python的Flask Web应用',
     category: 'Python',
-    baseImage: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim',
+    base_image: 'registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim',
     workdir: '/app',
-    copyFiles: ['requirements.txt', '.'],
-    installCommands: ['pip install --no-cache-dir -r requirements.txt'],
-    buildCommands: [],
-    runCommand: 'python app.py',
-    exposePorts: [8000],
-    envVars: {
+    copy_files: ['requirements.txt', '.'],
+    install_commands: ['pip install --no-cache-dir -r requirements.txt'],
+    build_commands: [],
+    run_command: 'python app.py',
+    expose_ports: [8000],
+    env_vars: {
       PYTHONPATH: '/app',
       PYTHONUNBUFFERED: '1'
     },
-    dockerfile: `# Python Flask应用模板
+    dockerfile_content: `# Python Flask应用模板
 # 基于Python的Flask Web应用
 
 FROM registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim
@@ -294,7 +300,8 @@ COPY . ./
 EXPOSE 8000
 
 # 启动应用
-CMD ["python", "app.py"]`
+CMD ["python", "app.py"]`,
+    is_system: true
   },
 
   {
@@ -302,15 +309,15 @@ CMD ["python", "app.py"]`
     name: '自定义空白模板',
     description: '空白模板，完全自定义配置',
     category: '自定义',
-    baseImage: 'registry.cn-hangzhou.aliyuncs.com/library/ubuntu:22.04',
+    base_image: 'registry.cn-hangzhou.aliyuncs.com/library/ubuntu:22.04',
     workdir: '/app',
-    copyFiles: ['.'],
-    installCommands: [],
-    buildCommands: [],
-    runCommand: 'echo "请配置启动命令"',
-    exposePorts: [8080],
-    envVars: {},
-    dockerfile: `# 自定义空白模板
+    copy_files: ['.'],
+    install_commands: [],
+    build_commands: [],
+    run_command: 'echo "请配置启动命令"',
+    expose_ports: [8080],
+    env_vars: {},
+    dockerfile_content: `# 自定义空白模板
 # 完全自定义配置
 
 FROM registry.cn-hangzhou.aliyuncs.com/library/ubuntu:22.04
@@ -324,92 +331,65 @@ COPY . ./
 EXPOSE 8080
 
 # 启动命令（请根据实际情况修改）
-CMD ["echo", "请配置启动命令"]`
+CMD ["echo", "请配置启动命令"]`,
+    is_system: true
   }
 ]
 
-/**
- * 获取所有可用的模板
- * @deprecated 使用 dockerfileTemplateSvc.getAllTemplates() 替代
- */
-export async function getAllTemplates(): Promise<DockerfileTemplate[]> {
+async function initializeTemplates() {
   try {
-    const templates = await dockerfileTemplateSvc.getAllTemplates()
-    return templates.map(transformToLegacyFormat)
-  } catch (error) {
-    console.error('获取模板失败，使用默认模板:', error)
-    return COMPANY_DOCKERFILE_TEMPLATES
-  }
-}
+    console.log('开始初始化Dockerfile模板...')
 
-/**
- * 根据分类获取模板
- * @deprecated 使用 dockerfileTemplateSvc.getTemplatesByCategory() 替代
- */
-export async function getTemplatesByCategory(category: string): Promise<DockerfileTemplate[]> {
-  try {
-    const templates = await dockerfileTemplateSvc.getTemplatesByCategory(category)
-    return templates.map(transformToLegacyFormat)
-  } catch (error) {
-    console.error('获取分类模板失败，使用默认模板:', error)
-    return COMPANY_DOCKERFILE_TEMPLATES.filter(template => template.category === category)
-  }
-}
+    for (const template of SYSTEM_TEMPLATES) {
+      console.log(`处理模板: ${template.name}`)
+      
+      await prisma.dockerfileTemplate.upsert({
+        where: { id: template.id },
+        update: {
+          name: template.name,
+          description: template.description,
+          category: template.category,
+          base_image: template.base_image,
+          workdir: template.workdir,
+          copy_files: template.copy_files,
+          install_commands: template.install_commands,
+          build_commands: template.build_commands,
+          run_command: template.run_command,
+          expose_ports: template.expose_ports,
+          env_vars: template.env_vars,
+          dockerfile_content: template.dockerfile_content,
+          is_system: template.is_system,
+          updated_at: new Date()
+        },
+        create: template
+      })
+      
+      console.log(`✓ 模板 ${template.name} 已更新`)
+    }
 
-/**
- * 根据ID获取模板
- * @deprecated 使用 dockerfileTemplateSvc.getTemplateById() 替代
- */
-export async function getTemplateById(id: string): Promise<DockerfileTemplate | undefined> {
-  try {
-    const template = await dockerfileTemplateSvc.getTemplateById(id)
-    return template ? transformToLegacyFormat(template) : undefined
-  } catch (error) {
-    console.error('获取模板失败，使用默认模板:', error)
-    return COMPANY_DOCKERFILE_TEMPLATES.find(template => template.id === id)
-  }
-}
-
-/**
- * 获取所有分类
- * @deprecated 使用 dockerfileTemplateSvc.getTemplateCategories() 替代
- */
-export async function getTemplateCategories(): Promise<Array<{ value: string; label: string; count: number }>> {
-  try {
-    return await dockerfileTemplateSvc.getTemplateCategories()
-  } catch (error) {
-    console.error('获取分类失败，使用默认分类:', error)
-    const categories = new Map<string, number>()
+    console.log('✅ 所有模板初始化完成')
     
-    COMPANY_DOCKERFILE_TEMPLATES.forEach(template => {
-      categories.set(template.category, (categories.get(template.category) || 0) + 1)
+    // 显示统计信息
+    const totalTemplates = await prisma.dockerfileTemplate.count()
+    const systemTemplates = await prisma.dockerfileTemplate.count({
+      where: { is_system: true }
+    })
+    const userTemplates = await prisma.dockerfileTemplate.count({
+      where: { is_system: false }
     })
     
-    return Array.from(categories.entries()).map(([category, count]) => ({
-      value: category,
-      label: category,
-      count
-    }))
+    console.log(`📊 模板统计:`)
+    console.log(`   总计: ${totalTemplates}`)
+    console.log(`   系统模板: ${systemTemplates}`)
+    console.log(`   用户模板: ${userTemplates}`)
+    
+  } catch (error) {
+    console.error('❌ 初始化模板失败:', error)
+    process.exit(1)
+  } finally {
+    await prisma.$disconnect()
   }
 }
 
-/**
- * 转换数据库格式到旧版格式
- */
-function transformToLegacyFormat(template: any): DockerfileTemplate {
-  return {
-    id: template.id,
-    name: template.name,
-    description: template.description,
-    category: template.category,
-    baseImage: template.baseImage,
-    workdir: template.workdir,
-    copyFiles: template.copyFiles,
-    installCommands: template.installCommands,
-    buildCommands: template.buildCommands,
-    runCommand: template.runCommand,
-    exposePorts: template.exposePorts,
-    envVars: template.envVars,
-    dockerfile: template.dockerfile
-  }
-}
+// 运行初始化
+initializeTemplates()

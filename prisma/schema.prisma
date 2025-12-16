@@ -176,3 +176,30 @@ model RequirementTaskLink {
   @@index([service_id])
   @@map("requirement_task_links")
 }
+
+model DockerfileTemplate {
+  id                 String   @id @db.VarChar(191)
+  name               String   @db.VarChar(255)
+  description        String   @db.Text
+  category           String   @db.VarChar(100)
+  base_image         String   @db.VarChar(512)
+  workdir            String   @default("/app") @db.VarChar(255)
+  copy_files         Json?    // Array of strings
+  install_commands   Json?    // Array of strings
+  build_commands     Json?    // Array of strings
+  run_command        String   @db.VarChar(512)
+  expose_ports       Json?    // Array of integers
+  env_vars           Json?    // Object with key-value pairs
+  dockerfile_content String   @db.LongText
+  is_active          Boolean  @default(true)
+  is_system          Boolean  @default(false)
+  created_at         DateTime @default(now()) @db.Timestamp(3)
+  updated_at         DateTime @updatedAt @db.Timestamp(3)
+  created_by         String?  @db.VarChar(191)
+  updated_by         String?  @db.VarChar(191)
+
+  @@index([category])
+  @@index([is_active])
+  @@index([is_system])
+  @@map("dockerfile_templates")
+}

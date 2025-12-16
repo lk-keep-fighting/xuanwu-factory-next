@@ -57,3 +57,11 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Dialog优化 - 确保清晰渲染 */
+.dialog-content {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+

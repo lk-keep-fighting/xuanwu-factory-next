@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { BuildType, ServiceType } from '@/types/project'
 import type { Service } from '@/types/project'
-import { getAllTemplates, getTemplateById, getTemplateCategories } from '@/lib/dockerfile-templates'
+import { useDockerfileTemplates } from '@/hooks/useDockerfileTemplates'
 
 interface BuildConfigurationCardProps {
   service: Service
@@ -37,6 +37,9 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
   onCancel
 }: BuildConfigurationCardProps) {
   const isApplicationService = service.type === ServiceType.APPLICATION
+  
+  // Use the template hook
+  const { templates, categories, loading: templatesLoading, getTemplateById } = useDockerfileTemplates()
   
   if (!isApplicationService) {
     return null
@@ -119,8 +122,6 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
     const templateId = editingBuildArgs.template_id || ''
     const customDockerfile = editingBuildArgs.custom_dockerfile || ''
     const selectedTemplate = templateId ? getTemplateById(templateId) : null
-    const allTemplates = getAllTemplates()
-    const categories = getTemplateCategories()
 
     const handleTemplateSelect = (newTemplateId: string) => {
       const template = getTemplateById(newTemplateId)
@@ -149,12 +150,14 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
                 <SelectValue placeholder="选择模板" />
               </SelectTrigger>
               <SelectContent>
-                {categories.map((category) => (
+                {templatesLoading ? (
+                  <div className="px-2 py-1 text-sm text-gray-500">加载模板中...</div>
+                ) : categories.map((category) => (
                   <div key={category.value}>
                     <div className="px-2 py-1 text-xs font-medium text-gray-500 bg-gray-100">
                       {category.label} ({category.count})
                     </div>
-                    {allTemplates
+                    {templates
                       .filter(template => template.category === category.value)
                       .map((template) => (
                         <SelectItem key={template.id} value={template.id}>

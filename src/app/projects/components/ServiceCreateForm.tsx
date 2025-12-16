@@ -45,7 +45,7 @@ import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Database as DatabaseIcon, Plus, Trash2, Loader2, RefreshCcw } from 'lucide-react'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
-import { getAllTemplates, getTemplateCategories, getTemplateById } from '@/lib/dockerfile-templates'
+import { useDockerfileTemplates } from '@/hooks/useDockerfileTemplates'
 import type { DockerfileTemplate } from '@/types/project'
 
 const extractImageBaseName = (image?: string) => {
@@ -177,6 +177,9 @@ export default function ServiceCreateForm({
     collation_server: 'utf8mb4_unicode_ci',
     innodb_buffer_pool_size: '256M'
   })
+  
+  // Use the template hook
+  const { templates, categories, loading: templatesLoading, getTemplateById } = useDockerfileTemplates()
   
   // 环境变量管理
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([
@@ -1296,12 +1299,14 @@ export default function ServiceCreateForm({
                       <SelectValue placeholder="选择模板" />
                     </SelectTrigger>
                     <SelectContent>
-                      {getTemplateCategories().map((category) => (
+                      {templatesLoading ? (
+                        <div className="px-2 py-1 text-sm text-gray-500">加载模板中...</div>
+                      ) : categories.map((category) => (
                         <div key={category.value}>
                           <div className="px-2 py-1 text-xs font-medium text-gray-500 bg-gray-100">
                             {category.label} ({category.count})
                           </div>
-                          {getAllTemplates()
+                          {templates
                             .filter(template => template.category === category.value)
                             .map((template) => (
                               <SelectItem key={template.id} value={template.id}>
