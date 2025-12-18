@@ -91,7 +91,7 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
       case BuildType.DOCKERFILE:
         return 'Dockerfile'
       case BuildType.TEMPLATE:
-        return '模板构建'
+        return '自定义Dockerfile'
       default:
         return buildType
     }
@@ -123,14 +123,6 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
     const customDockerfile = editingBuildArgs.custom_dockerfile || ''
     const selectedTemplate = templateId ? getTemplateById(templateId) : null
 
-    const handleTemplateSelect = (newTemplateId: string) => {
-      const template = getTemplateById(newTemplateId)
-      if (template) {
-        updateBuildArg('template_id', template.id)
-        updateBuildArg('custom_dockerfile', template.dockerfile)
-      }
-    }
-
     const handleResetToTemplate = () => {
       if (selectedTemplate) {
         updateBuildArg('custom_dockerfile', selectedTemplate.dockerfile)
@@ -139,58 +131,6 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
 
     return (
       <div className="space-y-4">
-        <div className="space-y-2">
-          <Label>选择构建模板</Label>
-          {isEditing ? (
-            <Select
-              value={templateId}
-              onValueChange={handleTemplateSelect}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="选择模板" />
-              </SelectTrigger>
-              <SelectContent>
-                {templatesLoading ? (
-                  <div className="px-2 py-1 text-sm text-gray-500">加载模板中...</div>
-                ) : categories.map((category) => (
-                  <div key={category.value}>
-                    <div className="px-2 py-1 text-xs font-medium text-gray-500 bg-gray-100">
-                      {category.label} ({category.count})
-                    </div>
-                    {templates
-                      .filter(template => template.category === category.value)
-                      .map((template) => (
-                        <SelectItem key={template.id} value={template.id}>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{template.name}</span>
-                            <span className="text-xs text-gray-500">{template.description}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                  </div>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <div className="flex items-center gap-2">
-              <div className="text-sm text-gray-900">
-                {selectedTemplate ? (
-                  <div className="flex flex-col">
-                    <span className="font-medium">{selectedTemplate.name}</span>
-                    <span className="text-xs text-gray-500">{selectedTemplate.description}</span>
-                  </div>
-                ) : (
-                  <span className="text-gray-500">未选择模板</span>
-                )}
-              </div>
-              {selectedTemplate && (
-                <Badge variant="secondary" className="text-xs">
-                  {selectedTemplate.category}
-                </Badge>
-              )}
-            </div>
-          )}
-        </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -357,32 +297,108 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
         )}
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Build Type */}
+        {/* Build Type and Template Selection */}
         <div className="space-y-2">
-          <Label>构建方式</Label>
-          <div className="flex items-center gap-2">
-            {isEditing ? (
-              <Select
-                value={editingBuildType}
-                onValueChange={(value) => setEditingBuildType(value as BuildType)}
-              >
-                <SelectTrigger className="w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={BuildType.DOCKERFILE}>Dockerfile</SelectItem>
-                  <SelectItem value={BuildType.TEMPLATE}>模板构建</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <Badge variant="outline" className="gap-1">
-                <Settings className="h-3 w-3" />
-                {getBuildTypeLabel(currentBuildType)}
-              </Badge>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Build Type */}
+            <div className="space-y-2">
+              <Label>构建方式</Label>
+              <div className="flex items-center gap-2">
+                {isEditing ? (
+                  <Select
+                    value={editingBuildType}
+                    onValueChange={(value) => setEditingBuildType(value as BuildType)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={BuildType.DOCKERFILE}>Dockerfile</SelectItem>
+                      <SelectItem value={BuildType.TEMPLATE}>自定义Dockerfile</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Badge variant="outline" className="gap-1">
+                    <Settings className="h-3 w-3" />
+                    {getBuildTypeLabel(currentBuildType)}
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            {/* Template Selection - Only show when template build type is selected */}
+            {(isEditing ? editingBuildType : currentBuildType) === BuildType.TEMPLATE && (
+              <div className="space-y-2">
+                <Label>选择构建模板</Label>
+                {isEditing ? (
+                  <Select
+                    value={editingBuildArgs.template_id || ''}
+                    onValueChange={(newTemplateId) => {
+                      const template = getTemplateById(newTemplateId)
+                      if (template) {
+                        updateBuildArg('template_id', template.id)
+                        updateBuildArg('custom_dockerfile', template.dockerfile)
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择模板" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templatesLoading ? (
+                        <div className="px-2 py-1 text-sm text-gray-500">加载模板中...</div>
+                      ) : categories.map((category) => (
+                        <div key={category.value}>
+                          <div className="px-2 py-1 text-xs font-medium text-gray-500 bg-gray-100">
+                            {category.label} ({category.count})
+                          </div>
+                          {templates
+                            .filter(template => template.category === category.value)
+                            .map((template) => (
+                              <SelectItem key={template.id} value={template.id}>
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{template.name}</span>
+                                  <span className="text-xs text-gray-500">{template.description}</span>
+                                </div>
+                              </SelectItem>
+                            ))}
+                        </div>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm text-gray-900">
+                      {(() => {
+                        const templateId = editingBuildArgs.template_id || ''
+                        const selectedTemplate = templateId ? getTemplateById(templateId) : null
+                        return selectedTemplate ? (
+                          <div className="flex flex-col">
+                            <span className="font-medium">{selectedTemplate.name}</span>
+                            <span className="text-xs text-gray-500">{selectedTemplate.description}</span>
+                          </div>
+                        ) : (
+                          <span className="text-gray-500">未选择模板</span>
+                        )
+                      })()}
+                    </div>
+                    {(() => {
+                      const templateId = editingBuildArgs.template_id || ''
+                      const selectedTemplate = templateId ? getTemplateById(templateId) : null
+                      return selectedTemplate && (
+                        <Badge variant="secondary" className="text-xs">
+                          {selectedTemplate.category}
+                        </Badge>
+                      )
+                    })()}
+                  </div>
+                )}
+              </div>
             )}
           </div>
+          
           <p className="text-xs text-gray-500">
-            {editingBuildType === BuildType.TEMPLATE
+            {(isEditing ? editingBuildType : currentBuildType) === BuildType.TEMPLATE
               ? '基于公司模板选择Dockerfile模板，支持自定义修改'
               : 'Docker镜像构建，包含完整的运行环境'
             }

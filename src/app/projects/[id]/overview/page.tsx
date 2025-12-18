@@ -1,0 +1,796 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import { Plus, Package, Database, Box, Filter, Search, MoreVertical, RotateCw, Trash2, Tag, Globe, ArrowUpDown, RefreshCw } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { toast } from 'sonner'
+import { serviceSvc } from '@/service/serviceSvc'
+import { ServiceType } from '@/types/project'
+import type {
+  ApplicationService,
+  DatabaseService,
+  ImageService,
+  LegacyNetworkConfig,
+  NetworkConfig,
+  NetworkConfigV2,
+  Service
+} from '@/types/project'
+
+const SERVICE_TYPE_ICONS = {
+  [ServiceType.APPLICATION]: Package,
+  [ServiceType.DATABASE]: Database,
+  [ServiceType.IMAGE]: Box
+} satisfies Record<ServiceType, LucideIcon>
+
+const SERVICE_TYPE_LABELS = {
+  [ServiceType.APPLICATION]: 'Application',
+  [ServiceType.DATABASE]: 'Database',
+  [ServiceType.IMAGE]: 'Image'
+} satisfies Record<ServiceType, string>
+
+const UNKNOWN_SERVICE_TYPE_LABEL = '未知服务类型'
+
+const SERVICE_TYPE_VALUES = new Set<ServiceType>(Object.values(ServiceType))
+
+const normalizeServiceType = (value: ServiceType | string | null | undefined): ServiceType | null => {
+  if (!value) {
+    return null
+  }
+
+  const normalized = String(value).trim().toLowerCase() as ServiceType
+  return SERVICE_TYPE_VALUES.has(normalized) ? normalized : null
+}
+
+const isApplicationService = (
+  service: Service,
+  type: ServiceType | null
+): service is ApplicationService => type === ServiceType.APPLICATION
+
+const isDatabaseService = (
+  service: Service,
+  type: ServiceType | null
+): service is DatabaseService => type === ServiceType.DATABASE
+
+const isImageService = (
+  service: Service,
+  type: ServiceType | null
+): service is ImageService => type === ServiceType.IMAGE
+
+type ServiceSubtitle = {
+  label: string
+  href?: string
+}
+
+const normalizeNumericValue = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value.trim())
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  return null
+}
+
+const formatDateTime = (value?: string) => {
+  if (!value) {
+    return '-'
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+const isNetworkConfigV2 = (
+  config: NetworkConfig | null | undefined
+): config is NetworkConfigV2 => {
+  if (!config || typeof config !== 'object') {
+    return false
+  }
+
+  return Array.isArray((config as NetworkConfigV2).ports)
+}
+
+const isLegacyNetworkConfig = (
+  config: NetworkConfig | null | undefined
+): config is LegacyNetworkConfig => {
+  if (!config || typeof config !== 'object') {
+    return false
+  }
+
+  return 'container_port' in config
+}
+
+const extractNetworkPorts = (config?: NetworkConfig | null): number[] => {
+  if (!config) {
+    return []
+  }
+
+  if (isNetworkConfigV2(config)) {
+    return config.ports
+      .map((port) => normalizeNumericValue(port.service_port ?? port.container_port))
+      .filter((value): value is number => value !== null)
+  }
+
+  if (isLegacyNetworkConfig(config)) {
+    const port = normalizeNumericValue(config.service_port ?? config.container_port)
+    return port !== null ? [port] : []
+  }
+
+  return []
+}
+
+type DomainAccessLink = {
+  host: string
+  label: string
+  url: string
+}
+
+const isDomainCapableServiceType = (
+  type: ServiceType | null
+): type is ServiceType.APPLICATION | ServiceType.IMAGE =>
+  type === ServiceType.APPLICATION || type === ServiceType.IMAGE
+
+const normalizeDomainHostCandidate = (domainCandidate: unknown): string | null => {
+  if (!domainCandidate) {
+    return null
+  }
+
+  if (typeof domainCandidate === 'string') {
+    const trimmed = domainCandidate.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+
+  if (typeof domainCandidate === 'object') {
+    const domainRecord = domainCandidate as Record<string, unknown>
+    const enabledValue = domainRecord['enabled']
+    const enabled = enabledValue === undefined ? true : Boolean(enabledValue)
+    if (!enabled) {
+      return null
+    }
+
+    const hostValue = domainRecord['host'] ?? domainRecord['hostname']
+    if (typeof hostValue === 'string' && hostValue.trim().length > 0) {
+      return hostValue.trim()
+    }
+  }
+
+  return null
+}
+
+const getDomainAccessLinks = (
+  service: Service,
+  normalizedType: ServiceType | null
+): DomainAccessLink[] => {
+  if (!isDomainCapableServiceType(normalizedType)) {
+    return []
+  }
+
+  const config = service.network_config
+  if (!config || typeof config !== 'object') {
+    return []
+  }
+
+  const hosts = new Set<string>()
+  const addHost = (candidate: unknown) => {
+    const host = normalizeDomainHostCandidate(candidate)
+    if (host) {
+      hosts.add(host)
+    }
+  }
+
+  addHost((config as { domain?: unknown }).domain)
+
+  if (isNetworkConfigV2(config)) {
+    config.ports.forEach((port) => addHost(port?.domain))
+  } else {
+    const legacyPorts = (config as { ports?: unknown }).ports
+    if (Array.isArray(legacyPorts)) {
+      legacyPorts.forEach((port) => {
+        if (port && typeof port === 'object') {
+          addHost((port as { domain?: unknown }).domain)
+        }
+      })
+    }
+  }
+
+  return Array.from(hosts)
+    .map((host) => {
+      const trimmedHost = host.trim()
+      if (!trimmedHost) {
+        return null
+      }
+
+      const hasProtocol = /^http?:\/\//i.test(trimmedHost)
+      const url = hasProtocol ? trimmedHost : `http://${trimmedHost}`
+      const label = hasProtocol ? trimmedHost.replace(/^http?:\/\//i, '') : trimmedHost
+      return { host: trimmedHost, label, url }
+    })
+    .filter((link): link is DomainAccessLink => Boolean(link))
+}
+
+const getServiceSubtitle = (
+  service: Service,
+  normalizedType: ServiceType | null,
+  applicationService: ApplicationService | null,
+  databaseService: DatabaseService | null,
+  imageService: ImageService | null
+): ServiceSubtitle => {
+  if (applicationService) {
+    const repoUrl = applicationService.git_repository?.trim() ?? ''
+    const normalizedRepoUrl = repoUrl.replace(/\/+$/, '')
+    const repoNameCandidate = normalizedRepoUrl ? normalizedRepoUrl.split('/').pop() ?? normalizedRepoUrl : ''
+    const cleanRepoName = repoNameCandidate ? repoNameCandidate.replace(/\.git$/i, '') : ''
+    const branch = applicationService.git_branch?.trim() ?? ''
+    const parts: string[] = []
+
+    if (cleanRepoName) {
+      parts.push(cleanRepoName)
+    }
+    if (branch) {
+      parts.push(branch)
+    }
+
+    const fallbackLabel = branch || '未配置仓库'
+    const label = parts.length > 0 ? parts.join(' · ') : fallbackLabel
+
+    return {
+      label,
+      href: repoUrl || undefined
+    }
+  }
+
+  if (databaseService) {
+    const typeLabel = databaseService.database_type
+      ? databaseService.database_type.toUpperCase()
+      : 'Database'
+    const version = databaseService.version?.trim()
+    const label = version ? `${typeLabel} · ${version}` : typeLabel
+    return { label }
+  }
+
+  if (imageService) {
+    const imageName = imageService.image?.trim() || '未配置镜像'
+    const tag = imageService.tag?.trim()
+    const label = tag ? `${imageName}:${tag}` : imageName
+    return { label }
+  }
+
+  if (normalizedType) {
+    return { label: SERVICE_TYPE_LABELS[normalizedType] ?? UNKNOWN_SERVICE_TYPE_LABEL }
+  }
+
+  return {
+    label:
+      typeof service.type === 'string' && service.type.trim().length > 0
+        ? service.type
+        : UNKNOWN_SERVICE_TYPE_LABEL
+  }
+}
+
+const getConnectivityLabel = (
+  service: Service,
+  applicationService: ApplicationService | null,
+  databaseService: DatabaseService | null,
+  imageService: ImageService | null
+) => {
+  const networkPorts = extractNetworkPorts(service.network_config)
+
+  if (applicationService) {
+    // 优先使用 network_config 中的端口（最新配置），其次使用 port 字段
+    if (networkPorts.length > 0) {
+      return networkPorts.length === 1 
+        ? `端口 ${networkPorts[0]}` 
+        : `端口 ${networkPorts.join(', ')}`
+    }
+    const portValue = normalizeNumericValue(applicationService.port)
+    return portValue !== null ? `端口 ${portValue}` : '-'
+  }
+
+  if (databaseService) {
+    const internalPort = normalizeNumericValue(databaseService.port)
+    const externalPort = normalizeNumericValue(databaseService.external_port)
+    const labels: string[] = []
+
+    if (internalPort !== null) {
+      labels.push(`内 ${internalPort}`)
+    }
+    if (externalPort !== null) {
+      labels.push(`外 ${externalPort}`)
+    }
+
+    if (labels.length > 0) {
+      return labels.join(' / ')
+    }
+
+    return networkPorts.length > 0 
+      ? (networkPorts.length === 1 ? `端口 ${networkPorts[0]}` : `端口 ${networkPorts.join(', ')}`)
+      : '-'
+  }
+
+  if (imageService) {
+    return networkPorts.length > 0 
+      ? (networkPorts.length === 1 ? `端口 ${networkPorts[0]}` : `端口 ${networkPorts.join(', ')}`)
+      : '-'
+  }
+
+  return networkPorts.length > 0 
+    ? (networkPorts.length === 1 ? `端口 ${networkPorts[0]}` : `端口 ${networkPorts.join(', ')}`)
+    : '-'
+}
+
+const getReplicasLabel = (
+  applicationService: ApplicationService | null,
+  imageService: ImageService | null
+) => {
+  const candidates = [
+    applicationService ? normalizeNumericValue(applicationService.replicas) : null,
+    imageService ? normalizeNumericValue(imageService.replicas) : null
+  ]
+
+  for (const value of candidates) {
+    if (typeof value === 'number') {
+      return String(value)
+    }
+  }
+
+  return '-'
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  running: 'bg-green-500',
+  pending: 'bg-yellow-500',
+  stopped: 'bg-gray-500',
+  error: 'bg-red-500',
+  building: 'bg-blue-500'
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  running: '运行中',
+  pending: '待启动',
+  stopped: '已停止',
+  error: '错误',
+  building: '构建中'
+}
+
+export default function ProjectOverviewPage() {
+  const params = useParams()
+  const router = useRouter()
+  const projectId = params.id as string
+
+  const [services, setServices] = useState<Service[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [selectedType, setSelectedType] = useState<ServiceType | 'all'>('all')
+  const [sortBy, setSortBy] = useState<'name' | 'updated_at'>('updated_at')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [k8sStatuses, setK8sStatuses] = useState<Record<string, any>>({})
+  const [k8sStatusLoading, setK8sStatusLoading] = useState(false)
+
+  // 加载服务列表
+  const loadServices = useCallback(async () => {
+    if (!projectId) return
+
+    try {
+      setLoading(true)
+      const data = await serviceSvc.getServicesByProject(projectId)
+      setServices(data)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`加载服务失败：${message}`)
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId])
+
+  // 加载K8s状态
+  const loadK8sStatuses = useCallback(async () => {
+    if (!projectId) return
+
+    try {
+      setK8sStatusLoading(true)
+      const response = await fetch(`/api/projects/${projectId}/services-status`)
+      if (response.ok) {
+        const data = await response.json()
+        setK8sStatuses(data.services || {})
+      }
+    } catch (error) {
+      console.error('Failed to load K8s statuses:', error)
+    } finally {
+      setK8sStatusLoading(false)
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    loadServices()
+    loadK8sStatuses()
+  }, [loadServices, loadK8sStatuses])
+
+  // 重启服务
+  const handleRestartService = async (serviceId: string) => {
+    try {
+      await serviceSvc.restartService(serviceId)
+      toast.success('服务重启成功')
+      await loadServices()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`重启失败：${message}`)
+    }
+  }
+
+  // 删除服务
+  const handleDeleteService = async (serviceId: string) => {
+    if (!confirm('确定要删除这个服务吗？')) return
+
+    try {
+      const result = await serviceSvc.deleteService(serviceId)
+      toast.success(result.message || '服务删除成功')
+      if (result.warning) {
+        toast.warning(result.warning)
+      }
+      loadServices()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      toast.error(`删除服务失败：${message}`)
+    }
+  }
+
+  // 过滤和排序服务
+  const filteredAndSortedServices = services
+    .filter((service) => {
+      const normalizedType = normalizeServiceType(service.type)
+      const matchesSearch = service.name.toLowerCase().includes(searchKeyword.toLowerCase())
+      const matchesType = selectedType === 'all' || normalizedType === selectedType
+      return matchesSearch && matchesType
+    })
+    .sort((a, b) => {
+      let comparison = 0
+      
+      if (sortBy === 'name') {
+        comparison = a.name.localeCompare(b.name, 'zh-CN')
+      } else if (sortBy === 'updated_at') {
+        const aTime = new Date(a.updated_at || a.created_at || 0).getTime()
+        const bTime = new Date(b.updated_at || b.created_at || 0).getTime()
+        comparison = aTime - bTime
+      }
+      
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
+
+  // 统计服务数量
+  const serviceTypeCounts: Record<ServiceType, number> = {
+    [ServiceType.APPLICATION]: 0,
+    [ServiceType.DATABASE]: 0,
+    [ServiceType.IMAGE]: 0
+  }
+
+  services.forEach((service) => {
+    const normalizedType = normalizeServiceType(service.type)
+    if (normalizedType) {
+      serviceTypeCounts[normalizedType] += 1
+    }
+  })
+
+  const serviceStats = {
+    total: services.length,
+    application: serviceTypeCounts[ServiceType.APPLICATION],
+    database: serviceTypeCounts[ServiceType.DATABASE],
+    image: serviceTypeCounts[ServiceType.IMAGE]
+  }
+
+  return (
+    <div className="flex-1 flex flex-col bg-white">
+      {/* 页面头部 */}
+      <div className="p-6 border-b border-gray-200">
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">项目概览</h1>
+            <p className="text-gray-500 mt-1">查看项目下的所有服务和统计信息</p>
+          </div>
+
+          {/* 服务统计 */}
+          <div className="grid grid-cols-4 gap-4">
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <div className="text-2xl font-bold text-gray-900">{serviceStats.total}</div>
+              <div className="text-sm text-gray-500">总服务数</div>
+            </div>
+            <div className="text-center p-4 bg-blue-50 rounded-lg">
+              <div className="text-2xl font-bold text-blue-600">{serviceStats.application}</div>
+              <div className="text-sm text-gray-500">Applications</div>
+            </div>
+            <div className="text-center p-4 bg-purple-50 rounded-lg">
+              <div className="text-2xl font-bold text-purple-600">{serviceStats.database}</div>
+              <div className="text-sm text-gray-500">Databases</div>
+            </div>
+            <div className="text-center p-4 bg-green-50 rounded-lg">
+              <div className="text-2xl font-bold text-green-600">{serviceStats.image}</div>
+              <div className="text-sm text-gray-500">Images</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 筛选和搜索 */}
+      <div className="p-6 border-b border-gray-200 flex items-center gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <Input
+            placeholder="搜索服务..."
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              <Filter className="w-4 h-4" />
+              {selectedType === 'all' ? '全部类型' : SERVICE_TYPE_LABELS[selectedType]}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => setSelectedType('all')}>
+              全部类型
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSelectedType(ServiceType.APPLICATION)}>
+              <Package className="w-4 h-4 mr-2" />
+              Application
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSelectedType(ServiceType.DATABASE)}>
+              <Database className="w-4 h-4 mr-2" />
+              Database
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSelectedType(ServiceType.IMAGE)}>
+              <Box className="w-4 h-4 mr-2" />
+              Image
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              <ArrowUpDown className="w-4 h-4" />
+              {sortBy === 'name' ? '按名称' : '按更新时间'}
+              {sortOrder === 'asc' ? ' ↑' : ' ↓'}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => { setSortBy('name'); setSortOrder('asc') }}>
+              名称升序 (A-Z)
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setSortBy('name'); setSortOrder('desc') }}>
+              名称降序 (Z-A)
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setSortBy('updated_at'); setSortOrder('desc') }}>
+              最近更新
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setSortBy('updated_at'); setSortOrder('asc') }}>
+              最早更新
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Button 
+          variant="outline" 
+          className="gap-2"
+          onClick={() => void loadK8sStatuses()}
+          disabled={k8sStatusLoading}
+        >
+          <RefreshCw className={`w-4 h-4 ${k8sStatusLoading ? 'animate-spin' : ''}`} />
+          刷新状态
+        </Button>
+      </div>
+
+      {/* 服务列表 */}
+      <div className="flex-1 p-6">
+        {loading ? (
+          <div className="text-center py-12 text-gray-500">加载中...</div>
+        ) : filteredAndSortedServices.length === 0 ? (
+          <div className="text-center py-12">
+            <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500">暂无服务</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg border border-gray-200">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>服务</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>副本</TableHead>
+                  <TableHead>网络/端口</TableHead>
+                  <TableHead>最近更新</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredAndSortedServices.map((service) => {
+                  const normalizedType = normalizeServiceType(service.type)
+                  const Icon = normalizedType ? SERVICE_TYPE_ICONS[normalizedType] : Package
+                  const serviceTypeLabel =
+                    normalizedType
+                      ? SERVICE_TYPE_LABELS[normalizedType]
+                      : typeof service.type === 'string' && service.type.trim().length
+                        ? service.type
+                        : UNKNOWN_SERVICE_TYPE_LABEL
+                  const statusKey =
+                    typeof service.status === 'string' ? service.status.trim().toLowerCase() : 'pending'
+                  const statusColor = STATUS_COLORS[statusKey] ?? 'bg-gray-500'
+                  const statusLabel =
+                    STATUS_LABELS[statusKey] ??
+                    (typeof service.status === 'string' && service.status.trim().length
+                      ? service.status
+                      : '未知状态')
+                  const applicationService = isApplicationService(service, normalizedType) ? service : null
+                  const databaseService = isDatabaseService(service, normalizedType) ? service : null
+                  const imageService = isImageService(service, normalizedType) ? service : null
+                  const subtitle = getServiceSubtitle(
+                    service,
+                    normalizedType,
+                    applicationService,
+                    databaseService,
+                    imageService
+                  )
+                  const connectivityLabel = getConnectivityLabel(
+                    service,
+                    applicationService,
+                    databaseService,
+                    imageService
+                  )
+                  const replicasLabel = getReplicasLabel(applicationService, imageService)
+                  const updatedAtLabel = formatDateTime(service.updated_at ?? service.created_at)
+                  const domainLinks = getDomainAccessLinks(service, normalizedType)
+
+                  return (
+                    <TableRow
+                      key={service.id ?? service.name}
+                      className="cursor-pointer"
+                      onClick={() => {
+                        if (service.id) {
+                          router.push(`/projects/${projectId}/services/${service.id}`)
+                        }
+                      }}
+                    >
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-50">
+                            <Icon className="h-5 w-5 text-gray-700" />
+                          </div>
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold text-gray-900">{service.name}</span>
+                              <Badge variant="outline">{serviceTypeLabel}</Badge>
+                            </div>
+                            {subtitle.href ? (
+                              <a
+                                href={subtitle.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:underline"
+                                title={subtitle.label}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {subtitle.label}
+                              </a>
+                            ) : (
+                              <span className="text-xs text-gray-500" title={subtitle.label}>
+                                {subtitle.label}
+                              </span>
+                            )}
+                            {domainLinks.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {domainLinks.map((link) => (
+                                  <Button
+                                    key={`${service.id ?? service.name}-${link.host}`}
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-1.5"
+                                    asChild
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <a
+                                      href={link.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title={link.host}
+                                    >
+                                      <Globe className="h-3.5 w-3.5" />
+                                      <span className="max-w-[160px] truncate">{link.label}</span>
+                                    </a>
+                                  </Button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+                          <span className="text-gray-900">{statusLabel}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-gray-900">{replicasLabel}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-gray-900" title={connectivityLabel}>
+                          {connectivityLabel}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-gray-500" title={updatedAtLabel}>
+                          {updatedAtLabel}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(event) => event.stopPropagation()}>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                if (service.id) {
+                                  void handleRestartService(service.id)
+                                }
+                              }}
+                            >
+                              <RotateCw className="w-4 h-4 mr-2" />
+                              重启
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                if (service.id) {
+                                  void handleDeleteService(service.id)
+                                }
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              删除
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

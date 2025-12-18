@@ -2372,132 +2372,118 @@ export default function ServiceDetailPage() {
   const renameConfirmDisabled = renameLoading || !renameInputTrimmed || renameInputTrimmed === (service.name ?? '')
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 顶部导航栏 */}
-      <div className="bg-white border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => router.push(`/projects/${projectId}`)}
-                className="gap-2"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                返回
-              </Button>
-
-              <div className="flex items-center gap-4">
-                {/* 服务名称和操作 */}
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-bold text-gray-900">
-                    {service.name}
-                  </h1>
-                  {canRenameService && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="gap-1 text-sm text-gray-600"
-                      onClick={handleOpenRenameDialog}
-                    >
-                      <PencilLine className="h-4 w-4" />
-                      重命名
-                    </Button>
-                  )}
-                </div>
-                
-                {/* 服务类型 */}
-                <Badge variant="outline">
-                  {service.type === ServiceType.APPLICATION && 'Application'}
-                  {service.type === ServiceType.DATABASE && 'Database'}
-                  {service.type === ServiceType.IMAGE && 'Image'}
-                </Badge>
-                
-                {/* 服务状态 */}
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-                  <span className="text-sm text-gray-700">{statusLabel}</span>
-                  {k8sStatusLoading && (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* 操作按钮 */}
+    <div className="flex-1 flex flex-col bg-white">
+      {/* 页面头部 */}
+      <div className="p-6 border-b border-gray-200">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {/* 服务名称和操作 */}
             <div className="flex items-center gap-2">
-              {isApplicationService && (
+              <h1 className="text-2xl font-bold text-gray-900">
+                {service.name}
+              </h1>
+              {canRenameService && (
                 <Button
-                  onClick={handleOpenBuildDialog}
-                  disabled={buildingImage}
-                  variant="outline"
-                  className="gap-2"
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1 text-sm text-gray-600"
+                  onClick={handleOpenRenameDialog}
                 >
-                  <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
-                  {buildingImage ? '构建中...' : '构建'}
+                  <PencilLine className="h-4 w-4" />
+                  重命名
                 </Button>
               )}
+            </div>
+            
+            {/* 服务类型 */}
+            <Badge variant="outline">
+              {service.type === ServiceType.APPLICATION && 'Application'}
+              {service.type === ServiceType.DATABASE && 'Database'}
+              {service.type === ServiceType.IMAGE && 'Image'}
+            </Badge>
+            
+            {/* 服务状态 */}
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+              <span className="text-sm text-gray-700">{statusLabel}</span>
+              {k8sStatusLoading && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+              )}
+            </div>
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="flex items-center gap-2">
+            {isApplicationService && (
               <Button
-                onClick={handleDeploy}
-                disabled={deploying || normalizedStatus === 'building'}
-                className="gap-2"
-              >
-                <Rocket className="w-4 h-4" />
-                {deploying ? '部署中...' : '部署'}
-              </Button>
-              {normalizedStatus === 'stopped' && (
-                <Button onClick={handleStart} className="gap-2">
-                  <Play className="w-4 h-4" />
-                  启动
-                </Button>
-              )}
-              {normalizedStatus === 'running' && (
-                <Button onClick={handleStop} variant="outline" className="gap-2">
-                  <Square className="w-4 h-4" />
-                  停止
-                </Button>
-              )}
-              <Button onClick={handleRestart} variant="outline" className="gap-2">
-                <RefreshCw className="w-4 h-4" />
-                重启
-              </Button>
-              {normalizedStatus === 'running' && (
-                <Button
-                  onClick={() => window.open(`/projects/${projectId}/services/${serviceId}/terminal`, '_blank')}
-                  variant="outline"
-                  className="gap-2"
-                >
-                  <Terminal className="w-4 h-4" />
-                  命令行
-                </Button>
-              )}
-              {/* AI 诊断功能暂时屏蔽 */}
-              {/* <Button
-                onClick={() => setAiDiagnosticOpen(true)}
+                onClick={handleOpenBuildDialog}
+                disabled={buildingImage}
                 variant="outline"
                 className="gap-2"
               >
-                <Activity className="w-4 h-4" />
-                AI 诊断
-              </Button> */}
-              <Button
-                onClick={() => setDeleteDialogOpen(true)}
-                variant="destructive"
-                className="gap-2"
-                disabled={Boolean(deleteActionLoading)}
-              >
-                <Trash2 className="w-4 h-4" />
-                删除
+                <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
+                {buildingImage ? '构建中...' : '构建'}
               </Button>
-            </div>
+            )}
+            <Button
+              onClick={handleDeploy}
+              disabled={deploying || normalizedStatus === 'building'}
+              className="gap-2"
+            >
+              <Rocket className="w-4 h-4" />
+              {deploying ? '部署中...' : '部署'}
+            </Button>
+            {normalizedStatus === 'stopped' && (
+              <Button onClick={handleStart} className="gap-2">
+                <Play className="w-4 h-4" />
+                启动
+              </Button>
+            )}
+            {normalizedStatus === 'running' && (
+              <Button onClick={handleStop} variant="outline" className="gap-2">
+                <Square className="w-4 h-4" />
+                停止
+              </Button>
+            )}
+            <Button onClick={handleRestart} variant="outline" className="gap-2">
+              <RefreshCw className="w-4 h-4" />
+              重启
+            </Button>
+            {normalizedStatus === 'running' && (
+              <Button
+                onClick={() => window.open(`/projects/${projectId}/services/${serviceId}/terminal`, '_blank')}
+                variant="outline"
+                className="gap-2"
+              >
+                <Terminal className="w-4 h-4" />
+                命令行
+              </Button>
+            )}
+            {/* AI 诊断功能暂时屏蔽 */}
+            {/* <Button
+              onClick={() => setAiDiagnosticOpen(true)}
+              variant="outline"
+              className="gap-2"
+            >
+              <Activity className="w-4 h-4" />
+              AI 诊断
+            </Button> */}
+            <Button
+              onClick={() => setDeleteDialogOpen(true)}
+              variant="destructive"
+              className="gap-2"
+              disabled={Boolean(deleteActionLoading)}
+            >
+              <Trash2 className="w-4 h-4" />
+              删除
+            </Button>
           </div>
         </div>
       </div>
 
       {/* 主内容区 */}
-      <div className="max-w-7xl mx-auto p-6">
+      <div className="flex-1 p-6">
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
           <TabsList className="bg-white" aria-label="服务详情导航标签">
             {/* Dynamic tabs based on service type - all service types show 6 common tabs */}
