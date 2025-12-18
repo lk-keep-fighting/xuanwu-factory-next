@@ -27,7 +27,7 @@ import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { ServiceFileManager } from '@/components/services/ServiceFileManager'
 import { ResourceUsageChart } from '@/components/services/ResourceUsageChart'
-import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyNetworkTab, LazyDebugToolsTab } from '@/components/services/LazyTabComponents'
+import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyVolumesTab, LazyNetworkTab, LazyDebugToolsTab } from '@/components/services/LazyTabComponents'
 import { LogViewer } from '@/components/shared/LogViewer'
 // import { AIDiagnosticPanel } from '@/components/ai-diagnostic/AIDiagnosticPanel' // 暂时屏蔽
 import { useMetricsHistory } from '@/hooks/useMetricsHistory'
@@ -2618,6 +2618,23 @@ export default function ServiceDetailPage() {
                 setEditedService(service)
               }}
               onUpdateEnvVars={setEnvVars}
+            />
+          </TabsContent>
+
+          {/* 卷挂载 */}
+          <TabsContent value="volumes" className="space-y-6">
+            <LazyVolumesTab
+              isEditing={isEditing}
+              volumes={volumes}
+              serviceName={service.name}
+              serviceImage={service.type === ServiceType.IMAGE ? (service as any).image : undefined}
+              onStartEdit={() => setIsEditing(true)}
+              onSave={handleSave}
+              onCancel={() => {
+                setIsEditing(false)
+                setEditedService(service)
+              }}
+              onUpdateVolumes={setVolumes}
             />
           </TabsContent>
 

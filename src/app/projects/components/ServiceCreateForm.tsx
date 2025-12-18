@@ -177,7 +177,23 @@ export default function ServiceCreateForm({
     collation_server: 'utf8mb4_unicode_ci',
     innodb_buffer_pool_size: '256M'
   })
-  
+
+  // 当数据库类型改变时，自动设置服务名称为数据库类型的小写形式
+  const handleDatabaseTypeChange = (dbType: SupportedDatabaseType) => {
+    setSelectedDatabaseType(dbType)
+    
+    // 如果是数据库服务且当前服务名为空或为之前的数据库类型名称，则自动设置为新的数据库类型小写
+    if (serviceType === ServiceType.DATABASE) {
+      const currentName = serviceNameValue?.trim() || ''
+      const previousDbTypeName = selectedDatabaseType.toLowerCase()
+      
+      // 如果服务名为空，或者服务名等于之前选择的数据库类型名称，则自动更新
+      if (!currentName || currentName === previousDbTypeName) {
+        setValue('name', dbType.toLowerCase(), { shouldValidate: true, shouldDirty: true })
+      }
+    }
+  }
+
   // Use the template hook
   const { templates, categories, loading: templatesLoading, getTemplateById } = useDockerfileTemplates()
   
@@ -217,6 +233,26 @@ export default function ServiceCreateForm({
   useEffect(() => {
     gitBranchRef.current = gitBranchValue
   }, [gitBranchValue])
+  
+  // 初始化数据库服务的默认名称
+  useEffect(() => {
+    if (serviceType === ServiceType.DATABASE) {
+      const currentName = serviceNameValue?.trim() || ''
+      
+      // 如果服务名为空，则设置为默认的数据库类型小写
+      if (!currentName) {
+        setValue('name', selectedDatabaseType.toLowerCase(), { shouldValidate: true, shouldDirty: false })
+      }
+    }
+  }, [serviceType, selectedDatabaseType, serviceNameValue, setValue])
+  
+  // 当数据库类型改变时，更新版本字段的默认值
+  useEffect(() => {
+    if (serviceType === ServiceType.DATABASE) {
+      const defaultVersion = selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "6.0.8"
+      setValue('version', defaultVersion, { shouldValidate: true, shouldDirty: false })
+    }
+  }, [serviceType, selectedDatabaseType, setValue])
   
   useEffect(() => {
     const loadGitProviderConfig = async () => {
@@ -739,7 +775,7 @@ export default function ServiceCreateForm({
 
         const isMysql = selectedDatabaseType === DatabaseType.MYSQL
         const username = isMysql ? (data.username ?? '').trim() || 'admin' : ''
-        const databaseName = isMysql ? (data.database_name ?? '').trim() || serviceData.name : ''
+        const databaseName = isMysql ? (data.database_name ?? '').trim() || 'tmp' : ''
         const password = (data.password ?? '').trim() || '1234@qwer'
         const rootPassword = isMysql ? (data.root_password ?? '').trim() || '1234@qwer' : undefined
 
@@ -1501,7 +1537,7 @@ export default function ServiceCreateForm({
                     type="button"
                     variant={selectedDatabaseType === db.value ? 'default' : 'outline'}
                     className="h-auto py-3"
-                    onClick={() => setSelectedDatabaseType(db.value)}
+                    onClick={() => handleDatabaseTypeChange(db.value)}
                   >
                     <DatabaseIcon className="w-4 h-4 mr-2" />
                     {db.label}
@@ -1515,8 +1551,8 @@ export default function ServiceCreateForm({
               <Input
                 id="version"
                 {...register('version')}
-                placeholder={selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "latest"}
-                defaultValue={selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "latest"}
+                placeholder={selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "6.0.8"}
+                defaultValue={selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "6.0.8"}
               />
             </div>
 
@@ -1531,7 +1567,7 @@ export default function ServiceCreateForm({
                   <Input
                     id="database_name"
                     {...register('database_name')}
-                    placeholder="与服务名相同"
+                    placeholder="tmp"
                   />
                 </div>
               )}
@@ -1584,7 +1620,7 @@ export default function ServiceCreateForm({
               <div className="space-y-2">
                 <Label>外部访问</Label>
                 <div className="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-sm text-gray-600">
-                  服务创建后可在详情页开启外部访问，平台将自动分配端口并避免冲突。
+                  部署后可在详情页开启。
                 </div>
               </div>
             </div>
@@ -1665,120 +1701,11 @@ export default function ServiceCreateForm({
             </div>
           </div>
 
-          {/* 环境变量 */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label>环境变量（可选）</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
-                className="gap-1"
-              >
-                <Plus className="w-3 h-3" />
-                添加
-              </Button>
-            </div>
-            <div className="space-y-2">
-              {envVars.map((env, index) => (
-                <div key={index} className="flex gap-2">
-                  <Input
-                    placeholder="变量名"
-                    value={env.key}
-                    onChange={(e) => {
-                      const newEnvVars = [...envVars]
-                      newEnvVars[index].key = e.target.value
-                      setEnvVars(newEnvVars)
-                    }}
-                    className="flex-1"
-                  />
-                  <Input
-                    placeholder="值"
-                    value={env.value}
-                    onChange={(e) => {
-                      const newEnvVars = [...envVars]
-                      newEnvVars[index].value = e.target.value
-                      setEnvVars(newEnvVars)
-                    }}
-                    className="flex-1"
-                  />
-                  {envVars.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEnvVars(envVars.filter((_, i) => i !== index))}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-gray-500">
-              更多配置（网络、存储等）可在服务创建后进入编辑页面进行配置
-            </p>
-          </div>
+
         </div>
       )}
 
-      {/* 通用环境变量 - 仅 Application 和 Database 类型显示 */}
-      {(serviceType === ServiceType.APPLICATION || serviceType === ServiceType.DATABASE) && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label>环境变量（可选）</Label>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
-              className="gap-1"
-            >
-              <Plus className="w-3 h-3" />
-              添加
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {envVars.map((env, index) => (
-              <div key={index} className="flex gap-2">
-                <Input
-                  placeholder="变量名"
-                  value={env.key}
-                  onChange={(e) => {
-                    const newEnvVars = [...envVars]
-                    newEnvVars[index].key = e.target.value
-                    setEnvVars(newEnvVars)
-                  }}
-                  className="flex-1"
-                />
-                <Input
-                  placeholder="值"
-                  value={env.value}
-                  onChange={(e) => {
-                    const newEnvVars = [...envVars]
-                    newEnvVars[index].value = e.target.value
-                    setEnvVars(newEnvVars)
-                  }}
-                  className="flex-1"
-                />
-                {envVars.length > 1 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEnvVars(envVars.filter((_, i) => i !== index))}
-                    className="text-red-600 hover:text-red-700"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+
 
       {/* 操作按钮 */}
       <div className="flex justify-end gap-2">

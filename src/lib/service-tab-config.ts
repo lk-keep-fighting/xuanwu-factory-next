@@ -14,7 +14,8 @@ import {
   FileCode,
   Globe,
   Key,
-  Wrench
+  Wrench,
+  HardDrive
 } from 'lucide-react'
 import { TAB_VALUES, type TabValue, type TabConfig } from '@/types/service-tabs'
 import { ServiceType, type Service } from '@/types/project'
@@ -24,8 +25,9 @@ import { ServiceType, type Service } from '@/types/project'
  * 
  * All service types (Application, Database, Image) show common tabs:
  * - Overview: Service status, resource metrics, recent events, and deployment status
- * - Configuration: General settings, volumes, and resources
+ * - Configuration: General settings and resources
  * - Environment: Environment variables configuration
+ * - Volumes: Volume mounts configuration
  * - Network: Network and domain configuration
  * - Debug Tools: Debug tools injection configuration
  * - Deployments: Deployment history, build history (for Application), and image management
@@ -52,6 +54,12 @@ export const TAB_CONFIGS: TabConfig[] = [
     value: TAB_VALUES.ENVIRONMENT,
     label: '环境变量',
     icon: Key,
+    visible: () => true // Always visible for all service types
+  },
+  {
+    value: TAB_VALUES.VOLUMES,
+    label: '卷挂载',
+    icon: HardDrive,
     visible: () => true // Always visible for all service types
   },
   {

@@ -12,6 +12,7 @@ export const TAB_VALUES = {
   OVERVIEW: 'overview',
   CONFIGURATION: 'configuration',
   ENVIRONMENT: 'environment',
+  VOLUMES: 'volumes',
   NETWORK: 'network',
   DEBUG_TOOLS: 'debug-tools',
   DEPLOYMENTS: 'deployments',
@@ -258,6 +259,20 @@ export interface YAMLTabProps {
   yamlLoading: boolean
   yamlError: string | null
   onRefresh: () => Promise<void>
+}
+
+/**
+ * Props for Volumes Tab component
+ */
+export interface VolumesTabProps {
+  isEditing: boolean
+  volumes: VolumeMount[]
+  serviceName: string
+  serviceImage?: string
+  onStartEdit: () => void
+  onSave: () => Promise<void>
+  onCancel: () => void
+  onUpdateVolumes: (volumes: VolumeMount[]) => void
 }
 
 /**

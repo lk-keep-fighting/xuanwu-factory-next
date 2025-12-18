@@ -1124,6 +1124,33 @@ class K8sService {
 
     await this.deleteK8sServiceIfExists(this.getHeadlessServiceName(serviceName), targetNamespace)
 
+    // 删除StatefulSet相关的PVC
+    try {
+      // StatefulSet的PVC命名规则: <volumeClaimTemplate-name>-<statefulset-name>-<ordinal>
+      // 我们的volumeClaimTemplate名称是 'data'，所以PVC名称是 'data-<serviceName>-0'
+      const pvcName = `data-${serviceName}-0`
+      await this.coreApi.deleteNamespacedPersistentVolumeClaim({ 
+        name: pvcName, 
+        namespace: targetNamespace 
+      })
+      console.log(`Successfully deleted PVC: ${pvcName}`)
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        console.error('Failed to delete PVC:', error)
+        // 不抛出错误，因为PVC删除失败不应该阻止服务删除
+      }
+    }
+
+    // 删除ConfigMap
+    try {
+      await this.coreApi.deleteNamespacedConfigMap({ name: serviceName, namespace: targetNamespace })
+    } catch (error: unknown) {
+      if (this.getStatusCode(error) !== 404) {
+        console.error('Failed to delete configmap:', error)
+        // 不抛出错误，因为ConfigMap删除失败不应该阻止服务删除
+      }
+    }
+
     return { success: true, message: '服务已删除' }
   }
 

@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Save, X } from 'lucide-react'
 import type { ConfigurationTabProps } from '@/types/service-tabs'
 import { GeneralSection } from './configuration/GeneralSection'
-import { VolumesSection } from './configuration/VolumesSection'
 import { DatabaseConfigSection } from './configuration/DatabaseConfigSection'
 import { ResourcesSection } from './configuration/ResourcesSection'
 import { ServiceType, DatabaseType, type DatabaseService } from '@/types/project'
@@ -16,11 +15,10 @@ import { ServiceType, DatabaseType, type DatabaseService } from '@/types/project
  * 
  * Consolidates core configuration settings:
  * - General Settings (service-type specific)
- * - Volume Mounts
  * - Resource Limits
  * - Database Configuration (for MySQL services)
  * 
- * Note: Environment variables and network configuration have been moved to dedicated tabs.
+ * Note: Environment variables, volume mounts, and network configuration have been moved to dedicated tabs.
  * Implements consistent edit/save/cancel pattern across all sections.
  * Memoized to prevent unnecessary re-renders.
  */
@@ -54,16 +52,7 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
     onUpdateResources
   } = props
 
-  // Extract service image for volume template detection - memoized
-  const serviceImage = useMemo(() => {
-    if (service.type === 'image') {
-      return (service as any).image
-    }
-    if (service.type === 'application') {
-      return (service as any).built_image
-    }
-    return undefined
-  }, [service.type, service])
+
 
   return (
     <div className="space-y-6" role="region" aria-label="服务配置">
@@ -109,21 +98,7 @@ export const ConfigurationTab = memo(function ConfigurationTab(props: Configurat
         </CardContent>
       </Card>
 
-      {/* Volumes Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>卷挂载</CardTitle>
-        </CardHeader>
-        <CardContent role="region" aria-label="卷挂载">
-          <VolumesSection
-            isEditing={isEditing}
-            volumes={volumes}
-            serviceName={service.name}
-            serviceImage={serviceImage}
-            onUpdateVolumes={onUpdateVolumes}
-          />
-        </CardContent>
-      </Card>
+
 
       {/* Database Configuration Section - Only for MySQL databases */}
       {service.type === ServiceType.DATABASE && 

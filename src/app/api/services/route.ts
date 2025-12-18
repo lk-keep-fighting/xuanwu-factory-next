@@ -178,6 +178,11 @@ export async function POST(request: NextRequest) {
         ]
       } as Prisma.JsonValue
     }
+
+    // 为MySQL设置默认数据库名
+    if (matchedDatabaseType === 'mysql' && (!payload.database_name || typeof payload.database_name !== 'string' || !payload.database_name.trim())) {
+      payload.database_name = 'tmp'
+    }
   }
 
   try {

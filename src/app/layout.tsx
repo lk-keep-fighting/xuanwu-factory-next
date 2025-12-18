@@ -19,7 +19,14 @@ export default function RootLayout({
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="antialiased" suppressHydrationWarning>
         {children}
-        <Toaster position="top-right" />
+        <Toaster 
+          position="top-center" 
+          toastOptions={{
+            style: {
+              marginTop: '60px', // 为顶部导航栏留出空间
+            },
+          }}
+        />
       </body>
     </html>
   );

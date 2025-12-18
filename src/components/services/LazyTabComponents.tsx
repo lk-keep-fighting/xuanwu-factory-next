@@ -56,6 +56,14 @@ export const LazyEnvironmentTab = dynamic(
   }
 )
 
+export const LazyVolumesTab = dynamic(
+  () => import('./VolumesTab').then(mod => ({ default: mod.VolumesTab })),
+  {
+    loading: () => <TabLoadingFallback />,
+    ssr: false
+  }
+)
+
 export const LazyNetworkTab = dynamic(
   () => import('./NetworkTab').then(mod => ({ default: mod.NetworkTab })),
   {
@@ -79,5 +87,6 @@ export type { OverviewTabProps } from '@/types/service-tabs'
 export type { ConfigurationTabProps } from '@/types/service-tabs'
 export type { DeploymentsTabProps } from '@/types/service-tabs'
 export type { DebugToolsTabProps } from '@/types/service-tabs'
+export type { VolumesTabProps } from '@/types/service-tabs'
 export type { EnvironmentTabProps } from './EnvironmentTab'
 export type { NetworkTabProps } from './NetworkTab'

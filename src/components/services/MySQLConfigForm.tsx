@@ -118,21 +118,6 @@ export function MySQLConfigForm({
           </div>
         </div>
       )}
-
-      {/* 初始化配置警告 */}
-      {showInitWarning && !isDeployed && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-          <div className="flex items-start gap-2">
-            <Info className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
-            <div className="text-sm text-blue-800">
-              <strong>重要提示：</strong>
-              <code className="mx-1 rounded bg-blue-100 px-1 py-0.5">lower_case_table_names</code>
-              等配置必须在数据库初始化前设置，部署后无法修改（需要重建数据库）。
-            </div>
-          </div>
-        </div>
-      )}
-      
       {/* 部署后不可修改的警告 */}
       {isDeployed && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
