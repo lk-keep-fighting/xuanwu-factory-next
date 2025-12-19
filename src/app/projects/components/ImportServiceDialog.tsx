@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -68,6 +68,8 @@ export function ImportServiceDialog({
   const [projectSearch, setProjectSearch] = useState('')
   const [serviceSearch, setServiceSearch] = useState('')
   const [serviceTypeFilter, setServiceTypeFilter] = useState<ServiceType | 'all'>('all')
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false)
+  const projectDropdownRef = useRef<HTMLDivElement>(null)
 
   // 加载项目列表
   const loadProjects = useCallback(async () => {
@@ -274,6 +276,23 @@ export function ImportServiceDialog({
     }
   }, [selectedProject, selectedServices, services, projectId, onImported, onOpenChange])
 
+  // 点击外部关闭项目下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (projectDropdownRef.current && !projectDropdownRef.current.contains(event.target as Node)) {
+        setProjectDropdownOpen(false)
+      }
+    }
+
+    if (projectDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [projectDropdownOpen])
+
   // 重置状态
   const resetState = useCallback(() => {
     setProjects([])
@@ -283,6 +302,7 @@ export function ImportServiceDialog({
     setProjectSearch('')
     setServiceSearch('')
     setServiceTypeFilter('all')
+    setProjectDropdownOpen(false)
   }, [])
 
   return (
@@ -326,13 +346,12 @@ export function ImportServiceDialog({
               </Button>
             </div>
 
-            <Combobox
-              data={projectComboboxData}
-              type="项目"
-              value={selectedProject?.id || ''}
-              onValueChange={handleProjectSelect}
-            >
-              <ComboboxTrigger className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[48px]">
+            <div className="relative" ref={projectDropdownRef}>
+              <button
+                type="button"
+                className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[48px] border border-gray-300 rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+              >
                 <div className="flex w-full flex-col items-start gap-1 text-left">
                   <span className="w-full truncate text-sm font-semibold text-gray-900">
                     {selectedProject ? selectedProject.name : '选择项目'}
@@ -346,28 +365,39 @@ export function ImportServiceDialog({
                     </span>
                   </div>
                 </div>
-              </ComboboxTrigger>
-              <ComboboxContent className="max-h-80" popoverOptions={{ className: 'w-[420px] max-h-80 p-0' }}>
-                <ComboboxInput
-                  placeholder="搜索项目..."
-                  value={projectSearch}
-                  onValueChange={setProjectSearch}
-                />
-                <ComboboxList className="max-h-72 overflow-y-auto py-1">
-                  {projectsLoading ? (
-                    <div className="flex items-center justify-center py-6 text-sm text-gray-500">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      正在加载项目...
-                    </div>
-                  ) : (
-                    <>
-                      <ComboboxEmpty>未找到匹配的项目</ComboboxEmpty>
-                      <ComboboxGroup className="space-y-1">
+              </button>
+              
+              {projectDropdownOpen && (
+                <div className="absolute z-50 w-[420px] mt-1 bg-white border border-gray-200 rounded-md shadow-lg">
+                  <div className="p-3 border-b border-gray-200">
+                    <input
+                      type="text"
+                      placeholder="搜索项目..."
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="max-h-[300px] overflow-y-auto">
+                    {projectsLoading ? (
+                      <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        正在加载项目...
+                      </div>
+                    ) : filteredProjects.length === 0 ? (
+                      <div className="px-3 py-4 text-sm text-gray-500 text-center">
+                        未找到匹配的项目
+                      </div>
+                    ) : (
+                      <div>
                         {filteredProjects.map((project) => (
-                          <ComboboxItem
+                          <div
                             key={project.id}
-                            value={project.id}
-                            className="flex flex-col gap-1 px-3 py-2"
+                            className="flex flex-col gap-1 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            onClick={() => {
+                              handleProjectSelect(project.id!)
+                              setProjectDropdownOpen(false)
+                            }}
                           >
                             <span className="text-sm font-medium text-gray-900">
                               {project.name}
@@ -376,14 +406,14 @@ export function ImportServiceDialog({
                             {project.description && (
                               <span className="text-[11px] text-gray-400">{project.description}</span>
                             )}
-                          </ComboboxItem>
+                          </div>
                         ))}
-                      </ComboboxGroup>
-                    </>
-                  )}
-                </ComboboxList>
-              </ComboboxContent>
-            </Combobox>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {selectedProject && (
