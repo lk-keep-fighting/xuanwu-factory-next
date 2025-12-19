@@ -121,8 +121,8 @@ const generatePortId = () =>
 
 const createEmptyPort = (): NetworkPortFormState => ({
   id: generatePortId(),
-  containerPort: '',
-  servicePort: '',
+  containerPort: '8080',
+  servicePort: '8080',
   protocol: 'TCP',
   nodePort: '',
   enableDomain: false,
@@ -166,7 +166,8 @@ export default function ServiceCreateForm({
   const { register, handleSubmit, setValue, watch, unregister } = useForm<ServiceFormValues>({
     defaultValues: {
       git_branch: 'main',
-      git_path: '.'
+      git_path: '.',
+      port: '8080'
     }
   })
   const [selectedDatabaseType, setSelectedDatabaseType] = useState<SupportedDatabaseType>(DatabaseType.MYSQL)

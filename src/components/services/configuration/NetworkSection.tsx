@@ -75,8 +75,8 @@ export const NetworkSection = memo(function NetworkSection({
       ...ports,
       {
         id: generatePortId(),
-        containerPort: '',
-        servicePort: '',
+        containerPort: '8080',
+        servicePort: '8080',
         protocol: 'TCP',
         nodePort: '',
         enableDomain: false,

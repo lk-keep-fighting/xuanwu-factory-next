@@ -31,6 +31,7 @@ import { ServiceType } from '@/types/project'
 import type { Project, Service } from '@/types/project'
 import ServiceCreateForm from '../components/ServiceCreateForm'
 import { ImportK8sServiceDialog } from '../components/ImportK8sServiceDialog'
+import { ImportServiceDialog } from '../components/ImportServiceDialog'
 
 const SERVICE_TYPE_ICONS = {
   [ServiceType.APPLICATION]: Package,
@@ -91,6 +92,7 @@ export default function ProjectLayout({ children }: ProjectLayoutProps) {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [createServiceType, setCreateServiceType] = useState<ServiceType | null>(null)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
+  const [isImportServiceDialogOpen, setIsImportServiceDialogOpen] = useState(false)
   const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false)
   const [projectForm, setProjectForm] = useState<ProjectFormState>({
     name: '',
@@ -307,6 +309,10 @@ export default function ProjectLayout({ children }: ProjectLayoutProps) {
                         <Box className="w-4 h-4 mr-2" />
                         Image
                       </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setIsImportServiceDialogOpen(true)}>
+                        <Download className="w-4 h-4 mr-2" />
+                        导入服务
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -464,6 +470,17 @@ export default function ProjectLayout({ children }: ProjectLayoutProps) {
           projectIdentifier={project?.identifier}
           open={isImportDialogOpen}
           onOpenChange={setIsImportDialogOpen}
+          onImported={loadServices}
+        />
+      )}
+
+      {/* 导入服务配置对话框 */}
+      {projectId && (
+        <ImportServiceDialog
+          projectId={projectId}
+          projectIdentifier={project?.identifier}
+          open={isImportServiceDialogOpen}
+          onOpenChange={setIsImportServiceDialogOpen}
           onImported={loadServices}
         />
       )}
