@@ -1,10 +1,11 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { HardDrive, Save, X } from 'lucide-react'
 import { VolumesSection } from './configuration/VolumesSection'
+import { generateNFSSubpath } from '@/lib/volume-templates'
 import type { VolumeMount } from '@/types/service-tabs'
 
 export interface VolumesTabProps {
@@ -34,6 +35,20 @@ export const VolumesTab = memo(function VolumesTab({
   onCancel,
   onUpdateVolumes
 }: VolumesTabProps) {
+  // 处理保存，确保所有空的 nfs_subpath 都被填充
+  const handleSave = useCallback(async () => {
+    // 自动填充空的 nfs_subpath
+    const volumesWithSubpath = volumes.map(volume => ({
+      ...volume,
+      nfs_subpath: volume.nfs_subpath || generateNFSSubpath(serviceName, volume.container_path)
+    }))
+    
+    // 更新卷挂载配置
+    onUpdateVolumes(volumesWithSubpath)
+    
+    // 调用原始保存函数
+    await onSave()
+  }, [volumes, serviceName, onUpdateVolumes, onSave])
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-4">
@@ -60,7 +75,7 @@ export const VolumesTab = memo(function VolumesTab({
               </Button>
               <Button
                 size="sm"
-                onClick={onSave}
+                onClick={handleSave}
                 className="gap-2"
               >
                 <Save className="w-4 h-4" />

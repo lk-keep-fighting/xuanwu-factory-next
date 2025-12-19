@@ -194,9 +194,31 @@ export function generateNFSSubpath(
   serviceName: string,
   containerPath: string
 ): string {
-  // 从容器路径提取目录名，移除前导 '/' 并替换 '/' 为 '-'
-  const normalized = containerPath.replace(/^\//, '').replace(/\//g, '-')
+  if (!containerPath) return serviceName
   
-  // 生成格式：{serviceName}/{normalized}
-  return `${serviceName}/${normalized}`
+  // 移除前导 '/'
+  const cleanPath = containerPath.replace(/^\//, '')
+  
+  // 检查是否是文件路径（包含文件扩展名，但排除常见的目录名模式）
+  // 文件扩展名通常是 1-10 个字符，且不包含数字开头的情况（如 conf.d）
+  const isFile = /\.[a-zA-Z][a-zA-Z0-9]{0,9}$/.test(cleanPath) && 
+                 !/\.(d|bak|tmp|old|new)$/.test(cleanPath)
+  
+  if (isFile) {
+    // 如果是文件，分离目录和文件名
+    const lastSlashIndex = cleanPath.lastIndexOf('/')
+    if (lastSlashIndex === -1) {
+      // 文件在根目录，直接放在服务名目录下
+      return `${serviceName}/${cleanPath}`
+    } else {
+      // 文件在子目录中，目录部分替换 '/' 为 '-'，文件名保持不变
+      const dirPath = cleanPath.substring(0, lastSlashIndex).replace(/\//g, '-')
+      const fileName = cleanPath.substring(lastSlashIndex + 1)
+      return `${serviceName}/${dirPath}/${fileName}`
+    }
+  } else {
+    // 如果是目录，替换所有 '/' 为 '-'
+    const normalized = cleanPath.replace(/\//g, '-')
+    return `${serviceName}/${normalized}`
+  }
 }

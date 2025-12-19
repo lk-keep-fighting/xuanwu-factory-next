@@ -3383,7 +3383,8 @@ class K8sService {
     return volumes.map((v) => ({
       name: 'shared-volume',
       mountPath: v.container_path,
-      subPath: this.generateSubPath(serviceName || 'unknown', v.nfs_subpath, v.container_path),
+      // 直接使用保存的 nfs_subpath，如果没有则使用 generateSubPath 作为 fallback
+      subPath: v.nfs_subpath || this.generateSubPath(serviceName || 'unknown', v.nfs_subpath, v.container_path),
       readOnly: v.read_only
     }))
   }

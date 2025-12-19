@@ -59,9 +59,14 @@ export const VolumesSection = memo(function VolumesSection({
       newVolumes[index][field] = value as boolean
     } else {
       newVolumes[index][field] = value as string
+      
+      // 如果更新的是容器路径，且当前NFS子路径为空，自动生成默认值
+      if (field === 'container_path' && value && !newVolumes[index].nfs_subpath) {
+        newVolumes[index].nfs_subpath = generateNFSSubpath(serviceName, value as string)
+      }
     }
     onUpdateVolumes(newVolumes)
-  }, [volumes, onUpdateVolumes])
+  }, [volumes, onUpdateVolumes, serviceName])
 
   const applyTemplate = useCallback((template: ImageVolumeTemplate) => {
     // Convert template volumes to VolumeMount format
