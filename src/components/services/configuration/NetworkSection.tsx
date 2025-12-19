@@ -96,7 +96,7 @@ export const NetworkSection = memo(function NetworkSection({
         
         // 如果更新了容器端口，且服务端口为空，则自动设置服务端口等于容器端口
         if (updates.containerPort !== undefined && !port.servicePort.trim()) {
-          updatedPort.servicePort = updates.containerPort
+          updatedPort.servicePort = updatedPort.containerPort
         }
         
         return updatedPort
@@ -390,7 +390,7 @@ export const NetworkSection = memo(function NetworkSection({
           <div className="space-y-3">
             {ports.map((port, index) => {
               const containerPortInvalid = !validatePortNumber(port.containerPort)
-              const servicePortInvalid = !validatePortNumber(port.servicePort)
+              const servicePortInvalid = port.servicePort.trim() && !validatePortNumber(port.servicePort)
               const nodePortInvalid = !validateNodePort(port.nodePort)
               const domainPrefixInvalid = port.enableDomain && !isValidDomainPrefix(port.domainPrefix)
 

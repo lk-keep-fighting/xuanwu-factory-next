@@ -12,70 +12,7 @@ import { ServiceType } from '@/types/project'
 import type { DeploymentsTabProps } from '@/types/service-tabs'
 import { BuildConfigurationCard } from './BuildConfigurationCard'
 
-/**
- * CurrentDeploymentStatus - Shows the current active deployment
- * Memoized to prevent unnecessary re-renders
- */
-const CurrentDeploymentStatus = memo(function CurrentDeploymentStatus({
-  currentDeployment,
-  ongoingDeployment
-}: {
-  currentDeployment: DeploymentsTabProps['currentDeployment']
-  ongoingDeployment: DeploymentsTabProps['ongoingDeployment']
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">当前部署状态</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {ongoingDeployment && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3" role="status" aria-live="polite">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="h-4 w-4 text-blue-600 animate-pulse" aria-hidden="true" />
-                <span className="text-sm font-medium text-blue-900">部署进行中</span>
-              </div>
-              <div className="text-xs text-blue-700 font-mono">
-                {ongoingDeployment.display}
-              </div>
-              {ongoingDeployment.record?.metadata && 
-               typeof ongoingDeployment.record.metadata === 'object' && 
-               'branch' in ongoingDeployment.record.metadata && (
-                <div className="mt-2 text-xs text-blue-600 flex items-center gap-1">
-                  <GitBranch className="h-3 w-3" aria-hidden="true" />
-                  <span>分支: {String(ongoingDeployment.record.metadata.branch)}</span>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {currentDeployment ? (
-            <div role="status">
-              <div className="text-xs text-gray-600 mb-2">当前运行版本</div>
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle className="h-4 w-4 text-green-600" aria-hidden="true" />
-                <span className="text-sm font-mono">{currentDeployment.display}</span>
-              </div>
-              {currentDeployment.record?.metadata && 
-               typeof currentDeployment.record.metadata === 'object' && 
-               'branch' in currentDeployment.record.metadata && (
-                <div className="text-xs text-gray-500 flex items-center gap-1">
-                  <GitBranch className="h-3 w-3" aria-hidden="true" />
-                  <span>分支: {String(currentDeployment.record.metadata.branch)}</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-sm text-gray-500 text-center py-2">
-              暂无运行中的部署
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  )
-})
+
 
 /**
  * DeploymentHistory - Shows paginated deployment history
@@ -492,27 +429,6 @@ export const DeploymentsTab = memo(function DeploymentsTab({
 
   return (
     <div className="space-y-6" role="region" aria-label="部署管理">
-      {/* Current Deployment Status */}
-      <div role="region" aria-label="当前部署状态">
-        <CurrentDeploymentStatus
-          currentDeployment={currentDeployment}
-          ongoingDeployment={ongoingDeployment}
-        />
-      </div>
-
-      {/* Build Configuration - Only for Application services */}
-      {isApplicationService && onStartEditBuildConfig && onSaveBuildConfig && onCancelEditBuildConfig && (
-        <div role="region" aria-label="构建配置">
-          <BuildConfigurationCard
-            service={service}
-            isEditing={isEditingBuildConfig}
-            onStartEdit={onStartEditBuildConfig}
-            onSave={onSaveBuildConfig}
-            onCancel={onCancelEditBuildConfig}
-          />
-        </div>
-      )}
-
       {/* Build History - Only for Application services */}
       {isApplicationService && (
         <div role="region" aria-label="构建历史">
@@ -526,6 +442,19 @@ export const DeploymentsTab = memo(function DeploymentsTab({
             onPageChange={onPageChange}
             onBuild={onBuild}
             onDeploy={onDeploy}
+          />
+        </div>
+      )}
+
+      {/* Build Configuration - Only for Application services */}
+      {isApplicationService && onStartEditBuildConfig && onSaveBuildConfig && onCancelEditBuildConfig && (
+        <div role="region" aria-label="构建配置">
+          <BuildConfigurationCard
+            service={service}
+            isEditing={isEditingBuildConfig}
+            onStartEdit={onStartEditBuildConfig}
+            onSave={onSaveBuildConfig}
+            onCancel={onCancelEditBuildConfig}
           />
         </div>
       )}

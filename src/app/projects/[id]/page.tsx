@@ -10,8 +10,12 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     if (projectId) {
-      // 重定向到概览页面
-      router.replace(`/projects/${projectId}/overview`)
+      // 重定向到概览页面 - 添加小延迟避免 SSR 问题
+      const timer = setTimeout(() => {
+        router.replace(`/projects/${projectId}/overview`)
+      }, 0)
+      
+      return () => clearTimeout(timer)
     }
   }, [projectId, router])
 

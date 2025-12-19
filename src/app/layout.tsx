@@ -20,10 +20,11 @@ export default function RootLayout({
       <body className="antialiased" suppressHydrationWarning>
         {children}
         <Toaster 
-          position="top-center" 
+          position="top-right" 
           toastOptions={{
             style: {
               marginTop: '60px', // 为顶部导航栏留出空间
+              marginRight: '20px', // 避免覆盖右侧操作按钮
             },
           }}
         />

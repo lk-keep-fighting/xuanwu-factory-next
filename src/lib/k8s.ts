@@ -1229,7 +1229,9 @@ class K8sService {
               name: c.name,
               ready: c.ready || false,
               restartCount: c.restartCount || 0,
-              state: c.state
+              state: c.state,
+              image: c.image,
+              imageID: c.imageID
             }))
           }
         })

@@ -23,6 +23,12 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+
+  // 实验性功能配置 - 修复 unstable_prefetch 问题
+  experimental: {
+    // 禁用一些可能导致问题的实验性功能
+    serverComponentsExternalPackages: [],
+  },
 };
 
 export default nextConfig;

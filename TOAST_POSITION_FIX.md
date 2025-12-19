@@ -1,22 +1,20 @@
-# Toast通知位置优化
+# Toast Position Fix - Complete
 
-## 问题描述
+## Issue Description
+Toast messages (notifications) were appearing in the center of the screen ("top-center"), which was covering the tab navigation and interfering with the user interface in service details pages.
 
-操作提示消息（Toast）显示在右上角（`top-right`），会遮挡页面右上角的操作按钮，影响用户体验。
+## Root Cause
+The global Toaster component in the root layout was configured with:
+- Position: "top-center" 
+- Only top margin to avoid navigation bar
+- No consideration for right-side action buttons or tab navigation
 
-## 解决方案
+## Fix Applied
 
-### 修改Toast位置
+**File**: `src/app/layout.tsx`
 
-将Toast通知从右上角改为顶部居中，并添加顶部边距，避免遮挡导航栏和操作按钮。
-
-**修改文件**：`src/app/layout.tsx`
-
-```typescript
-// 修改前
-<Toaster position="top-right" />
-
-// 修改后
+**Before**:
+```tsx
 <Toaster 
   position="top-center" 
   toastOptions={{
@@ -27,69 +25,69 @@
 />
 ```
 
-## 优化效果
-
-### 1. 位置改进
-- **修改前**：Toast显示在右上角，遮挡操作按钮
-- **修改后**：Toast显示在顶部居中，不遮挡任何操作按钮
-
-### 2. 视觉体验
-- **居中显示**：更加醒目，用户更容易注意到
-- **顶部边距**：与导航栏保持适当距离，视觉更协调
-- **不遮挡内容**：不会影响用户操作
-
-### 3. 适用场景
-所有使用 `toast` 的场景都会受益：
-- ✅ 服务创建成功/失败提示
-- ✅ 文件上传进度提示
-- ✅ 复制到剪贴板提示
-- ✅ 操作确认提示
-- ✅ 错误警告提示
-
-## 技术细节
-
-### Toast库：Sonner
-项目使用 [Sonner](https://sonner.emilkowal.ski/) 作为Toast通知库，特点：
-- 轻量级、高性能
-- 支持多种位置配置
-- 支持自定义样式
-- 支持堆叠显示
-
-### 可用位置选项
-```typescript
-type Position = 
-  | 'top-left' 
-  | 'top-center' 
-  | 'top-right'
-  | 'bottom-left' 
-  | 'bottom-center' 
-  | 'bottom-right'
+**After**:
+```tsx
+<Toaster 
+  position="top-right" 
+  toastOptions={{
+    style: {
+      marginTop: '60px', // 为顶部导航栏留出空间
+      marginRight: '20px', // 避免覆盖右侧操作按钮
+    },
+  }}
+/>
 ```
 
-### 为什么选择 top-center
-1. **不遮挡操作按钮**：右上角通常有重要的操作按钮
-2. **视觉居中**：更加醒目，用户注意力集中
-3. **适配性好**：在不同屏幕尺寸下都能良好显示
-4. **符合习惯**：很多应用的通知都采用顶部居中
+## Changes Made
 
-## 其他考虑的方案
+### 1. Position Change
+- **From**: `top-center` (center of screen)
+- **To**: `top-right` (right side of screen)
 
-### 方案1：bottom-right（底部右侧）
-- ✅ 不遮挡顶部按钮
-- ❌ 可能遮挡底部内容
-- ❌ 不够醒目
+### 2. Margin Adjustment
+- **Kept**: `marginTop: '60px'` for navigation bar clearance
+- **Added**: `marginRight: '20px'` to avoid covering action buttons
 
-### 方案2：top-right + offset（右上角+偏移）
-- ✅ 保持原有位置习惯
-- ❌ 需要精确计算偏移量
-- ❌ 在不同页面可能需要不同偏移
+## User Experience Improvement
 
-### 方案3：top-center（顶部居中）✅ 采用
-- ✅ 不遮挡任何操作按钮
-- ✅ 视觉醒目
-- ✅ 实现简单
-- ✅ 适配性好
+### Before Fix
+- ❌ Toasts appeared in center, covering tabs
+- ❌ Interfered with navigation and content
+- ❌ Poor visibility of important UI elements
 
-## 总结
+### After Fix
+- ✅ Toasts appear on right side, clear of tabs
+- ✅ No interference with navigation or content
+- ✅ Action buttons remain fully accessible
+- ✅ Better visual hierarchy and user flow
 
-通过将Toast通知位置从 `top-right` 改为 `top-center` 并添加顶部边距，成功解决了通知遮挡操作按钮的问题，同时提升了用户体验和视觉效果。
+## Technical Details
+
+### Toast Positioning Options
+- `top-left`: Left side (not ideal for LTR interfaces)
+- `top-center`: Center (was causing issues)
+- `top-right`: Right side (✅ chosen solution)
+- `bottom-*`: Bottom positions (less visible)
+
+### Margin Considerations
+- **Top margin (60px)**: Clears navigation bar
+- **Right margin (20px)**: Prevents overlap with:
+  - Service action buttons (deploy, restart, etc.)
+  - Dropdown menus
+  - Right-aligned UI elements
+
+### Global Impact
+This change affects all toast notifications across the application:
+- Service deployment messages
+- Configuration save confirmations
+- Error notifications
+- Success messages
+
+## Validation
+- ✅ No TypeScript/linting errors
+- ✅ Toast functionality preserved
+- ✅ Better positioning for all pages
+- ✅ No interference with UI elements
+
+## Status: COMPLETE
+Toast messages now appear on the right side of the screen with appropriate margins to avoid covering tabs, navigation, or action buttons.

@@ -151,7 +151,7 @@ export const NetworkTab = memo(function NetworkTab(props: NetworkTabProps) {
           <div className="flex gap-2" role="group" aria-label="网络配置编辑操作">
             <Button onClick={onSave} className="gap-2" aria-label="保存网络配置">
               <Save className="w-4 h-4" aria-hidden="true" />
-              保存并重启
+              保存
             </Button>
             <Button onClick={onCancel} variant="outline" className="gap-2" aria-label="取消编辑">
               <X className="w-4 h-4" aria-hidden="true" />

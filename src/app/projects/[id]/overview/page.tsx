@@ -548,7 +548,7 @@ export default function ProjectOverviewPage() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="gap-2">
+            <Button variant="outline" className="gap-2" suppressHydrationWarning>
               <Filter className="w-4 h-4" />
               {selectedType === 'all' ? '全部类型' : SERVICE_TYPE_LABELS[selectedType]}
             </Button>
@@ -574,7 +574,7 @@ export default function ProjectOverviewPage() {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="gap-2">
+            <Button variant="outline" className="gap-2" suppressHydrationWarning>
               <ArrowUpDown className="w-4 h-4" />
               {sortBy === 'name' ? '按名称' : '按更新时间'}
               {sortOrder === 'asc' ? ' ↑' : ' ↓'}
@@ -752,7 +752,7 @@ export default function ProjectOverviewPage() {
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild onClick={(event) => event.stopPropagation()}>
-                            <Button variant="ghost" size="icon">
+                            <Button variant="ghost" size="icon" suppressHydrationWarning>
                               <MoreVertical className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>

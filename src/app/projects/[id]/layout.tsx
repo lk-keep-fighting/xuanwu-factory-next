@@ -233,7 +233,7 @@ export default function ProjectLayout({ children }: ProjectLayoutProps) {
               
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" disabled={!project}>
+                  <Button variant="ghost" size="icon" disabled={!project} suppressHydrationWarning>
                     <MoreVertical className="w-4 h-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -289,7 +289,7 @@ export default function ProjectLayout({ children }: ProjectLayoutProps) {
                   <h3 className="text-sm font-medium text-gray-700">服务列表</h3>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button size="sm" variant="outline" className="gap-1">
+                      <Button size="sm" variant="outline" className="gap-1" suppressHydrationWarning>
                         <Plus className="w-3 h-3" />
                         创建
                       </Button>

@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useCallback, useState, useEffect, useRef } from 'react'
-import { RefreshCw, Activity, AlertCircle, TrendingUp, Box, CheckCircle, XCircle, Clock, Monitor, Eye, Copy } from 'lucide-react'
+import { RefreshCw, AlertCircle, Box, CheckCircle, XCircle, Clock, Monitor, Eye, Copy } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -14,7 +14,7 @@ import { parseImageReference } from '@/lib/service-image'
 import type { OverviewTabProps, MetricsDataPoint } from '@/types/service-tabs'
 
 /**
- * PodMonitorDialog - Real-time Pod monitoring dialog
+ * PodMonitorDialog - Real-time Pod monitoring dialog with container image info
  */
 const PodMonitorDialog = memo(function PodMonitorDialog({
   open,
@@ -32,6 +32,24 @@ const PodMonitorDialog = memo(function PodMonitorDialog({
   const [error, setError] = useState<string | null>(null)
   const [isMonitoring, setIsMonitoring] = useState(false)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Parse current deployment image for display
+  const parseImageDisplay = useCallback((imageDisplay: string) => {
+    const parsed = parseImageReference(imageDisplay)
+    return {
+      imageName: parsed.image || imageDisplay,
+      tag: parsed.tag || 'latest'
+    }
+  }, [])
+
+  const handleCopyImage = useCallback(async (imageText: string) => {
+    try {
+      await navigator.clipboard.writeText(imageText)
+      toast.success('镜像地址已复制到剪贴板')
+    } catch (error) {
+      toast.error('复制失败')
+    }
+  }, [])
 
   const fetchPodStatus = useCallback(async () => {
     if (!serviceId) return
@@ -63,7 +81,9 @@ const PodMonitorDialog = memo(function PodMonitorDialog({
                 name: c.name,
                 ready: c.ready || false,
                 restartCount: c.restartCount || 0,
-                state: c.state
+                state: c.state,
+                image: c.image || c.imageID, // 添加镜像信息
+                imageID: c.imageID
               }))
             }]
           })
@@ -219,8 +239,45 @@ const PodMonitorDialog = memo(function PodMonitorDialog({
                                 </Badge>
                               </div>
                             </div>
+                            {/* Container Image Information */}
+                            {(container.image || container.imageID) && (
+                              <div className="mt-2 pt-2 border-t border-gray-200">
+                                <div className="text-xs text-gray-600 mb-1">容器镜像:</div>
+                                <div className="flex items-start gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    {(() => {
+                                      const runningImage = container.image || container.imageID || '未知镜像'
+                                      const { imageName, tag } = parseImageDisplay(runningImage)
+                                      return (
+                                        <div>
+                                          <div className="text-xs font-mono text-gray-700 break-all leading-relaxed">
+                                            {imageName}
+                                          </div>
+                                          <div className="flex items-center gap-1 mt-1">
+                                            <span className="text-xs text-gray-500 font-medium">TAG</span>
+                                            <div className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-700 border border-gray-200">
+                                              {tag}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )
+                                    })()}
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleCopyImage(container.image || container.imageID || '')}
+                                    className="h-5 w-5 p-0 text-gray-500 hover:text-gray-700 flex-shrink-0"
+                                    title="复制镜像地址"
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+
                             {container.state && (
-                              <div className="text-xs text-gray-600">
+                              <div className="text-xs text-gray-600 mt-2">
                                 <div className="grid grid-cols-2 gap-2">
                                   {container.state.running && (
                                     <div>

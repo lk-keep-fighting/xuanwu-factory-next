@@ -1,9 +1,10 @@
 'use client'
 
 import { memo, useState, useCallback } from 'react'
-import { Settings, Save, X, Edit, Wrench, RefreshCw } from 'lucide-react'
+import { Settings, Save, X, Edit, Wrench, RefreshCw, Maximize2, Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -53,6 +54,9 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
   const [editingBuildType, setEditingBuildType] = useState<BuildType>(currentBuildType)
   const [editingBuildArgs, setEditingBuildArgs] = useState<Record<string, string>>(currentBuildArgs)
   const [saving, setSaving] = useState(false)
+  const [fullscreenEditorOpen, setFullscreenEditorOpen] = useState(false)
+  const [fullscreenContent, setFullscreenContent] = useState('')
+  const [copied, setCopied] = useState(false)
 
   // Reset editing state when editing mode changes
   const handleStartEdit = useCallback(() => {
@@ -85,6 +89,26 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
       [key]: value
     }))
   }, [])
+
+  const handleOpenFullscreenEditor = useCallback(() => {
+    setFullscreenContent(editingBuildArgs.custom_dockerfile || '')
+    setFullscreenEditorOpen(true)
+  }, [editingBuildArgs.custom_dockerfile])
+
+  const handleSaveFullscreenEditor = useCallback(() => {
+    updateBuildArg('custom_dockerfile', fullscreenContent)
+    setFullscreenEditorOpen(false)
+  }, [fullscreenContent, updateBuildArg])
+
+  const handleCopyToClipboard = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(fullscreenContent)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err)
+    }
+  }, [fullscreenContent])
 
   const getBuildTypeLabel = (buildType: BuildType) => {
     switch (buildType) {
@@ -148,12 +172,25 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
             )}
           </div>
           {isEditing ? (
-            <textarea
-              value={customDockerfile}
-              onChange={(e) => updateBuildArg('custom_dockerfile', e.target.value)}
-              className="w-full h-40 p-3 text-sm font-mono border border-gray-300 rounded-md resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="自定义Dockerfile内容（选择模板后自动填充）"
-            />
+            <div className="relative">
+              <textarea
+                value={customDockerfile}
+                onChange={(e) => updateBuildArg('custom_dockerfile', e.target.value)}
+                className="w-full h-60 p-3 text-sm font-mono border border-gray-300 rounded-md resize-y focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="自定义Dockerfile内容（选择模板后自动填充）"
+                style={{ minHeight: '240px', maxHeight: '600px' }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="absolute top-2 right-2 gap-1 text-xs h-6 px-2 bg-white/80 hover:bg-white border border-gray-200"
+                onClick={handleOpenFullscreenEditor}
+              >
+                <Settings className="h-3 w-3" />
+                全屏编辑
+              </Button>
+            </div>
           ) : (
             <div className="text-sm text-gray-900 font-mono bg-gray-50 p-2 rounded border max-h-40 overflow-y-auto">
               {customDockerfile ? (
@@ -412,6 +449,101 @@ export const BuildConfigurationCard = memo(function BuildConfigurationCard({
         {/* Custom Build Args */}
         {renderBuildArgs()}
       </CardContent>
+
+      {/* Fullscreen Dockerfile Editor */}
+      <Dialog open={fullscreenEditorOpen} onOpenChange={setFullscreenEditorOpen}>
+        <DialogContent className="max-w-6xl h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Maximize2 className="h-4 w-4" />
+              编辑 Dockerfile
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="flex-1 flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-600">
+                提示：支持标准 Dockerfile 语法，保存后将应用到构建配置
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopyToClipboard}
+                className="gap-1"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-3 w-3 text-green-600" />
+                    已复制
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3 w-3" />
+                    复制
+                  </>
+                )}
+              </Button>
+            </div>
+            
+            <div className="flex-1 relative border border-gray-300 rounded-md overflow-hidden">
+              {/* 行号区域 */}
+              <div className="absolute left-0 top-0 bottom-0 w-12 bg-gray-50 border-r border-gray-200 flex flex-col">
+                <div className="p-2 text-xs text-gray-400 font-mono leading-5 overflow-hidden">
+                  {fullscreenContent.split('\n').map((_, index) => (
+                    <div key={index} className="text-right h-5">
+                      {index + 1}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              {/* 编辑器区域 */}
+              <textarea
+                value={fullscreenContent}
+                onChange={(e) => setFullscreenContent(e.target.value)}
+                className="w-full h-full pl-14 pr-4 py-2 text-sm font-mono border-0 resize-none focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                placeholder="# Dockerfile 内容
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY . .
+
+EXPOSE 3000
+
+CMD [&quot;npm&quot;, &quot;start&quot;]"
+                style={{ minHeight: '400px', lineHeight: '1.25rem' }}
+              />
+            </div>
+            
+            <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
+              <strong>常用 Dockerfile 指令：</strong>
+              <code className="ml-2">FROM</code> (基础镜像)、
+              <code className="ml-1">WORKDIR</code> (工作目录)、
+              <code className="ml-1">COPY</code> (复制文件)、
+              <code className="ml-1">RUN</code> (执行命令)、
+              <code className="ml-1">EXPOSE</code> (暴露端口)、
+              <code className="ml-1">CMD</code> (启动命令)
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setFullscreenEditorOpen(false)}
+            >
+              取消
+            </Button>
+            <Button onClick={handleSaveFullscreenEditor} className="gap-2">
+              <Check className="h-4 w-4" />
+              保存并应用
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 })
