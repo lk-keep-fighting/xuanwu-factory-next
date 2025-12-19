@@ -21,8 +21,7 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
-  ComboboxTrigger,
-  ComboboxCreateNew
+  ComboboxTrigger
 } from '@/components/ui/shadcn-io/combobox'
 import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
@@ -223,6 +222,7 @@ export default function ServiceCreateForm({
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
   const [branchSearch, setBranchSearch] = useState('')
   const branchInitialLoadRef = useRef(false)
+  const repositoryDropdownRef = useRef<HTMLDivElement>(null)
   
   const imageValue = watch('image') as string | undefined
   const tagValue = watch('tag') as string | undefined
@@ -291,6 +291,23 @@ export default function ServiceCreateForm({
       unregister('tag')
     }
   }, [register, unregister, serviceType])
+
+  // 点击外部关闭仓库下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (repositoryDropdownRef.current && !repositoryDropdownRef.current.contains(event.target as Node)) {
+        setRepositoryPickerOpen(false)
+      }
+    }
+
+    if (repositoryPickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [repositoryPickerOpen])
   
   const selectedRepositoryValue = selectedRepository?.httpUrlToRepo ?? ''
 
@@ -1025,24 +1042,21 @@ export default function ServiceCreateForm({
                     刷新
                   </Button>
                 </div>
-                <Combobox
-                  data={repositoryComboboxData}
-                  type="仓库"
-                  value={selectedRepositoryValue}
-                  onValueChange={handleRepositorySelect}
-                  open={repositoryPickerOpen}
-                  onOpenChange={(open) => {
-                    setRepositoryPickerOpen(open)
-                    if (open) {
-                      if (gitlabIntegrationReady && !repositoryLoading) {
-                        void fetchRepositories(repositorySearch)
+                <div className="relative" ref={repositoryDropdownRef}>
+                  <button
+                    type="button"
+                    className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[48px] border border-gray-300 rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    onClick={() => {
+                      setRepositoryPickerOpen(!repositoryPickerOpen)
+                      if (!repositoryPickerOpen) {
+                        if (gitlabIntegrationReady && !repositoryLoading) {
+                          void fetchRepositories(repositorySearch)
+                        }
+                      } else {
+                        setRepositorySearch('')
                       }
-                    } else {
-                      setRepositorySearch('')
-                    }
-                  }}
-                >
-                  <ComboboxTrigger className="w-full justify-between gap-3 px-3 py-2 h-auto min-h-[48px]">
+                    }}
+                  >
                     <div className="flex w-full flex-col items-start gap-1 text-left">
                       <span className="w-full truncate text-sm font-semibold text-gray-900">
                         {selectedRepository
@@ -1062,63 +1076,61 @@ export default function ServiceCreateForm({
                         ) : null}
                       </div>
                     </div>
-                  </ComboboxTrigger>
-                  <ComboboxContent
-                    className="max-h-80"
-                    popoverOptions={{ className: 'w-[420px] max-h-80 p-0' }}
-                  >
-                    <ComboboxInput
-                      placeholder="搜索或输入仓库 URL..."
-                      value={repositorySearch}
-                      onValueChange={(value) => setRepositorySearch(value)}
-                    />
-                    <ComboboxList className="max-h-72 overflow-y-auto py-1">
-                      {repositoryLoading ? (
-                        <div className="flex items-center justify-center py-6 text-sm text-gray-500">
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          正在搜索仓库...
-                        </div>
-                      ) : (
-                        <>
-                          <ComboboxEmpty>未找到匹配的仓库</ComboboxEmpty>
-                          <ComboboxGroup className="space-y-1">
+                  </button>
+                  
+                  {repositoryPickerOpen && (
+                    <div className="absolute z-50 w-[500px] mt-1 bg-white border border-gray-200 rounded-md shadow-lg">
+                      <div className="p-3 border-b border-gray-200">
+                        <input
+                          type="text"
+                          placeholder="搜索或输入仓库 URL..."
+                          value={repositorySearch}
+                          onChange={(e) => setRepositorySearch(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </div>
+                      <div className="max-h-[300px] overflow-y-auto">
+                        {repositoryLoading ? (
+                          <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            正在搜索仓库...
+                          </div>
+                        ) : repositoryOptions.length === 0 ? (
+                          <div className="px-3 py-4 text-sm text-gray-500 text-center">
+                            未找到匹配的仓库
+                          </div>
+                        ) : (
+                          <div>
                             {repositoryOptions.map((option) => (
-                              <ComboboxItem
+                              <div
                                 key={option.value}
-                                value={option.value}
-                                className="flex flex-col gap-1 px-3 py-2"
+                                className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                                onClick={() => {
+                                  handleRepositorySelect(option.value)
+                                  setRepositoryPickerOpen(false)
+                                }}
                               >
-                                <span className="text-sm font-medium text-gray-900">
-                                  {option.repo.fullName || option.repo.name}
-                                </span>
-                                <span className="text-xs text-gray-500">{option.repo.pathWithNamespace}</span>
-                                {option.repo.defaultBranch ? (
-                                  <span className="text-[11px] text-gray-400">默认分支：{option.repo.defaultBranch}</span>
-                                ) : null}
-                              </ComboboxItem>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-medium text-gray-900 truncate">
+                                    {option.repo.name}
+                                  </div>
+                                  <div className="text-xs text-gray-500 truncate">
+                                    {option.repo.pathWithNamespace}
+                                  </div>
+                                </div>
+                                {option.repo.defaultBranch && (
+                                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                    {option.repo.defaultBranch}
+                                  </span>
+                                )}
+                              </div>
                             ))}
-                          </ComboboxGroup>
-                        </>
-                      )}
-                    </ComboboxList>
-                    <ComboboxCreateNew
-                      onCreateNew={(value) => {
-                        const trimmed = value.trim()
-                        if (!trimmed) {
-                          return
-                        }
-                        branchInitialLoadRef.current = false
-                        setSelectedRepository(null)
-                        setBranchOptions([])
-                        setBranchError(null)
-                        setBranchSearch('')
-                        setValue('git_repository', trimmed, { shouldValidate: true, shouldDirty: true })
-                      }}
-                    >
-                      {(value) => <span>使用自定义仓库 “{value}”</span>}
-                    </ComboboxCreateNew>
-                  </ComboboxContent>
-                </Combobox>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <input type="hidden" {...register('git_repository', { required: true })} />
                 {repositoryError ? (
                   <p className="text-xs text-red-500">{repositoryError}</p>
@@ -1195,8 +1207,8 @@ export default function ServiceCreateForm({
                         </div>
                       </ComboboxTrigger>
                       <ComboboxContent
-                        className="max-h-72"
-                        popoverOptions={{ className: 'w-[320px] sm:w-[360px] max-h-72 p-0' }}
+                        className="max-h-[320px]"
+                        popoverOptions={{ className: 'w-[380px] sm:w-[420px] max-h-[320px] p-0' }}
                       >
                         <ComboboxInput
                           placeholder={repositoryIdentifier ? '搜索分支...' : '请先选择仓库'}
@@ -1204,7 +1216,7 @@ export default function ServiceCreateForm({
                           onValueChange={(value) => setBranchSearch(value)}
                           disabled={!repositoryIdentifier}
                         />
-                        <ComboboxList className="max-h-60 overflow-y-auto py-1">
+                        <ComboboxList className="max-h-[240px] overflow-y-auto py-0.5">
                           {branchLoading ? (
                             <div className="flex items-center justify-center py-6 text-sm text-gray-500">
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1213,23 +1225,23 @@ export default function ServiceCreateForm({
                           ) : (
                             <>
                               <ComboboxEmpty>未找到匹配的分支</ComboboxEmpty>
-                              <ComboboxGroup className="space-y-1">
+                              <ComboboxGroup className="space-y-0">
                                 {branchOptions.map((option) => (
                                   <ComboboxItem
                                     key={option.value}
                                     value={option.value}
-                                    className="flex flex-col gap-1 px-3 py-2"
+                                    className="flex flex-col gap-0.5 px-2.5 py-1.5 min-h-0"
                                   >
-                                    <span className="text-sm font-medium text-gray-900">
+                                    <span className="text-xs font-medium text-gray-900 leading-tight">
                                       {option.label}
                                       {option.isDefault ? (
-                                        <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                                        <span className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">
                                           默认
                                         </span>
                                       ) : null}
                                     </span>
                                     {option.description ? (
-                                      <span className="text-xs text-gray-500">{option.description}</span>
+                                      <span className="text-[11px] text-gray-500 leading-tight">{option.description}</span>
                                     ) : null}
                                   </ComboboxItem>
                                 ))}
@@ -1237,24 +1249,6 @@ export default function ServiceCreateForm({
                             </>
                           )}
                         </ComboboxList>
-                        <ComboboxCreateNew
-                          onCreateNew={(value) => {
-                            const trimmed = value.trim()
-                            if (!trimmed) {
-                              return
-                            }
-                            const current = (gitBranchRef.current ?? '').trim()
-                            setValue('git_branch', trimmed, {
-                              shouldDirty: trimmed !== current,
-                              shouldValidate: true
-                            })
-                            gitBranchRef.current = trimmed
-                            branchInitialLoadRef.current = true
-                            setBranchSearch('')
-                          }}
-                        >
-                          {(value) => <span>使用自定义分支 “{value}”</span>}
-                        </ComboboxCreateNew>
                       </ComboboxContent>
                     </Combobox>
                     <input type="hidden" {...register('git_branch', { required: true })} />
