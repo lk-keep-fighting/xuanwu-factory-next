@@ -44,6 +44,7 @@ import type { GitProviderConfig, GitRepositoryInfo } from '@/types/system'
 import { Database as DatabaseIcon, Plus, Trash2, Loader2, RefreshCcw } from 'lucide-react'
 import { extractGitLabProjectPath } from '@/lib/gitlab'
 import { DEFAULT_DOMAIN_ROOT, sanitizeDomainLabel } from '@/lib/network'
+import { createEmptyPort } from '@/lib/network-port-utils'
 import { useDockerfileTemplates } from '@/hooks/useDockerfileTemplates'
 import type { DockerfileTemplate } from '@/types/project'
 
@@ -118,16 +119,6 @@ const generatePortId = () =>
     ? globalThis.crypto.randomUUID()
     : Math.random().toString(36).slice(2, 10)
 
-const createEmptyPort = (): NetworkPortFormState => ({
-  id: generatePortId(),
-  containerPort: '8080',
-  servicePort: '8080',
-  protocol: 'TCP',
-  nodePort: '',
-  enableDomain: false,
-  domainPrefix: ''
-})
-
 type GitRepositoryOption = {
   value: string
   label: string
@@ -166,7 +157,7 @@ export default function ServiceCreateForm({
     defaultValues: {
       git_branch: 'main',
       git_path: '.',
-      port: '8080'
+      port: serviceType === ServiceType.DATABASE ? '3306' : '8080'
     }
   })
   const [selectedDatabaseType, setSelectedDatabaseType] = useState<SupportedDatabaseType>(DatabaseType.MYSQL)
@@ -191,6 +182,10 @@ export default function ServiceCreateForm({
       if (!currentName || currentName === previousDbTypeName) {
         setValue('name', dbType.toLowerCase(), { shouldValidate: true, shouldDirty: true })
       }
+      
+      // 自动设置对应数据库的默认端口
+      const metadata = DATABASE_TYPE_METADATA[dbType]
+      setValue('port', metadata.defaultPort.toString(), { shouldValidate: true, shouldDirty: true })
     }
   }
 
@@ -252,6 +247,14 @@ export default function ServiceCreateForm({
     if (serviceType === ServiceType.DATABASE) {
       const defaultVersion = selectedDatabaseType === DatabaseType.MYSQL ? "8.0.21" : "6.0.8"
       setValue('version', defaultVersion, { shouldValidate: true, shouldDirty: false })
+    }
+  }, [serviceType, selectedDatabaseType, setValue])
+
+  // 初始化数据库服务的默认端口
+  useEffect(() => {
+    if (serviceType === ServiceType.DATABASE) {
+      const metadata = DATABASE_TYPE_METADATA[selectedDatabaseType]
+      setValue('port', metadata.defaultPort.toString(), { shouldValidate: true, shouldDirty: false })
     }
   }, [serviceType, selectedDatabaseType, setValue])
   

@@ -44,20 +44,46 @@ export async function GET(
     }
 
     const normalizedDbStatus = (service.status ?? '').trim().toLowerCase()
-    const isPendingStatus = normalizedDbStatus.length === 0 || normalizedDbStatus === 'pending'
-
-    if (isPendingStatus) {
-      return NextResponse.json({
-        status: 'pending',
-        replicas: 0,
-        availableReplicas: 0,
-        readyReplicas: 0,
-        updatedReplicas: 0,
-        conditions: [],
-        namespace,
-        serviceName,
-        dbStatus: service.status ?? null
-      })
+    
+    // 只有在明确的 pending 状态（非 deploying）且没有 K8s 资源时才直接返回 pending
+    // 对于 deploying 状态或可能有 K8s 资源的情况，都要检查实际状态
+    const shouldSkipK8sCheck = normalizedDbStatus === 'pending' && normalizedDbStatus !== 'deploying'
+    
+    if (shouldSkipK8sCheck) {
+      // 先快速检查是否有 K8s 资源存在
+      try {
+        const quickCheck = await k8sService.getServiceStatus(serviceName, namespace)
+        if (quickCheck.status !== 'error' && quickCheck.replicas > 0) {
+          // 如果 K8s 中有资源，继续正常的状态检查流程
+          console.log(`[Status] Service ${serviceName} has K8s resources, proceeding with status check`)
+        } else {
+          // 确实没有 K8s 资源，返回 pending
+          return NextResponse.json({
+            status: 'pending',
+            replicas: 0,
+            availableReplicas: 0,
+            readyReplicas: 0,
+            updatedReplicas: 0,
+            conditions: [],
+            namespace,
+            serviceName,
+            dbStatus: service.status ?? null
+          })
+        }
+      } catch (quickCheckError) {
+        // 快速检查失败，返回 pending
+        return NextResponse.json({
+          status: 'pending',
+          replicas: 0,
+          availableReplicas: 0,
+          readyReplicas: 0,
+          updatedReplicas: 0,
+          conditions: [],
+          namespace,
+          serviceName,
+          dbStatus: service.status ?? null
+        })
+      }
     }
 
     const statusResult = await k8sService.getServiceStatus(serviceName, namespace)

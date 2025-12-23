@@ -1441,11 +1441,22 @@ class K8sService {
         status = 'error'
       } else if (hasFailedCondition) {
         status = 'error'
-      } else if (readyReplicas === replicas && currentReplicas === replicas) {
+      } else if (readyReplicas === replicas) {
+        // StatefulSet 中，当 readyReplicas 等于期望的 replicas 时，表示运行正常
         status = 'running'
-      } else if (readyReplicas === 0 && currentReplicas === 0) {
-        status = 'error'
+      } else if (readyReplicas === 0) {
+        // 如果没有就绪的副本，可能是启动中或有问题
+        // 检查是否有 Pod 存在但未就绪
+        const podCount = podStatusInfo?.containerStatuses?.length || 0
+        if (podCount > 0) {
+          // 有 Pod 但未就绪，可能正在启动
+          status = 'pending'
+        } else {
+          // 没有 Pod，可能是错误状态
+          status = 'error'
+        }
       } else {
+        // 部分就绪，正在启动或更新中
         status = 'pending'
       }
 

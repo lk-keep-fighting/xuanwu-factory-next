@@ -202,27 +202,52 @@ export async function POST(
       if (!isApplicationService) {
         const serviceName = serviceWithoutProject.name?.trim()
         if (serviceName) {
-          // 等待 5 秒让 Pod 有时间启动
-          await wait(5000)
+          // 等待更长时间让 StatefulSet 有足够时间启动
+          await wait(3000)
           
-          try {
-            const status = await k8sService.getServiceStatus(serviceName, namespace)
-            const finalStatus = (status.status === 'Running' && status.readyReplicas > 0) 
-              ? 'running' 
-              : 'deploying'
-            
-            await prisma.service.update({
-              where: { id },
-              data: { status: finalStatus }
-            })
-          } catch (statusError) {
-            console.error('[Services][Deploy] 检查最终状态失败:', statusError)
-            // 保持 deploying 状态，让前端继续轮询
-            await prisma.service.update({
-              where: { id },
-              data: { status: 'deploying' }
-            })
+          // 多次检查状态，最多等待30秒
+          let finalStatus = 'deploying'
+          const maxAttempts = 10
+          const checkInterval = 3000
+          
+          for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+              const status = await k8sService.getServiceStatus(serviceName, namespace)
+              console.log(`[Deploy] Status check attempt ${attempt + 1}:`, {
+                status: status.status,
+                readyReplicas: status.readyReplicas,
+                replicas: status.replicas
+              })
+              
+              if (status.status === 'running' && status.readyReplicas > 0) {
+                finalStatus = 'running'
+                break
+              } else if (status.status === 'error') {
+                finalStatus = 'error'
+                break
+              }
+              
+              // 如果不是最后一次尝试，等待后继续
+              if (attempt < maxAttempts - 1) {
+                await wait(checkInterval)
+              }
+            } catch (statusError) {
+              console.error(`[Deploy] Status check attempt ${attempt + 1} failed:`, statusError)
+              if (attempt === maxAttempts - 1) {
+                // 最后一次尝试失败，保持 deploying 状态
+                finalStatus = 'deploying'
+              } else {
+                await wait(checkInterval)
+              }
+            }
           }
+          
+          await prisma.service.update({
+            where: { id },
+            data: { status: finalStatus }
+          })
+          
+          console.log(`[Deploy] Final status for ${serviceName}:`, finalStatus)
         } else {
           await prisma.service.update({
             where: { id },
@@ -258,16 +283,17 @@ export async function POST(
 
         if (shouldEnsureNodePort) {
           const basePort = (() => {
-            if (typeof typedService.port === 'number' && Number.isInteger(typedService.port) && typedService.port > 0) {
-              return typedService.port
+            const dbService = typedService as any // 临时类型断言以访问数据库服务属性
+            if (typeof dbService.port === 'number' && Number.isInteger(dbService.port) && dbService.port > 0) {
+              return dbService.port
             }
 
-            const numeric = Number((typedService as { port?: unknown }).port)
+            const numeric = Number(dbService.port)
             if (Number.isInteger(numeric) && numeric > 0) {
               return numeric
             }
 
-            const rawType = ((typedService as { database_type?: string }).database_type ?? '').trim().toLowerCase()
+            const rawType = (dbService.database_type ?? '').trim().toLowerCase()
             const metadata = DATABASE_TYPE_METADATA[rawType as SupportedDatabaseType]
             return metadata?.defaultPort ?? 3306
           })()
@@ -350,13 +376,15 @@ export async function POST(
                 data: {
                   port: basePort,
                   external_port: assignedNodePort,
-                  network_config: finalNetworkConfig as Prisma.JsonValue
+                  network_config: finalNetworkConfig as any
                 }
               })
 
-              typedService.port = basePort
-              typedService.external_port = assignedNodePort
-              typedService.network_config = finalNetworkConfig as typeof typedService.network_config
+              // 更新内存中的服务对象
+              const dbService = typedService as any
+              dbService.port = basePort
+              dbService.external_port = assignedNodePort
+              dbService.network_config = finalNetworkConfig
             } catch (syncError: unknown) {
               console.error('[Services][Deploy] 同步数据库外部端口信息失败:', syncError)
             }

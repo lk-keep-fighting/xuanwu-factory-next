@@ -1637,9 +1637,58 @@ export default function ServiceDetailPage() {
       setDeploying(true)
       const result = await serviceSvc.deployService(serviceId)
       toast.success(result?.message || '部署成功，服务正在启动')
+      
+      // 立即刷新服务信息
       await loadService()
-      await fetchK8sStatus({ showToast: true })
-      await loadDeployments()
+      
+      // 对于数据库服务，启动轮询检查状态
+      if (service.type === ServiceType.DATABASE) {
+        // 启动轮询，每3秒检查一次状态，最多检查20次（1分钟）
+        let pollCount = 0
+        const maxPolls = 20
+        const pollInterval = 3000
+        
+        const pollStatus = async () => {
+          try {
+            const statusData = await fetchK8sStatus({ showToast: false })
+            pollCount++
+            
+            if (statusData?.status === 'running') {
+              toast.success('数据库服务已成功启动')
+              await loadDeployments()
+              return true // 停止轮询
+            } else if (statusData?.status === 'error') {
+              toast.error('数据库服务启动失败')
+              await loadDeployments()
+              return true // 停止轮询
+            } else if (pollCount >= maxPolls) {
+              toast.warning('数据库服务仍在启动中，请稍后手动刷新状态')
+              await loadDeployments()
+              return true // 停止轮询
+            }
+            
+            // 继续轮询
+            setTimeout(pollStatus, pollInterval)
+            return false
+          } catch (error) {
+            console.error('Status polling error:', error)
+            if (pollCount >= maxPolls) {
+              await loadDeployments()
+              return true // 停止轮询
+            }
+            setTimeout(pollStatus, pollInterval)
+            return false
+          }
+        }
+        
+        // 开始轮询
+        setTimeout(pollStatus, pollInterval)
+      } else {
+        // 非数据库服务，正常刷新
+        await fetchK8sStatus({ showToast: true })
+        await loadDeployments()
+      }
+      
       if (activeTab === 'logs') {
         await loadLogs()
       } else {

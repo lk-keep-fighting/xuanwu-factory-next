@@ -15,13 +15,13 @@ export function generatePortId(): string {
 }
 
 /**
- * Create an empty network port form state with default port 8080
+ * Create an empty network port form state with configurable default port
  */
-export function createEmptyPort(): NetworkPortFormState {
+export function createEmptyPort(defaultPort: string = '8080'): NetworkPortFormState {
   return {
     id: generatePortId(),
-    containerPort: '8080',
-    servicePort: '8080',
+    containerPort: defaultPort,
+    servicePort: defaultPort,
     protocol: 'TCP',
     nodePort: '',
     enableDomain: false,
