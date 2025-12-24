@@ -145,78 +145,81 @@ pipeline {
     stage('Build Image') {
       steps {
         script {
+          // 获取 Git commit ID
+          def commitId = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+          
           // 打印参数用于调试
           echo "=== Build Parameters ==="
           echo "FULL_IMAGE: ${params.FULL_IMAGE}"
           echo "IMAGE_REPOSITORY: ${params.IMAGE_REPOSITORY}"
           echo "IMAGE_TAG: ${params.IMAGE_TAG}"
           echo "NEXUS_IMAGE_REPO: ${env.NEXUS_IMAGE_REPO}"
+          echo "Git Commit ID: ${commitId}"
           echo "========================"
           
-          def image = params.FULL_IMAGE?.trim()
+          def image = ''
           
-          // 如果传入了 FULL_IMAGE，也要检查是否需要追加前缀
-          if (image) {
-            echo "FULL_IMAGE provided: ${image}"
-            // 解析镜像名（去掉 tag）
-            def lastColon = image.lastIndexOf(':')
-            def imageNoTag = lastColon > 0 ? image.substring(0, lastColon) : image
-            def tag = lastColon > 0 ? image.substring(lastColon + 1) : params.IMAGE_TAG.trim()
-            
-            // 检查是否需要追加 Nexus 前缀
-            if (env.NEXUS_IMAGE_REPO?.trim()) {
-              def firstSlashIdx = imageNoTag.indexOf('/')
-              def firstPart = firstSlashIdx > 0 ? imageNoTag.substring(0, firstSlashIdx) : imageNoTag
-              def hasDomain = firstPart.contains('.') || firstPart.contains(':')
-              
-              if (!hasDomain) {
-                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
-                imageNoTag = "${nexusHost}/${imageNoTag}"
-                echo "Auto-prepended Nexus registry to FULL_IMAGE: ${imageNoTag}"
-              } else {
-                echo "FULL_IMAGE already has registry prefix: ${imageNoTag}"
-              }
-            }
-            image = "${imageNoTag}:${tag}"
-            echo "Final FULL_IMAGE: ${image}"
+          // 如果传入了 FULL_IMAGE，则以 FULL_IMAGE 为最终镜像名
+          if (params.FULL_IMAGE?.trim()) {
+            image = params.FULL_IMAGE.trim()
+            echo "Using provided FULL_IMAGE: ${image}"
           } else {
-            // 如果没有 FULL_IMAGE，使用 IMAGE_REPOSITORY
+            // 如果没有传入 FULL_IMAGE，则以 IMAGE_REPOSITORY+":"+IMAGE_TAG+"-"+commitId 作为最终镜像名
             def imageRepo = params.IMAGE_REPOSITORY?.trim()
             if (imageRepo) {
-              echo "IMAGE_REPOSITORY provided: ${imageRepo}"
-              // 如果配置了 NEXUS_IMAGE_REPO 且 IMAGE_REPOSITORY 未以域名开头，则自动追加 Nexus 前缀
-              if (env.NEXUS_IMAGE_REPO?.trim()) {
-                def nexusHost = env.NEXUS_IMAGE_REPO.trim()
-                // 检查 imageRepo 是否已经包含域名（含有点号或冒号，且在第一个斜杠之前）
-                def firstSlashIdx = imageRepo.indexOf('/')
-                def firstPart = firstSlashIdx > 0 ? imageRepo.substring(0, firstSlashIdx) : imageRepo
-                def hasDomain = firstPart.contains('.') || firstPart.contains(':')
-                
-                if (!hasDomain) {
-                  // 如果没有域名前缀，追加 Nexus 地址
-                  imageRepo = "${nexusHost}/${imageRepo}"
-                  echo "Auto-prepended Nexus registry: ${imageRepo}"
-                } else {
-                  echo "Registry already present in IMAGE_REPOSITORY: ${imageRepo}"
-                }
-              }
-              image = "${imageRepo}:${params.IMAGE_TAG.trim()}"
-              echo "Constructed FULL_IMAGE: ${image}"
-            } else if (env.NEXUS_IMAGE_REPO?.trim()) {
-              // try to infer image name from SERVICE_NAME, PROJECT_IDENTIFIER or git repo
-              echo "No IMAGE_REPOSITORY, trying to infer from other parameters"
+              def imageTag = params.IMAGE_TAG?.trim() ?: 'latest'
+              image = "${imageRepo}:${imageTag}-${commitId}"
+              echo "Constructed image from IMAGE_REPOSITORY: ${image}"
+            } else {
+              // 尝试从其他参数推断镜像名
+              echo "No IMAGE_REPOSITORY provided, trying to infer from other parameters"
               def name = params.SERVICE_NAME?.trim() ?: params.PROJECT_IDENTIFIER?.trim()
               if (!name) {
                 def git = params.GIT_REPOSITORY?.trim()
                 if (git) { name = git.tokenize('/').last().replace('.git','') }
               }
-              if (!name) { error 'Cannot infer image name: set IMAGE_REPOSITORY or SERVICE_NAME/PROJECT_IDENTIFIER' }
-              image = "${env.NEXUS_IMAGE_REPO}/${name}:${params.IMAGE_TAG.trim()}"
-              echo "Constructed FULL_IMAGE from NEXUS_IMAGE_REPO: ${image}"
-            } else {
-              error 'IMAGE_REPOSITORY or FULL_IMAGE or NEXUS_IMAGE_REPO is required'
+              if (!name) { 
+                error 'Cannot infer image name: IMAGE_REPOSITORY, SERVICE_NAME, or PROJECT_IDENTIFIER is required' 
+              }
+              def imageTag = params.IMAGE_TAG?.trim() ?: 'latest'
+              image = "${name}:${imageTag}-${commitId}"
+              echo "Inferred image name: ${image}"
             }
           }
+          
+          // 确定最终镜像名后，判断是否包含 NEXUS_IMAGE_REPO 前缀，没有则追加
+          if (env.NEXUS_IMAGE_REPO?.trim()) {
+            def nexusHost = env.NEXUS_IMAGE_REPO.trim()
+            
+            // 解析镜像名（去掉 tag）
+            def lastColon = image.lastIndexOf(':')
+            def imageNoTag = lastColon > 0 ? image.substring(0, lastColon) : image
+            def tag = lastColon > 0 ? image.substring(lastColon + 1) : 'latest'
+            
+            // 检查是否已经包含 registry 前缀
+            def firstSlashIdx = imageNoTag.indexOf('/')
+            def hasRegistry = false
+            
+            if (firstSlashIdx > 0) {
+              def firstPart = imageNoTag.substring(0, firstSlashIdx)
+              // 如果第一部分包含点号或冒号（端口），则认为是 registry 地址
+              hasRegistry = firstPart.contains('.') || firstPart.contains(':')
+            }
+            
+            if (!hasRegistry) {
+              // 如果没有 registry 前缀，追加 NEXUS_IMAGE_REPO
+              imageNoTag = "${nexusHost}/${imageNoTag}"
+              echo "Auto-prepended Nexus registry: ${imageNoTag}"
+            } else {
+              echo "Registry already present in image name: ${imageNoTag}"
+            }
+            
+            image = "${imageNoTag}:${tag}"
+          }
+          
+          echo "=== Final Image Name ==="
+          echo "FINAL_IMAGE: ${image}"
+          echo "========================"
 
           // run docker build inside subpath if provided to limit filesystem scanning
           def subpath = env.BUILD_SUBPATH?.trim()
@@ -233,9 +236,9 @@ pipeline {
             sh dockerBuildCmd
           }
           env.COMPUTED_IMAGE = image
-          echo "=== Final Image Tag ==="
+          echo "=== Final Build Result ==="
           echo "COMPUTED_IMAGE: ${env.COMPUTED_IMAGE}"
-          echo "========================"
+          echo "=========================="
         }
       }
     }

@@ -71,6 +71,7 @@ const buildImageRepository = (serviceName: string, projectIdentifier?: string | 
 type BuildRequestPayload = {
   branch?: string
   tag?: string
+  fullImage?: string
 }
 
 const toJson = (value: Record<string, unknown>): Prisma.InputJsonObject => value as Prisma.InputJsonObject
@@ -129,10 +130,31 @@ export async function POST(
   const branchFromPayload = typeof payload.branch === 'string' ? payload.branch.trim() : ''
   const branch = branchFromPayload || serviceRecord.git_branch?.trim() || DEFAULT_BRANCH
   const requestedTag = typeof payload.tag === 'string' ? payload.tag.trim() : ''
+  const requestedFullImage = typeof payload.fullImage === 'string' ? payload.fullImage.trim() : ''
 
-  const repository = buildImageRepository(serviceRecord.name, serviceRecord.project?.identifier)
-  const tag = createImageTag(branch, requestedTag)
-  const fullImage = formatImageReference(repository, tag)
+  let repository: string
+  let tag: string
+  let fullImage: string
+
+  if (requestedFullImage) {
+    // 使用自定义的完整镜像名
+    fullImage = requestedFullImage
+    // 解析镜像名和标签
+    const lastColonIndex = fullImage.lastIndexOf(':')
+    if (lastColonIndex > 0) {
+      repository = fullImage.substring(0, lastColonIndex)
+      tag = fullImage.substring(lastColonIndex + 1)
+    } else {
+      repository = fullImage
+      tag = 'latest'
+      fullImage = `${repository}:${tag}`
+    }
+  } else {
+    // 使用默认的镜像构建逻辑
+    repository = buildImageRepository(serviceRecord.name, serviceRecord.project?.identifier)
+    tag = createImageTag(branch, requestedTag)
+    fullImage = formatImageReference(repository, tag)
+  }
 
   let buildCallbackUrl: string | null = null
   try {
@@ -144,7 +166,9 @@ export async function POST(
 
   const metadata: Record<string, unknown> = {
     branch,
-    requestedTag: requestedTag || undefined
+    requestedTag: requestedTag || undefined,
+    requestedFullImage: requestedFullImage || undefined,
+    useCustomImage: !!requestedFullImage
   }
 
   if (buildCallbackUrl) {
@@ -183,8 +207,12 @@ export async function POST(
     GIT_BRANCH: branch,
     IMAGE_REPOSITORY: repository,
     IMAGE_TAG: tag,
-    FULL_IMAGE: fullImage,
     SERVICE_IMAGE_ID: serviceImage.id
+  }
+
+  // 只有在用户明确使用自定义镜像时才传递 FULL_IMAGE 参数
+  if (requestedFullImage) {
+    parameters.FULL_IMAGE = fullImage
   }
 
   // if (buildCallbackUrl) {

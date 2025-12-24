@@ -395,7 +395,7 @@ export const serviceSvc = {
   /**
    * 构建应用服务镜像
    */
-  async buildApplicationService(id: string, payload?: { branch?: string; tag?: string }): Promise<BuildServiceResponse> {
+  async buildApplicationService(id: string, payload?: { branch?: string; tag?: string; fullImage?: string }): Promise<BuildServiceResponse> {
     const init: RequestInit = { method: 'POST' }
 
     if (payload && Object.keys(payload).length > 0) {

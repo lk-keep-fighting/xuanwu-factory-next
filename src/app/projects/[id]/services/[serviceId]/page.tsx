@@ -214,6 +214,9 @@ export default function ServiceDetailPage() {
   const [buildDialogOpen, setBuildDialogOpen] = useState(false)
   const [buildTagType, setBuildTagType] = useState<'dev' | 'test' | 'release'>('dev')
   const [customBuildTag, setCustomBuildTag] = useState('')
+  const [useCustomTag, setUseCustomTag] = useState(false)
+  const [customImageRepository, setCustomImageRepository] = useState('')
+  const [customImageTag, setCustomImageTag] = useState('')
   const [deployDialogOpen, setDeployDialogOpen] = useState(false)
   const [deployImageList, setDeployImageList] = useState<ServiceImageRecord[]>([])
   const [deployImagePage, setDeployImagePage] = useState(1)
@@ -1871,16 +1874,31 @@ export default function ServiceDetailPage() {
   const handleBuildImage = async () => {
     if (!serviceId) return
 
-    const payload: { branch?: string; tag?: string } = {}
+    const payload: { branch?: string; tag?: string; fullImage?: string } = {}
     const customBranchValue = buildBranch.trim()
     const defaultBranchValue = (service?.type === 'application' ? (service as any)?.git_branch?.trim() : '') || 'main'
     const branchValue = customBranchValue || defaultBranchValue
-    const tagValue = customBuildTag.trim()
 
     payload.branch = branchValue
 
-    if (tagValue) {
-      payload.tag = tagValue
+    if (useCustomTag) {
+      // 使用自定义标签模式，构建 FULL_IMAGE
+      const repository = customImageRepository.trim()
+      const tag = customImageTag.trim()
+      
+      if (!repository || !tag) {
+        toast.error('请填写完整的镜像仓库和标签信息')
+        return
+      }
+      
+      payload.fullImage = `${repository}:${tag}`
+    } else {
+      // 使用默认模式，只传递 tag 参数，不传递 fullImage
+      const tagValue = customBuildTag.trim()
+      if (tagValue) {
+        payload.tag = tagValue
+      }
+      // 注意：默认模式下不设置 payload.fullImage
     }
 
     try {
@@ -1896,6 +1914,9 @@ export default function ServiceDetailPage() {
       setCustomBuildTag('')
       setBuildTagType('dev')
       setBuildBranch('')
+      setUseCustomTag(false)
+      setCustomImageRepository('')
+      setCustomImageTag('')
       await loadServiceImages({ showToast: true, page: 1 })
       setActiveTab((prev) => (prev === 'deployments' ? prev : 'deployments'))
     } catch (error: any) {
@@ -1914,6 +1935,17 @@ export default function ServiceDetailPage() {
     // 初始化分支为服务配置的默认分支
     const defaultBranch = (service?.type === 'application' ? (service as any)?.git_branch?.trim() : '') || 'main'
     setBuildBranch(defaultBranch)
+    
+    // 初始化自定义标签的默认值
+    if (service) {
+      // 从环境变量或服务配置生成默认的镜像仓库名
+      const serviceName = service.name
+      const projectIdentifier = service.project?.identifier
+      const defaultRepository = projectIdentifier ? `${projectIdentifier}/${serviceName}` : serviceName
+      setCustomImageRepository(defaultRepository)
+      setCustomImageTag(generated)
+    }
+    
     setBuildDialogOpen(true)
     
     // 加载分支列表
@@ -2983,36 +3015,88 @@ export default function ServiceDetailPage() {
                 </Combobox>
                 <p className="text-xs text-gray-500">选择或输入要构建的分支名称</p>
               </div>
+              
               <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-700">镜像版本类型</Label>
-                <Select
-                  value={buildTagType}
-                  onValueChange={(value: 'dev' | 'test' | 'release') => setBuildTagType(value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dev">开发版 (dev-*)</SelectItem>
-                    <SelectItem value="test">测试版 (test-*)</SelectItem>
-                    <SelectItem value="release">发布版 (release-*)</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="useCustomTag"
+                    checked={useCustomTag}
+                    onChange={(e) => setUseCustomTag(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  <Label htmlFor="useCustomTag" className="text-sm font-medium text-gray-700">
+                    自定义镜像标签
+                  </Label>
+                </div>
                 <p className="text-xs text-gray-500">
-                  {buildTagType === 'dev' && '用于开发环境的镜像版本'}
-                  {buildTagType === 'test' && '用于测试环境的镜像版本'}
-                  {buildTagType === 'release' && '用于生产环境的镜像版本'}
+                  勾选后可以完全自定义镜像仓库和标签，否则使用系统默认规则
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
-                <Input
-                  value={customBuildTag}
-                  onChange={(e) => setCustomBuildTag(e.target.value)}
-                  placeholder="例如：dev-20241112120000"
-                />
-                <p className="text-xs text-gray-500">系统已自动生成标签，可根据需要修改</p>
-              </div>
+
+              {useCustomTag ? (
+                <>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">镜像仓库</Label>
+                    <Input
+                      value={customImageRepository}
+                      onChange={(e) => setCustomImageRepository(e.target.value)}
+                      placeholder="例如：my-project/my-service"
+                    />
+                    <p className="text-xs text-gray-500">镜像仓库路径（不含标签）</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
+                    <Input
+                      value={customImageTag}
+                      onChange={(e) => setCustomImageTag(e.target.value)}
+                      placeholder="例如：v1.0.0"
+                    />
+                    <p className="text-xs text-gray-500">自定义镜像标签</p>
+                  </div>
+                  <div className="p-3 bg-blue-50 rounded-md">
+                    <p className="text-sm text-blue-800">
+                      <strong>最终镜像名：</strong>
+                      {customImageRepository && customImageTag 
+                        ? `${customImageRepository}:${customImageTag}` 
+                        : '请填写镜像仓库和标签'}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">镜像版本类型</Label>
+                    <Select
+                      value={buildTagType}
+                      onValueChange={(value: 'dev' | 'test' | 'release') => setBuildTagType(value)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="dev">开发版 (dev-*)</SelectItem>
+                        <SelectItem value="test">测试版 (test-*)</SelectItem>
+                        <SelectItem value="release">发布版 (release-*)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-gray-500">
+                      {buildTagType === 'dev' && '用于开发环境的镜像版本'}
+                      {buildTagType === 'test' && '用于测试环境的镜像版本'}
+                      {buildTagType === 'release' && '用于生产环境的镜像版本'}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">镜像标签</Label>
+                    <Input
+                      value={customBuildTag}
+                      onChange={(e) => setCustomBuildTag(e.target.value)}
+                      placeholder="例如：dev-20241112120000"
+                    />
+                    <p className="text-xs text-gray-500">系统已自动生成标签，可根据需要修改</p>
+                  </div>
+                </>
+              )}
             </div>
             <DialogFooter className="gap-2">
               <Button
@@ -3024,7 +3108,7 @@ export default function ServiceDetailPage() {
               </Button>
               <Button
                 onClick={handleBuildImage}
-                disabled={buildingImage || !customBuildTag.trim()}
+                disabled={buildingImage || (useCustomTag ? (!customImageRepository.trim() || !customImageTag.trim()) : !customBuildTag.trim())}
                 className="gap-2"
               >
                 <Box className={`w-4 h-4 ${buildingImage ? 'animate-spin' : ''}`} />
