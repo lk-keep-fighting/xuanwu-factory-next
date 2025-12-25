@@ -41,12 +41,113 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  Plus
+  Plus,
+  Bot,
+  Zap
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDateTime } from '@/lib/date-utils'
 import ReactMarkdown from 'react-markdown'
+import { serviceSvc } from '@/service/serviceSvc'
+import { xuanwuAiSvc, type CreateAiDiagnosticTaskRequest } from '@/service/xuanwuAiSvc'
 import type { DiagnosticsTabProps, ServiceDiagnostic } from '@/types/service-tabs'
+import type { Service, ApplicationService } from '@/types/project'
+
+/**
+ * 玄武AI诊断按钮组件
+ */
+function XuanwuAiDiagnosticButton({ 
+  service,
+  serviceId,
+  onDiagnosticComplete
+}: { 
+  service?: Service | null
+  serviceId: string
+  onDiagnosticComplete?: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+
+  const handleAiDiagnostic = async () => {
+    if (!service) {
+      toast.error('服务信息不可用')
+      return
+    }
+
+    setLoading(true)
+    try {
+      // 获取K8s状态信息
+      const k8sStatus = await serviceSvc.getK8sServiceStatus(serviceId)
+      
+      if (!k8sStatus.namespace) {
+        toast.error('无法获取服务的Kubernetes命名空间信息')
+        return
+      }
+
+      // 获取第一个可用的Pod名称
+      let podName = ''
+      if (k8sStatus.podStatus?.pods && k8sStatus.podStatus.pods.length > 0) {
+        podName = k8sStatus.podStatus.pods[0].name
+      } else if (k8sStatus.serviceName) {
+        // 如果没有具体的Pod信息，使用服务名作为Pod名称前缀
+        podName = k8sStatus.serviceName
+      } else {
+        // 最后使用服务名称
+        podName = service.name
+      }
+
+      // 构建AI诊断任务参数
+      const taskParams: CreateAiDiagnosticTaskRequest = {
+        namespace: k8sStatus.namespace,
+        pod: podName
+      }
+
+      // 如果是Application服务，添加Git仓库信息
+      if (service.type === 'application') {
+        const appService = service as ApplicationService
+        if (appService.git_repository) {
+          taskParams.repo_url = appService.git_repository
+          if (appService.git_branch) {
+            taskParams.branch = appService.git_branch
+          }
+        }
+      }
+
+      // 创建AI诊断任务
+      const result = await xuanwuAiSvc.createDiagnosticTask(taskParams)
+      
+      toast.success(`AI诊断任务已创建，任务ID: ${result.task_id}`)
+      
+      // 可选：调用完成回调
+      if (onDiagnosticComplete) {
+        onDiagnosticComplete()
+      }
+      
+    } catch (error) {
+      console.error('AI诊断失败:', error)
+      toast.error('AI诊断失败: ' + (error instanceof Error ? error.message : '未知错误'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Button
+      onClick={handleAiDiagnostic}
+      disabled={loading || !service}
+      variant="outline"
+      size="sm"
+      className="gap-2 bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200 hover:from-blue-100 hover:to-purple-100"
+    >
+      {loading ? (
+        <RefreshCw className="w-4 h-4 animate-spin" />
+      ) : (
+        <Bot className="w-4 h-4" />
+      )}
+      <Zap className="w-3 h-3" />
+      玄武AI诊断
+    </Button>
+  )
+}
 
 /**
  * 创建诊断记录表单组件
@@ -365,6 +466,7 @@ function DiagnosticReportDialog({
  */
 export function DiagnosticsTab({
   serviceId,
+  service,
   diagnostics,
   diagnosticsLoading,
   diagnosticsError,
@@ -396,6 +498,11 @@ export function DiagnosticsTab({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <XuanwuAiDiagnosticButton
+            service={service}
+            serviceId={serviceId}
+            onDiagnosticComplete={() => onRefresh()}
+          />
           <CreateDiagnosticDialog
             onCreateDiagnostic={onCreateDiagnostic}
             trigger={
@@ -442,20 +549,27 @@ export function DiagnosticsTab({
             <div className="flex flex-col items-center justify-center py-12 text-gray-500">
               <FileText className="w-12 h-12 mb-4 text-gray-300" />
               <p className="text-lg font-medium">暂无诊断记录</p>
-              <p className="text-sm mb-4">该服务还没有进行过诊断</p>
-              <CreateDiagnosticDialog
-                onCreateDiagnostic={onCreateDiagnostic}
-                trigger={
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className="gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    添加第一条诊断记录
-                  </Button>
-                }
-              />
+              <p className="text-sm mb-6">该服务还没有进行过诊断</p>
+              <div className="flex items-center gap-3">
+                <XuanwuAiDiagnosticButton
+                  service={service}
+                  serviceId={serviceId}
+                  onDiagnosticComplete={() => onRefresh()}
+                />
+                <CreateDiagnosticDialog
+                  onCreateDiagnostic={onCreateDiagnostic}
+                  trigger={
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      添加第一条诊断记录
+                    </Button>
+                  }
+                />
+              </div>
             </div>
           ) : (
             <div className="border rounded-lg">

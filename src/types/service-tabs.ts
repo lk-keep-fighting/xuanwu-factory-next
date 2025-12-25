@@ -309,6 +309,7 @@ export type ServiceDiagnostic = {
  */
 export interface DiagnosticsTabProps {
   serviceId: string
+  service?: Service | null
   diagnostics: ServiceDiagnostic[]
   diagnosticsLoading: boolean
   diagnosticsError: string | null

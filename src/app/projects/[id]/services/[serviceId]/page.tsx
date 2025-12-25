@@ -2954,6 +2954,7 @@ export default function ServiceDetailPage() {
           <TabsContent value="diagnostics" className="space-y-6">
             <LazyDiagnosticsTab
               serviceId={serviceId}
+              service={service}
               diagnostics={diagnostics}
               diagnosticsLoading={diagnosticsLoading}
               diagnosticsError={diagnosticsError}
