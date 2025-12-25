@@ -45,11 +45,30 @@ export async function POST(
       )
     }
 
+    // 先创建诊断记录
+    const diagnostic = await prisma.serviceDiagnostic.create({
+      data: {
+        serviceId: id,
+        diagnosticTime: new Date(),
+        conclusion: 'AI诊断进行中...',
+        diagnostician: '玄武AI系统',
+        reportCategory: '其他',
+        reportDetail: '## AI诊断任务\n\n正在进行AI智能诊断，请稍候...\n\n- 任务状态: 已创建\n- 诊断类型: 自动化AI诊断\n- 预计完成时间: 3-5分钟'
+      }
+    })
+
     // 构建AI诊断任务参数
     const taskParams: any = {
       namespace,
       pod,
-      callback_url: callback_url || DEFAULT_CALLBACK_URL
+      callback_url: callback_url || DEFAULT_CALLBACK_URL,
+      metadata: {
+        serviceId: id,
+        serviceName: service.name,
+        diagnosticId: diagnostic.id,
+        diagnosticTime: diagnostic.diagnosticTime.toISOString(),
+        platform: 'xuanwu-factory'
+      }
     }
 
     // 如果是Application服务，添加Git仓库信息
@@ -60,6 +79,9 @@ export async function POST(
         if (appService.git_branch) {
           taskParams.branch = appService.git_branch
         }
+        // 在metadata中也添加Git信息
+        taskParams.metadata.gitRepository = appService.git_repository
+        taskParams.metadata.gitBranch = appService.git_branch
       }
     }
 
@@ -75,6 +97,15 @@ export async function POST(
     })
 
     if (!aiResponse.ok) {
+      // 如果AI任务创建失败，更新诊断记录状态
+      await prisma.serviceDiagnostic.update({
+        where: { id: diagnostic.id },
+        data: {
+          conclusion: 'AI诊断任务创建失败',
+          reportDetail: `## AI诊断任务创建失败\n\n**错误信息**: AI服务响应错误 (HTTP ${aiResponse.status})\n\n**时间**: ${new Date().toISOString()}\n\n**建议**: 请检查AI服务状态或稍后重试`
+        }
+      })
+
       let errorMessage = '创建AI诊断任务失败'
       
       try {
@@ -96,10 +127,22 @@ export async function POST(
 
     const result = await aiResponse.json()
     
+    // 更新诊断记录，添加AI任务ID
+    await prisma.serviceDiagnostic.update({
+      where: { id: diagnostic.id },
+      data: {
+        reportDetail: `## AI诊断任务已创建\n\n**任务ID**: ${result.task_id}\n**状态**: ${result.status}\n**创建时间**: ${result.created_at}\n\n正在进行AI智能诊断，预计3-5分钟完成。诊断完成后将自动更新结果。\n\n### 诊断范围\n- Pod状态分析\n- 日志异常检测\n- 资源使用情况\n- 配置问题排查${taskParams.repo_url ? '\n- 代码质量分析' : ''}`
+      }
+    })
+    
     return NextResponse.json({
       success: true,
-      data: result,
-      message: 'AI诊断任务创建成功'
+      data: {
+        ...result,
+        diagnosticId: diagnostic.id,
+        metadata: taskParams.metadata
+      },
+      message: 'AI诊断任务创建成功，诊断记录已生成'
     })
 
   } catch (error: unknown) {

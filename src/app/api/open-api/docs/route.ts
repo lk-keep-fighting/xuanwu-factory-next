@@ -126,6 +126,56 @@ export async function GET() {
           },
           required: ['conclusion', 'diagnostician', 'reportCategory', 'reportDetail']
         },
+        UpdateDiagnosticRequest: {
+          type: 'object',
+          properties: {
+            conclusion: {
+              type: 'string',
+              maxLength: 255,
+              description: '诊断结论（直接更新）',
+              example: 'AI诊断完成'
+            },
+            reportCategory: {
+              type: 'string',
+              enum: ['应用问题', '基础设施', '网络问题', '存储问题', '配置问题', '性能问题', '安全问题', '其他'],
+              description: '归因分类（直接更新）',
+              example: '性能问题'
+            },
+            reportDetail: {
+              type: 'string',
+              description: '详细报告内容（直接更新），支持Markdown格式',
+              example: '## AI诊断结果\\n\\n服务运行正常，性能良好。'
+            },
+            task_id: {
+              type: 'string',
+              description: 'AI任务ID（用于自动生成报告）',
+              example: 'task-123e4567-e89b-12d3-a456-426614174000'
+            },
+            status: {
+              type: 'string',
+              enum: ['pending', 'running', 'completed', 'failed'],
+              description: 'AI任务状态（用于自动生成报告）',
+              example: 'completed'
+            },
+            result: {
+              type: 'string',
+              description: 'AI诊断结果内容（用于自动生成报告）',
+              example: '经过分析，服务运行状态良好，CPU使用率正常，内存使用率在合理范围内。'
+            },
+            error_message: {
+              type: 'string',
+              description: 'AI任务错误信息（用于自动生成报告）',
+              example: '连接超时，无法获取Pod状态'
+            },
+            completed_at: {
+              type: 'string',
+              format: 'date-time',
+              description: 'AI任务完成时间',
+              example: '2024-01-15T10:35:00Z'
+            }
+          },
+          description: '更新诊断记录请求。可以直接提供conclusion、reportDetail等字段，或提供AI任务相关字段让系统自动生成报告内容。'
+        },
         ApiResponse: {
           type: 'object',
           properties: {
@@ -367,6 +417,166 @@ export async function GET() {
             },
             '404': {
               description: '服务不存在',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiError'
+                  }
+                }
+              }
+            },
+            '500': {
+              description: '服务器内部错误',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiError'
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      '/diagnostics/{diagnosticId}': {
+        put: {
+          summary: '更新诊断记录',
+          description: '更新指定的诊断记录信息，支持AI诊断回调更新',
+          tags: ['诊断记录管理'],
+          parameters: [
+            {
+              name: 'diagnosticId',
+              in: 'path',
+              required: true,
+              schema: {
+                type: 'string'
+              },
+              description: '诊断记录ID',
+              example: 'diag-123e4567-e89b-12d3-a456-426614174000'
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/UpdateDiagnosticRequest'
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: '诊断记录更新成功',
+              content: {
+                'application/json': {
+                  schema: {
+                    allOf: [
+                      { $ref: '#/components/schemas/ApiResponse' },
+                      {
+                        type: 'object',
+                        properties: {
+                          data: {
+                            $ref: '#/components/schemas/ServiceDiagnostic'
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            '400': {
+              description: '请求参数错误',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiError'
+                  }
+                }
+              }
+            },
+            '401': {
+              description: 'API密钥无效或缺失',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiError'
+                  }
+                }
+              }
+            },
+            '404': {
+              description: '诊断记录不存在',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiError'
+                  }
+                }
+              }
+            },
+            '500': {
+              description: '服务器内部错误',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiError'
+                  }
+                }
+              }
+            }
+          }
+        },
+        get: {
+          summary: '获取诊断记录详情',
+          description: '获取指定诊断记录的详细信息',
+          tags: ['诊断记录管理'],
+          parameters: [
+            {
+              name: 'diagnosticId',
+              in: 'path',
+              required: true,
+              schema: {
+                type: 'string'
+              },
+              description: '诊断记录ID',
+              example: 'diag-123e4567-e89b-12d3-a456-426614174000'
+            }
+          ],
+          responses: {
+            '200': {
+              description: '获取成功',
+              content: {
+                'application/json': {
+                  schema: {
+                    allOf: [
+                      { $ref: '#/components/schemas/ApiResponse' },
+                      {
+                        type: 'object',
+                        properties: {
+                          data: {
+                            $ref: '#/components/schemas/ServiceDiagnostic'
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            '401': {
+              description: 'API密钥无效或缺失',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ApiError'
+                  }
+                }
+              }
+            },
+            '404': {
+              description: '诊断记录不存在',
               content: {
                 'application/json': {
                   schema: {

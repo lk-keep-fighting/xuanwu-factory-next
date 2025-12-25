@@ -10,6 +10,7 @@ export interface CreateAiDiagnosticTaskRequest {
   namespace: string
   pod: string
   callback_url?: string
+  metadata?: Record<string, any>
 }
 
 /**

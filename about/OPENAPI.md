@@ -161,6 +161,90 @@ x-api-key: YOUR_API_KEY
 }
 ```
 
+### 4. 更新诊断记录
+
+更新指定的诊断记录信息，支持AI诊断回调更新。
+
+**请求**
+```http
+PUT /api/open-api/diagnostics/{diagnosticId}
+Content-Type: application/json
+x-api-key: YOUR_API_KEY
+
+{
+  "task_id": "task-123e4567-e89b-12d3-a456-426614174000",
+  "status": "completed",
+  "result": "经过分析，服务运行状态良好，CPU使用率正常，内存使用率在合理范围内。建议继续保持当前配置。",
+  "completed_at": "2024-01-15T10:35:00Z"
+}
+```
+
+**参数说明**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| conclusion | string | 否 | 直接更新诊断结论 |
+| reportCategory | string | 否 | 直接更新归因分类 |
+| reportDetail | string | 否 | 直接更新详细报告 |
+| task_id | string | 否 | AI任务ID（用于自动生成报告） |
+| status | string | 否 | AI任务状态：pending/running/completed/failed |
+| result | string | 否 | AI诊断结果内容（用于自动生成报告） |
+| error_message | string | 否 | AI任务错误信息（用于自动生成报告） |
+| completed_at | string | 否 | AI任务完成时间 |
+
+**使用方式**
+- **直接更新**: 提供 `conclusion`、`reportDetail`、`reportCategory` 字段直接更新
+- **AI回调更新**: 提供 `task_id`、`status`、`result` 等字段，系统自动生成报告内容
+
+**响应**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "diag-123e4567-e89b-12d3-a456-426614174000",
+    "serviceId": "svc-123e4567-e89b-12d3-a456-426614174000",
+    "diagnosticTime": "2024-01-15T10:30:00Z",
+    "conclusion": "AI诊断完成",
+    "diagnostician": "玄武AI系统",
+    "reportCategory": "其他",
+    "reportDetail": "## AI诊断结果\n\n**任务ID**: task-123e4567-e89b-12d3-a456-426614174000\n**完成时间**: 2024-01-15T10:35:00Z\n**状态**: 诊断成功\n\n### 诊断报告\n\n经过分析，服务运行状态良好，CPU使用率正常，内存使用率在合理范围内。建议继续保持当前配置。\n\n---\n*本报告由玄武AI系统自动生成*",
+    "createdAt": "2024-01-15T10:30:00Z",
+    "updatedAt": "2024-01-15T10:35:00Z"
+  },
+  "message": "诊断记录更新成功",
+  "timestamp": "2024-01-15T10:35:00Z"
+}
+```
+
+### 5. 获取诊断记录详情
+
+获取指定诊断记录的详细信息。
+
+**请求**
+```http
+GET /api/open-api/diagnostics/{diagnosticId}
+x-api-key: YOUR_API_KEY
+```
+
+**响应**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "diag-123e4567-e89b-12d3-a456-426614174000",
+    "serviceId": "svc-123e4567-e89b-12d3-a456-426614174000",
+    "diagnosticTime": "2024-01-15T10:30:00Z",
+    "conclusion": "AI诊断完成",
+    "diagnostician": "玄武AI系统",
+    "reportCategory": "其他",
+    "reportDetail": "## AI诊断结果\n\n**任务ID**: task-123e4567-e89b-12d3-a456-426614174000\n**完成时间**: 2024-01-15T10:35:00Z\n**状态**: 诊断成功\n\n### 诊断报告\n\n经过分析，服务运行状态良好。",
+    "createdAt": "2024-01-15T10:30:00Z",
+    "updatedAt": "2024-01-15T10:35:00Z"
+  },
+  "timestamp": "2024-01-15T10:35:00Z"
+}
+```
+
 ## 错误处理
 
 所有错误响应都遵循统一格式：

@@ -104,7 +104,7 @@ function XuanwuAiDiagnosticButton({
       // 通过后端API创建AI诊断任务
       const result = await xuanwuAiSvc.createDiagnosticTask(serviceId, taskParams)
       
-      toast.success(`AI诊断任务已创建，任务ID: ${result.task_id}`)
+      toast.success(`AI诊断任务已创建！任务ID: ${result.task_id}，诊断记录已生成`)
       
       // 可选：调用完成回调
       if (onDiagnosticComplete) {

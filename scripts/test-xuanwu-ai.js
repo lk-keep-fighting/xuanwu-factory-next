@@ -33,8 +33,20 @@ async function testBackendAiDiagnostic(serviceId) {
       console.log(`   任务ID: ${data.data.task_id}`)
       console.log(`   状态: ${data.data.status}`)
       console.log(`   创建时间: ${data.data.created_at}`)
-      if (data.data.message) {
-        console.log(`   消息: ${data.data.message}`)
+      console.log(`   诊断记录ID: ${data.data.diagnosticId}`)
+      if (data.data.metadata) {
+        console.log('   元数据:')
+        console.log(`     - 服务ID: ${data.data.metadata.serviceId}`)
+        console.log(`     - 服务名称: ${data.data.metadata.serviceName}`)
+        console.log(`     - 诊断记录ID: ${data.data.metadata.diagnosticId}`)
+        console.log(`     - 平台: ${data.data.metadata.platform}`)
+        if (data.data.metadata.gitRepository) {
+          console.log(`     - Git仓库: ${data.data.metadata.gitRepository}`)
+          console.log(`     - Git分支: ${data.data.metadata.gitBranch}`)
+        }
+      }
+      if (data.message) {
+        console.log(`   消息: ${data.message}`)
       }
     } else {
       console.log('❌ AI诊断任务创建失败')
