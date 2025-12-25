@@ -95,25 +95,14 @@ function XuanwuAiDiagnosticButton({
         podName = service.name
       }
 
-      // 构建AI诊断任务参数
+      // 构建AI诊断任务参数（只传递K8s相关信息，Git信息由后端处理）
       const taskParams: CreateAiDiagnosticTaskRequest = {
         namespace: k8sStatus.namespace,
         pod: podName
       }
 
-      // 如果是Application服务，添加Git仓库信息
-      if (service.type === 'application') {
-        const appService = service as ApplicationService
-        if (appService.git_repository) {
-          taskParams.repo_url = appService.git_repository
-          if (appService.git_branch) {
-            taskParams.branch = appService.git_branch
-          }
-        }
-      }
-
-      // 创建AI诊断任务
-      const result = await xuanwuAiSvc.createDiagnosticTask(taskParams)
+      // 通过后端API创建AI诊断任务
+      const result = await xuanwuAiSvc.createDiagnosticTask(serviceId, taskParams)
       
       toast.success(`AI诊断任务已创建，任务ID: ${result.task_id}`)
       

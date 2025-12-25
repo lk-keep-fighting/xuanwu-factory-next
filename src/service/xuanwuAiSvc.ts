@@ -1,9 +1,7 @@
 /**
  * 玄武AI诊断服务
+ * 通过后端API调用，避免跨域问题
  */
-
-const XUANWU_AI_BASE_URL = process.env.NEXT_PUBLIC_XUANWU_AI_BASE_URL || process.env.XUANWU_AI_BASE_URL || 'http://ai-debug.xuanwu-factory.dev.aimstek.cn'
-const DEFAULT_CALLBACK_URL = 'http://api-adapter.xuanwu-factory.dev.aimstek.cn/logic/ai-debug-callback'
 
 /**
  * 创建AI诊断任务的请求参数
@@ -11,8 +9,6 @@ const DEFAULT_CALLBACK_URL = 'http://api-adapter.xuanwu-factory.dev.aimstek.cn/l
 export interface CreateAiDiagnosticTaskRequest {
   namespace: string
   pod: string
-  repo_url?: string
-  branch?: string
   callback_url?: string
 }
 
@@ -33,19 +29,13 @@ export const xuanwuAiSvc = {
   /**
    * 创建AI诊断任务
    */
-  async createDiagnosticTask(params: CreateAiDiagnosticTaskRequest): Promise<AiDiagnosticTaskResponse> {
-    // 如果没有提供callback_url，使用默认值
-    const requestParams = {
-      ...params,
-      callback_url: params.callback_url || DEFAULT_CALLBACK_URL
-    }
-
-    const response = await fetch(`${XUANWU_AI_BASE_URL}/tasks`, {
+  async createDiagnosticTask(serviceId: string, params: CreateAiDiagnosticTaskRequest): Promise<AiDiagnosticTaskResponse> {
+    const response = await fetch(`/api/services/${serviceId}/ai-diagnostic`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestParams)
+      body: JSON.stringify(params)
     })
 
     if (!response.ok) {
@@ -53,9 +43,7 @@ export const xuanwuAiSvc = {
       
       try {
         const errorData = await response.json()
-        if (errorData.message) {
-          errorMessage = errorData.message
-        } else if (errorData.error) {
+        if (errorData.error) {
           errorMessage = errorData.error
         }
       } catch {
@@ -66,25 +54,26 @@ export const xuanwuAiSvc = {
     }
 
     const result = await response.json()
-    return result as AiDiagnosticTaskResponse
+    return result.data as AiDiagnosticTaskResponse
   },
 
   /**
    * 检查玄武AI服务是否可用
    */
-  async checkServiceAvailability(): Promise<{ available: boolean; error?: string }> {
+  async checkServiceAvailability(serviceId: string): Promise<{ available: boolean; error?: string }> {
     try {
-      const response = await fetch(`${XUANWU_AI_BASE_URL}/health`, {
-        method: 'GET',
-        timeout: 5000 // 5秒超时
-      } as RequestInit)
+      const response = await fetch(`/api/services/${serviceId}/ai-diagnostic`, {
+        method: 'GET'
+      })
 
-      if (response.ok) {
+      const result = await response.json()
+      
+      if (result.success && result.available) {
         return { available: true }
       } else {
         return {
           available: false,
-          error: `服务不可用 (HTTP ${response.status})`
+          error: result.error || '服务不可用'
         }
       }
     } catch (error) {
