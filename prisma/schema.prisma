@@ -11,12 +11,12 @@ datasource db {
 model Project {
   id           String        @id @default(uuid()) @db.Char(36)
   name         String
-  identifier   String        @unique @db.VarChar(191)
+  identifier   String        @unique
   description  String?       @db.Text
   created_at   DateTime      @default(now()) @db.Timestamp(3)
   updated_at   DateTime      @updatedAt @db.Timestamp(3)
-  services     Service[]
   requirements Requirement[]
+  services     Service[]
 
   @@map("projects")
 }
@@ -24,7 +24,6 @@ model Project {
 model Service {
   id                      String                   @id @default(uuid()) @db.Char(36)
   project_id              String                   @db.Char(36)
-  project                 Project                  @relation(fields: [project_id], references: [id], onDelete: Cascade)
   name                    String
   type                    String                   @db.VarChar(32)
   status                  String                   @default("pending") @db.VarChar(32)
@@ -54,18 +53,19 @@ model Service {
   volume_size             String?
   internal_host           String?
   internal_connection_url String?
-  mysql_config            Json?
   image                   String?
   tag                     String?
   health_check            Json?
   debug_config            Json?
   created_at              DateTime                 @default(now()) @db.Timestamp(3)
   updated_at              DateTime                 @updatedAt @db.Timestamp(3)
+  mysql_config            Json?
   deployments             Deployment[]
-  images                  ServiceImage[]
   RequirementServiceLink  RequirementServiceLink[]
   RequirementTaskLink     RequirementTaskLink[]
   diagnostics             ServiceDiagnostic[]
+  images                  ServiceImage[]
+  project                 Project                  @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@index([project_id])
   @@index([type])
@@ -76,9 +76,8 @@ model Service {
 model ServiceImage {
   id           String       @id @default(uuid()) @db.Char(36)
   service_id   String       @db.Char(36)
-  service      Service      @relation(fields: [service_id], references: [id], onDelete: Cascade)
   image        String       @db.VarChar(512)
-  tag          String       @default("latest") @db.VarChar(191)
+  tag          String       @default("latest")
   full_image   String       @db.VarChar(512)
   digest       String?      @db.VarChar(255)
   build_number Int?
@@ -90,6 +89,7 @@ model ServiceImage {
   created_at   DateTime     @default(now()) @db.Timestamp(3)
   updated_at   DateTime     @updatedAt @db.Timestamp(3)
   deployments  Deployment[]
+  service      Service      @relation(fields: [service_id], references: [id], onDelete: Cascade)
 
   @@index([service_id])
   @@index([build_status])
@@ -99,14 +99,14 @@ model ServiceImage {
 model Deployment {
   id               String        @id @default(uuid()) @db.Char(36)
   service_id       String        @db.Char(36)
-  service          Service       @relation(fields: [service_id], references: [id], onDelete: Cascade)
   service_image_id String?       @db.Char(36)
-  service_image    ServiceImage? @relation(fields: [service_image_id], references: [id], onDelete: SetNull)
   status           String        @db.VarChar(32)
   build_logs       String?       @db.LongText
   image_tag        String?
   created_at       DateTime      @default(now()) @db.Timestamp(3)
   completed_at     DateTime?     @db.Timestamp(3)
+  service          Service       @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  service_image    ServiceImage? @relation(fields: [service_image_id], references: [id])
 
   @@index([service_id])
   @@index([service_image_id])
@@ -116,7 +116,7 @@ model Deployment {
 
 model SystemConfig {
   id         String   @id @default(uuid()) @db.Char(36)
-  key        String   @unique @db.VarChar(191)
+  key        String   @unique
   value      Json?
   created_at DateTime @default(now()) @db.Timestamp(3)
   updated_at DateTime @updatedAt @db.Timestamp(3)
@@ -128,12 +128,12 @@ model Requirement {
   id                  String                   @id @default(uuid()) @db.Char(36)
   title               String                   @db.VarChar(255)
   project_id          String                   @db.Char(36)
-  project             Project                  @relation(fields: [project_id], references: [id], onDelete: Cascade)
   last_ai_dispatch_at DateTime?                @db.Timestamp(3)
   created_at          DateTime                 @default(now()) @db.Timestamp(3)
   updated_at          DateTime                 @updatedAt @db.Timestamp(3)
   services            RequirementServiceLink[]
   taskLinks           RequirementTaskLink[]
+  project             Project                  @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@index([project_id])
   @@map("requirements")
@@ -143,9 +143,9 @@ model RequirementServiceLink {
   id             String      @id @default(uuid()) @db.Char(36)
   requirement_id String      @db.Char(36)
   service_id     String      @db.Char(36)
+  created_at     DateTime    @default(now()) @db.Timestamp(3)
   requirement    Requirement @relation(fields: [requirement_id], references: [id], onDelete: Cascade)
   service        Service     @relation(fields: [service_id], references: [id], onDelete: Cascade)
-  created_at     DateTime    @default(now()) @db.Timestamp(3)
 
   @@unique([requirement_id, service_id])
   @@index([service_id])
@@ -155,22 +155,22 @@ model RequirementServiceLink {
 model RequirementTaskLink {
   id                    String      @id @default(uuid()) @db.Char(36)
   requirement_id        String      @db.Char(36)
-  requirement           Requirement @relation(fields: [requirement_id], references: [id], onDelete: Cascade)
-  ai_employee_id        String      @db.VarChar(191)
-  ai_employee_name      String      @db.VarChar(191)
+  ai_employee_id        String
+  ai_employee_name      String
   ai_employee_type      String      @db.VarChar(32)
-  ai_task_assignment_id String      @db.VarChar(191)
+  ai_task_assignment_id String
   task_title            String      @db.VarChar(255)
   project_id            String      @db.Char(36)
   service_id            String?     @db.Char(36)
-  service               Service?    @relation(fields: [service_id], references: [id], onDelete: SetNull)
-  branch_name           String?     @db.VarChar(191)
+  branch_name           String?
   expected_outputs      Json?
   priority              String      @db.VarChar(16)
   status                String      @db.VarChar(32)
   result_summary        String?     @db.Text
   created_at            DateTime    @default(now()) @db.Timestamp(3)
   updated_at            DateTime    @updatedAt @db.Timestamp(3)
+  requirement           Requirement @relation(fields: [requirement_id], references: [id], onDelete: Cascade)
+  service               Service?    @relation(fields: [service_id], references: [id])
 
   @@index([requirement_id])
   @@index([project_id])
@@ -179,25 +179,25 @@ model RequirementTaskLink {
 }
 
 model DockerfileTemplate {
-  id                 String   @id @db.VarChar(191)
+  id                 String   @id
   name               String   @db.VarChar(255)
   description        String   @db.Text
   category           String   @db.VarChar(100)
   base_image         String   @db.VarChar(512)
   workdir            String   @default("/app") @db.VarChar(255)
-  copy_files         Json?    // Array of strings
-  install_commands   Json?    // Array of strings
-  build_commands     Json?    // Array of strings
+  copy_files         Json?
+  install_commands   Json?
+  build_commands     Json?
   run_command        String   @db.VarChar(512)
-  expose_ports       Json?    // Array of integers
-  env_vars           Json?    // Object with key-value pairs
+  expose_ports       Json?
+  env_vars           Json?
   dockerfile_content String   @db.LongText
   is_active          Boolean  @default(true)
   is_system          Boolean  @default(false)
   created_at         DateTime @default(now()) @db.Timestamp(3)
   updated_at         DateTime @updatedAt @db.Timestamp(3)
-  created_by         String?  @db.VarChar(191)
-  updated_by         String?  @db.VarChar(191)
+  created_by         String?
+  updated_by         String?
 
   @@index([category])
   @@index([is_active])
@@ -206,16 +206,16 @@ model DockerfileTemplate {
 }
 
 model ServiceDiagnostic {
-  id              String   @id @default(uuid()) @db.Char(36)
-  serviceId       String   @db.Char(36)
-  service         Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  diagnosticTime  DateTime @db.Timestamp(3)
-  conclusion      String   @db.VarChar(255)
-  diagnostician   String   @db.VarChar(191)
-  reportCategory  String   @db.VarChar(191)
-  reportDetail    String   @db.LongText
-  createdAt       DateTime @default(now()) @db.Timestamp(3)
-  updatedAt       DateTime @updatedAt @db.Timestamp(3)
+  id             String   @id @default(uuid()) @db.Char(36)
+  serviceId      String   @db.Char(36)
+  diagnosticTime DateTime @db.Timestamp(3)
+  conclusion     String   @db.VarChar(255)
+  diagnostician  String
+  reportCategory String
+  reportDetail   String   @db.LongText
+  createdAt      DateTime @default(now()) @db.Timestamp(3)
+  updatedAt      DateTime @updatedAt @db.Timestamp(3)
+  service        Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@index([serviceId])
   @@index([diagnosticTime])
