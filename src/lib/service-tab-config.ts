@@ -15,7 +15,8 @@ import {
   Globe,
   Key,
   Wrench,
-  HardDrive
+  HardDrive,
+  Stethoscope
 } from 'lucide-react'
 import { TAB_VALUES, type TabValue, type TabConfig } from '@/types/service-tabs'
 import { ServiceType, type Service } from '@/types/project'
@@ -32,6 +33,7 @@ import { ServiceType, type Service } from '@/types/project'
  * - Debug Tools: Debug tools injection configuration
  * - Deployments: Deployment history, build history (for Application), and image management
  * - Logs: Real-time log viewing with refresh controls
+ * - Diagnostics: Service diagnostic records and reports
  * - Files: File browser and manager with upload/download capabilities
  * - YAML: Kubernetes YAML configuration viewer
  * 
@@ -84,6 +86,12 @@ export const TAB_CONFIGS: TabConfig[] = [
     value: TAB_VALUES.LOGS,
     label: '实时日志',
     icon: Terminal,
+    visible: () => true // Always visible for all service types
+  },
+  {
+    value: TAB_VALUES.DIAGNOSTICS,
+    label: '服务诊断',
+    icon: Stethoscope,
     visible: () => true // Always visible for all service types
   },
   {
@@ -149,14 +157,14 @@ export function getVisibleTabValues(service: Service | null): TabValue[] {
 }
 
 /**
- * Validate that all service types show the 9 common tabs
+ * Validate that all service types show the 10 common tabs
  * This is a utility function for testing/validation
  * 
- * @returns true if all service types show exactly 9 tabs
+ * @returns true if all service types show exactly 10 tabs
  */
 export function validateCommonTabsForAllTypes(): boolean {
   const serviceTypes = [ServiceType.APPLICATION, ServiceType.DATABASE, ServiceType.IMAGE]
-  const expectedTabCount = 9
+  const expectedTabCount = 10
   
   for (const serviceType of serviceTypes) {
     const mockService: Service = {

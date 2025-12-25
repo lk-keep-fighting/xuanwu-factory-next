@@ -122,13 +122,10 @@ export function ProjectDebugPanel() {
           </div>
         </div>
 
-        {/* 项目选择器 */}
+        {/* 项目选择 */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Settings className="h-5 w-5" />
-              项目选择
-            </CardTitle>
+            <CardTitle>项目选择</CardTitle>
           </CardHeader>
           <CardContent>
             <ProjectServiceSelector
@@ -141,62 +138,6 @@ export function ProjectDebugPanel() {
             />
           </CardContent>
         </Card>
-
-        {/* 项目概览 */}
-        {selectedProject && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <Bug className="h-6 w-6 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">当前项目</p>
-                    <p className="font-semibold">{selectedProject.name}</p>
-                    <p className="text-xs text-gray-400">{selectedProject.identifier}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-green-100 rounded-lg">
-                    <Network className="h-6 w-6 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">服务总数</p>
-                    <p className="font-semibold">{services.length}</p>
-                    <p className="text-xs text-gray-400">
-                      运行中: {services.filter(s => s.status === 'running').length}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-purple-100 rounded-lg">
-                    <Activity className="h-6 w-6 text-purple-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">调试状态</p>
-                    <p className="font-semibold">
-                      {selectedService ? '已选择服务' : '未选择服务'}
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      {selectedService ? selectedService.name : '请选择要调试的服务'}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
 
         {/* 调试工具标签页 */}
         {selectedProject && (
@@ -231,45 +172,37 @@ export function ProjectDebugPanel() {
                 </CardHeader>
                 <CardContent>
                   {selectedProject ? (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <h4 className="font-medium mb-2">项目信息</h4>
-                          <div className="space-y-1 text-sm">
-                            <p><span className="text-gray-500">名称:</span> {selectedProject.name}</p>
-                            <p><span className="text-gray-500">标识符:</span> {selectedProject.identifier}</p>
-                            <p><span className="text-gray-500">服务数量:</span> {services.length}</p>
-                            {selectedProject.description && (
-                              <p><span className="text-gray-500">描述:</span> {selectedProject.description}</p>
-                            )}
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="p-4 bg-blue-50 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Bug className="h-5 w-5 text-blue-600" />
+                            <span className="font-medium">当前项目</span>
                           </div>
+                          <p className="text-sm font-semibold">{selectedProject.name}</p>
+                          <p className="text-xs text-gray-500">{selectedProject.identifier}</p>
                         </div>
-                        <div>
-                          <h4 className="font-medium mb-2">服务状态分布</h4>
-                          <div className="space-y-1 text-sm">
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                              <span>运行中: {services.filter(s => s.status === 'running').length}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-                              <span>待启动: {services.filter(s => s.status === 'pending').length}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                              <span>错误: {services.filter(s => s.status === 'error').length}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
-                              <span>已停止: {services.filter(s => s.status === 'stopped').length}</span>
-                            </div>
+                        <div className="p-4 bg-green-50 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Network className="h-5 w-5 text-green-600" />
+                            <span className="font-medium">服务总数</span>
                           </div>
+                          <p className="text-2xl font-bold">{services.length}</p>
+                          <p className="text-xs text-gray-500">运行中: {services.filter(s => s.status === 'running').length}</p>
+                        </div>
+                        <div className="p-4 bg-purple-50 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Activity className="h-5 w-5 text-purple-600" />
+                            <span className="font-medium">调试状态</span>
+                          </div>
+                          <p className="text-sm font-semibold">{selectedService ? '已选择服务' : '未选择服务'}</p>
+                          <p className="text-xs text-gray-500">{selectedService ? selectedService.name : '请选择服务'}</p>
                         </div>
                       </div>
-                      
+
                       {services.length > 0 && (
                         <div>
-                          <h4 className="font-medium mb-2">服务列表</h4>
+                          <h4 className="font-medium mb-3">服务列表</h4>
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                             {services.map((service) => (
                               <div
@@ -283,20 +216,15 @@ export function ProjectDebugPanel() {
                               >
                                 <div className="flex items-center justify-between">
                                   <span className="font-medium">{service.name}</span>
-                                  <Badge variant="outline" className="text-xs">
-                                    {service.type}
-                                  </Badge>
+                                  <Badge variant="outline" className="text-xs">{service.type}</Badge>
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <div className={`w-2 h-2 rounded-full ${
                                     service.status === 'running' ? 'bg-green-500' :
                                     service.status === 'pending' ? 'bg-yellow-500' :
-                                    service.status === 'error' ? 'bg-red-500' :
-                                    'bg-gray-500'
+                                    service.status === 'error' ? 'bg-red-500' : 'bg-gray-500'
                                   }`}></div>
-                                  <span className="text-xs text-gray-500">
-                                    {service.status || '未知'}
-                                  </span>
+                                  <span className="text-xs text-gray-500">{service.status || '未知'}</span>
                                 </div>
                               </div>
                             ))}
@@ -307,7 +235,7 @@ export function ProjectDebugPanel() {
                   ) : (
                     <div className="text-center py-8 text-gray-500">
                       <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                      <p>请先选择一个项目开始调试</p>
+                      <p>请先在上方选择一个项目开始调试</p>
                     </div>
                   )}
                 </CardContent>

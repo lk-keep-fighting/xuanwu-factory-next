@@ -80,6 +80,14 @@ export const LazyDebugToolsTab = dynamic(
   }
 )
 
+export const LazyDiagnosticsTab = dynamic(
+  () => import('./DiagnosticsTab').then(mod => ({ default: mod.DiagnosticsTab })),
+  {
+    loading: () => <TabLoadingFallback />,
+    ssr: false
+  }
+)
+
 /**
  * Re-export types for convenience
  */
@@ -87,6 +95,7 @@ export type { OverviewTabProps } from '@/types/service-tabs'
 export type { ConfigurationTabProps } from '@/types/service-tabs'
 export type { DeploymentsTabProps } from '@/types/service-tabs'
 export type { DebugToolsTabProps } from '@/types/service-tabs'
+export type { DiagnosticsTabProps } from '@/types/service-tabs'
 export type { VolumesTabProps } from '@/types/service-tabs'
 export type { EnvironmentTabProps } from './EnvironmentTab'
 export type { NetworkTabProps } from './NetworkTab'

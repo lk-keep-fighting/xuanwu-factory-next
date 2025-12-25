@@ -65,6 +65,7 @@ model Service {
   images                  ServiceImage[]
   RequirementServiceLink  RequirementServiceLink[]
   RequirementTaskLink     RequirementTaskLink[]
+  diagnostics             ServiceDiagnostic[]
 
   @@index([project_id])
   @@index([type])
@@ -202,4 +203,21 @@ model DockerfileTemplate {
   @@index([is_active])
   @@index([is_system])
   @@map("dockerfile_templates")
+}
+
+model ServiceDiagnostic {
+  id              String   @id @default(uuid()) @db.Char(36)
+  serviceId       String   @db.Char(36)
+  service         Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  diagnosticTime  DateTime @db.Timestamp(3)
+  conclusion      String   @db.VarChar(255)
+  diagnostician   String   @db.VarChar(191)
+  reportCategory  String   @db.VarChar(191)
+  reportDetail    String   @db.LongText
+  createdAt       DateTime @default(now()) @db.Timestamp(3)
+  updatedAt       DateTime @updatedAt @db.Timestamp(3)
+
+  @@index([serviceId])
+  @@index([diagnosticTime])
+  @@map("service_diagnostics")
 }

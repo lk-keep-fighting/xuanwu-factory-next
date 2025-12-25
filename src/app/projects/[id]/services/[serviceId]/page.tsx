@@ -27,7 +27,7 @@ import { toast } from 'sonner'
 import { ImageReferencePicker, type ImageReferenceValue } from '@/components/services/ImageReferencePicker'
 import { ServiceFileManager } from '@/components/services/ServiceFileManager'
 import { ResourceUsageChart } from '@/components/services/ResourceUsageChart'
-import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyVolumesTab, LazyNetworkTab, LazyDebugToolsTab } from '@/components/services/LazyTabComponents'
+import { LazyOverviewTab, LazyConfigurationTab, LazyDeploymentsTab, LazyEnvironmentTab, LazyVolumesTab, LazyNetworkTab, LazyDebugToolsTab, LazyDiagnosticsTab } from '@/components/services/LazyTabComponents'
 import { LogViewer } from '@/components/shared/LogViewer'
 // import { AIDiagnosticPanel } from '@/components/ai-diagnostic/AIDiagnosticPanel' // 暂时屏蔽
 import { useMetricsHistory } from '@/hooks/useMetricsHistory'
@@ -43,6 +43,7 @@ import { ServiceType, GitProvider, DatabaseType, DATABASE_TYPE_METADATA } from '
 import type { Service, Deployment, Project, NetworkConfig, NetworkConfigV2, NetworkPortConfig, LegacyNetworkConfig, ServiceImageRecord, ServiceImageStatus, DatabaseService, SupportedDatabaseType } from '@/types/project'
 import type { K8sServiceStatus } from '@/types/k8s'
 import type { GitProviderConfig } from '@/types/system'
+import type { ServiceDiagnostic } from '@/types/service-tabs'
 
 // Import shared constants and types
 import { 
@@ -190,6 +191,9 @@ export default function ServiceDetailPage() {
   const [logsLoading, setLogsLoading] = useState(false)
   const [logsError, setLogsError] = useState<string | null>(null)
   const [hasLoadedLogs, setHasLoadedLogs] = useState(false)
+  const [diagnostics, setDiagnostics] = useState<ServiceDiagnostic[]>([])
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null)
   const [yamlContent, setYamlContent] = useState<string>('')
   const [yamlLoading, setYamlLoading] = useState(false)
   const [yamlError, setYamlError] = useState<string | null>(null)
@@ -1399,6 +1403,29 @@ export default function ServiceDetailPage() {
     }
   }, [serviceId])
 
+  const loadDiagnostics = useCallback(async (showToast = false) => {
+    if (!serviceId) return
+
+    try {
+      setDiagnosticsLoading(true)
+      setDiagnosticsError(null)
+      const result = await serviceSvc.getServiceDiagnostics(serviceId)
+      setDiagnostics(result.diagnostics || [])
+      if (showToast) {
+        toast.success('诊断记录已刷新')
+      }
+    } catch (error: any) {
+      const message = error?.message || '加载诊断记录失败'
+      setDiagnostics([])
+      setDiagnosticsError(message)
+      if (showToast) {
+        toast.error('加载诊断记录失败：' + message)
+      }
+    } finally {
+      setDiagnosticsLoading(false)
+    }
+  }, [serviceId])
+
   // Sync activeTab with URL parameter changes (e.g., browser back/forward)
   useEffect(() => {
     const tabFromURL = getTabFromURL(searchParams)
@@ -1411,6 +1438,8 @@ export default function ServiceDetailPage() {
   useEffect(() => {
     setK8sStatusInfo(null)
     setK8sStatusError(null)
+    setDiagnostics([])
+    setDiagnosticsError(null)
     void loadService()
     void fetchK8sStatus()
     void loadPodEvents()
@@ -1466,6 +1495,8 @@ export default function ServiceDetailPage() {
     setHasLoadedLogs(false)
     setLogs('')
     setLogsError(null)
+    setDiagnostics([])
+    setDiagnosticsError(null)
     setYamlContent('')
     setYamlError(null)
     // Reset activated tabs to enable lazy loading for new service
@@ -1486,6 +1517,15 @@ export default function ServiceDetailPage() {
     // Special handling for logs tab - always load on activation
     if (activeTab === 'logs') {
       void loadLogs(false) // Load logs every time the tab is activated
+      if (isFirstActivation) {
+        activatedTabsRef.current.add(activeTab)
+      }
+      return
+    }
+
+    // Special handling for diagnostics tab - always load on activation
+    if (activeTab === 'diagnostics') {
+      void loadDiagnostics(false) // Load diagnostics every time the tab is activated
       if (isFirstActivation) {
         activatedTabsRef.current.add(activeTab)
       }
@@ -2888,6 +2928,17 @@ export default function ServiceDetailPage() {
               showLevelFilter={true}
               showExport={true}
               initialTailLines={100}
+            />
+          </TabsContent>
+
+          {/* 服务诊断 */}
+          <TabsContent value="diagnostics" className="space-y-6">
+            <LazyDiagnosticsTab
+              serviceId={serviceId}
+              diagnostics={diagnostics}
+              diagnosticsLoading={diagnosticsLoading}
+              diagnosticsError={diagnosticsError}
+              onRefresh={() => loadDiagnostics(true)}
             />
           </TabsContent>
 

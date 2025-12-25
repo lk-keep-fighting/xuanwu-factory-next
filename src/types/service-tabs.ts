@@ -17,6 +17,7 @@ export const TAB_VALUES = {
   DEBUG_TOOLS: 'debug-tools',
   DEPLOYMENTS: 'deployments',
   LOGS: 'logs',
+  DIAGNOSTICS: 'diagnostics',
   FILES: 'files',
   YAML: 'yaml'
 } as const
@@ -286,6 +287,32 @@ export interface DebugToolsTabProps {
   onSave: () => Promise<void>
   onCancel: () => void
   onUpdateService: (updates: Partial<Service>) => void
+}
+
+/**
+ * Service diagnostic record
+ */
+export type ServiceDiagnostic = {
+  id: string
+  serviceId: string
+  diagnosticTime: string // ISO date string
+  conclusion: string
+  diagnostician: string // 诊断人
+  reportCategory: string // 报告详细归因分类
+  reportDetail: string // MD格式的详细报告
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Props for Diagnostics Tab component
+ */
+export interface DiagnosticsTabProps {
+  serviceId: string
+  diagnostics: ServiceDiagnostic[]
+  diagnosticsLoading: boolean
+  diagnosticsError: string | null
+  onRefresh: () => Promise<void>
 }
 
 /**

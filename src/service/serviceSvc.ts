@@ -8,6 +8,7 @@ import type {
 } from '@/types/project'
 import type { K8sFileListResult, K8sServiceStatus } from '@/types/k8s'
 import type { GitBranchListResult } from '@/types/system'
+import type { ServiceDiagnostic } from '@/types/service-tabs'
 
 const API_BASE = '/api/services'
 
@@ -659,5 +660,48 @@ export const serviceSvc = {
     }
 
     return payload as GitBranchListResult
+  },
+
+  /**
+   * 获取服务诊断记录
+   */
+  async getServiceDiagnostics(serviceId: string): Promise<{ diagnostics: ServiceDiagnostic[] }> {
+    const response = await fetch(`${API_BASE}/${serviceId}/diagnostics`)
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error((error as { error?: string }).error || '获取诊断记录失败')
+    }
+    
+    return response.json()
+  },
+
+  /**
+   * 创建服务诊断记录
+   */
+  async createServiceDiagnostic(
+    serviceId: string, 
+    diagnostic: {
+      conclusion: string
+      diagnostician: string
+      reportCategory: string
+      reportDetail: string
+      diagnosticTime?: string
+    }
+  ): Promise<{ diagnostic: ServiceDiagnostic }> {
+    const response = await fetch(`${API_BASE}/${serviceId}/diagnostics`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(diagnostic)
+    })
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error((error as { error?: string }).error || '创建诊断记录失败')
+    }
+    
+    return response.json()
   }
 }
