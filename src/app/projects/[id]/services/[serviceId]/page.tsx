@@ -1426,6 +1426,25 @@ export default function ServiceDetailPage() {
     }
   }, [serviceId])
 
+  const createDiagnostic = useCallback(async (diagnostic: {
+    conclusion: string
+    diagnostician: string
+    reportCategory: string
+    reportDetail: string
+    diagnosticTime?: string
+  }) => {
+    if (!serviceId) return
+
+    try {
+      await serviceSvc.createServiceDiagnostic(serviceId, diagnostic)
+      // 创建成功后重新加载诊断记录
+      await loadDiagnostics(false)
+    } catch (error: any) {
+      const message = error?.message || '创建诊断记录失败'
+      throw new Error(message)
+    }
+  }, [serviceId, loadDiagnostics])
+
   // Sync activeTab with URL parameter changes (e.g., browser back/forward)
   useEffect(() => {
     const tabFromURL = getTabFromURL(searchParams)
@@ -2939,6 +2958,7 @@ export default function ServiceDetailPage() {
               diagnosticsLoading={diagnosticsLoading}
               diagnosticsError={diagnosticsError}
               onRefresh={() => loadDiagnostics(true)}
+              onCreateDiagnostic={createDiagnostic}
             />
           </TabsContent>
 

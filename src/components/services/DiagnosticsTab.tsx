@@ -4,12 +4,23 @@ import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { 
   Dialog, 
   DialogContent, 
   DialogHeader, 
   DialogTitle, 
-  DialogTrigger 
+  DialogTrigger,
+  DialogFooter
 } from '@/components/ui/dialog'
 import { 
   Table, 
@@ -29,12 +40,218 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
-  Clock
+  Clock,
+  Plus
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatDateTime } from '@/lib/date-utils'
 import ReactMarkdown from 'react-markdown'
 import type { DiagnosticsTabProps, ServiceDiagnostic } from '@/types/service-tabs'
+
+/**
+ * 创建诊断记录表单组件
+ */
+function CreateDiagnosticDialog({ 
+  onCreateDiagnostic,
+  trigger 
+}: { 
+  onCreateDiagnostic: (diagnostic: {
+    conclusion: string
+    diagnostician: string
+    reportCategory: string
+    reportDetail: string
+    diagnosticTime?: string
+  }) => Promise<void>
+  trigger: React.ReactNode 
+}) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [formData, setFormData] = useState({
+    conclusion: '',
+    diagnostician: '',
+    reportCategory: '',
+    reportDetail: '',
+    diagnosticTime: new Date().toISOString().slice(0, 16) // YYYY-MM-DDTHH:mm
+  })
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    // 验证必填字段
+    if (!formData.conclusion.trim()) {
+      toast.error('请输入诊断结论')
+      return
+    }
+    if (!formData.diagnostician.trim()) {
+      toast.error('请输入诊断人')
+      return
+    }
+    if (!formData.reportCategory.trim()) {
+      toast.error('请选择归因分类')
+      return
+    }
+    if (!formData.reportDetail.trim()) {
+      toast.error('请输入报告详情')
+      return
+    }
+
+    setLoading(true)
+    try {
+      await onCreateDiagnostic({
+        conclusion: formData.conclusion.trim(),
+        diagnostician: formData.diagnostician.trim(),
+        reportCategory: formData.reportCategory,
+        reportDetail: formData.reportDetail.trim(),
+        diagnosticTime: formData.diagnosticTime
+      })
+      
+      // 重置表单
+      setFormData({
+        conclusion: '',
+        diagnostician: '',
+        reportCategory: '',
+        reportDetail: '',
+        diagnosticTime: new Date().toISOString().slice(0, 16)
+      })
+      
+      setOpen(false)
+      toast.success('诊断记录创建成功')
+    } catch (error) {
+      toast.error('创建失败: ' + (error instanceof Error ? error.message : '未知错误'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCancel = () => {
+    setOpen(false)
+    // 重置表单
+    setFormData({
+      conclusion: '',
+      diagnostician: '',
+      reportCategory: '',
+      reportDetail: '',
+      diagnosticTime: new Date().toISOString().slice(0, 16)
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        {trigger}
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl max-h-[90vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Plus className="w-5 h-5" />
+            添加诊断记录
+          </DialogTitle>
+        </DialogHeader>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <ScrollArea className="max-h-[60vh] pr-4">
+            <div className="space-y-4">
+              {/* 诊断时间 */}
+              <div className="space-y-2">
+                <Label htmlFor="diagnosticTime">诊断时间</Label>
+                <Input
+                  id="diagnosticTime"
+                  type="datetime-local"
+                  value={formData.diagnosticTime}
+                  onChange={(e) => setFormData(prev => ({ ...prev, diagnosticTime: e.target.value }))}
+                  required
+                />
+              </div>
+
+              {/* 诊断人 */}
+              <div className="space-y-2">
+                <Label htmlFor="diagnostician">诊断人 *</Label>
+                <Input
+                  id="diagnostician"
+                  placeholder="请输入诊断人姓名"
+                  value={formData.diagnostician}
+                  onChange={(e) => setFormData(prev => ({ ...prev, diagnostician: e.target.value }))}
+                  required
+                />
+              </div>
+
+              {/* 诊断结论 */}
+              <div className="space-y-2">
+                <Label htmlFor="conclusion">诊断结论 *</Label>
+                <Input
+                  id="conclusion"
+                  placeholder="请输入诊断结论"
+                  value={formData.conclusion}
+                  onChange={(e) => setFormData(prev => ({ ...prev, conclusion: e.target.value }))}
+                  required
+                />
+              </div>
+
+              {/* 归因分类 */}
+              <div className="space-y-2">
+                <Label htmlFor="reportCategory">归因分类 *</Label>
+                <Select
+                  value={formData.reportCategory}
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, reportCategory: value }))}
+                  required
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="请选择归因分类" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="应用问题">应用问题</SelectItem>
+                    <SelectItem value="基础设施">基础设施</SelectItem>
+                    <SelectItem value="网络问题">网络问题</SelectItem>
+                    <SelectItem value="存储问题">存储问题</SelectItem>
+                    <SelectItem value="配置问题">配置问题</SelectItem>
+                    <SelectItem value="性能问题">性能问题</SelectItem>
+                    <SelectItem value="安全问题">安全问题</SelectItem>
+                    <SelectItem value="其他">其他</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* 报告详情 */}
+              <div className="space-y-2">
+                <Label htmlFor="reportDetail">报告详情 *</Label>
+                <Textarea
+                  id="reportDetail"
+                  placeholder="请输入详细的诊断报告，支持 Markdown 格式"
+                  value={formData.reportDetail}
+                  onChange={(e) => setFormData(prev => ({ ...prev, reportDetail: e.target.value }))}
+                  rows={8}
+                  required
+                />
+                <p className="text-xs text-gray-500">
+                  支持 Markdown 格式，可以使用 **粗体**、*斜体*、`代码`、列表等格式
+                </p>
+              </div>
+            </div>
+          </ScrollArea>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCancel}
+              disabled={loading}
+            >
+              取消
+            </Button>
+            <Button
+              type="submit"
+              disabled={loading}
+              className="gap-2"
+            >
+              {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
+              创建记录
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 /**
  * 诊断结论的状态映射
@@ -151,7 +368,8 @@ export function DiagnosticsTab({
   diagnostics,
   diagnosticsLoading,
   diagnosticsError,
-  onRefresh
+  onRefresh,
+  onCreateDiagnostic
 }: DiagnosticsTabProps) {
   const [refreshing, setRefreshing] = useState(false)
 
@@ -177,16 +395,31 @@ export function DiagnosticsTab({
             查看服务的历史诊断记录和详细报告
           </p>
         </div>
-        <Button
-          onClick={handleRefresh}
-          disabled={refreshing || diagnosticsLoading}
-          variant="outline"
-          size="sm"
-          className="gap-2"
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <CreateDiagnosticDialog
+            onCreateDiagnostic={onCreateDiagnostic}
+            trigger={
+              <Button
+                variant="default"
+                size="sm"
+                className="gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                添加诊断记录
+              </Button>
+            }
+          />
+          <Button
+            onClick={handleRefresh}
+            disabled={refreshing || diagnosticsLoading}
+            variant="outline"
+            size="sm"
+            className="gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            刷新
+          </Button>
+        </div>
       </div>
 
       {/* 诊断记录表格 */}
@@ -209,7 +442,20 @@ export function DiagnosticsTab({
             <div className="flex flex-col items-center justify-center py-12 text-gray-500">
               <FileText className="w-12 h-12 mb-4 text-gray-300" />
               <p className="text-lg font-medium">暂无诊断记录</p>
-              <p className="text-sm">该服务还没有进行过诊断</p>
+              <p className="text-sm mb-4">该服务还没有进行过诊断</p>
+              <CreateDiagnosticDialog
+                onCreateDiagnostic={onCreateDiagnostic}
+                trigger={
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    添加第一条诊断记录
+                  </Button>
+                }
+              />
             </div>
           ) : (
             <div className="border rounded-lg">

@@ -62,6 +62,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
+# 复制about文档文件夹
+COPY --from=builder --chown=nextjs:nodejs /app/about ./about
+
 # 复制Prisma schema（用于运行时读取）
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 

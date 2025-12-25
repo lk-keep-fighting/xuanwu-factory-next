@@ -313,6 +313,13 @@ export interface DiagnosticsTabProps {
   diagnosticsLoading: boolean
   diagnosticsError: string | null
   onRefresh: () => Promise<void>
+  onCreateDiagnostic: (diagnostic: {
+    conclusion: string
+    diagnostician: string
+    reportCategory: string
+    reportDetail: string
+    diagnosticTime?: string
+  }) => Promise<void>
 }
 
 /**
